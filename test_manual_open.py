@@ -278,7 +278,42 @@ def test_trd_off_blocks_real_for_queue_opens_only():
     assert RB(False, True, False, False)[0] is None
     print('✓ real = TRD + TM + стеля; інакше Test Mode — для всіх відкриттів')
 
+
+def test_forced_book_by_hand():
+    """✋ 11.11: людина явно обирає книгу. «🏦 реальна» не питає TRD (монети
+    🔭 скану поза WATCHLIST його не мають) і не блокується paper-позицією;
+    «🧪 paper» не блокується реальною. Без by_hand книга НЕ форсується."""
+    from types import SimpleNamespace
+    assert tm_mod.forced_book('REAL') == 'real' and tm_mod.forced_book('x') is None
+    tm, bybit = _make_tm()
+    tm.scanner = SimpleNamespace(get_tradeable_symbols=lambda: [])
+    tm._settings['test_mode'] = True
+    tm._shadow_positions['BTCUSDT'] = {'side': 'LONG'}
+    assert tm.blocks_new_open('BTCUSDT') is True            # авто → paper, а вона вже є
+    assert tm.blocks_new_open('BTCUSDT', 'real') is False   # явна реальна — ні
+    r = tm.manual_open('BTCUSDT', 'LONG', by_hand=True, book='real')
+    assert r['ok'] is True and r.get('mode') == 'real' and 'BTCUSDT' in tm._positions, r
+    # без by_hand — звичайне правило (TRD вимкнено → paper)
+    tm2, b2 = _make_tm()
+    tm2.scanner = SimpleNamespace(get_tradeable_symbols=lambda: [])
+    tm2._settings['test_mode'] = True
+    r2 = tm2.manual_open('ETHUSDT', 'LONG', bypass_gates=True, book='real')
+    assert r2.get('mode') == 'test' and not b2.orders_placed, r2
+    # явна реальна при вимкненому TM → чесна відмова
+    tm3, b3 = _make_tm(enabled=False)
+    r3 = tm3.manual_open('SOLUSDT', 'LONG', by_hand=True, book='real')
+    assert r3['ok'] is False and 'Trade Manager' in r3['reason'] and not b3.orders_placed
+    # явний paper: реальна позиція не блокує
+    tm4, _ = _make_tm()
+    tm4._settings['test_mode'] = True
+    tm4._positions['XRPUSDT'] = {'side': 'LONG'}
+    assert tm4.blocks_new_open('XRPUSDT', 'paper') is False
+    r4 = tm4.manual_open('XRPUSDT', 'LONG', by_hand=True, book='paper')
+    assert r4.get('mode') == 'test', r4
+    print('✓ ✋ явна книга: реальна поверх paper і paper поверх реальної')
+
 if __name__ == '__main__':
+    test_forced_book_by_hand()
     test_trd_off_blocks_real_for_queue_opens_only()
     test_manual_open_long_places_buy_order()
     test_manual_open_short_places_sell_order()

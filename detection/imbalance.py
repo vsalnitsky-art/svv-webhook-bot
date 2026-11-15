@@ -5,30 +5,35 @@
     ведмежий IMB: high[i] < low[i-2]   → розрив [high[i] .. low[i-2]]
 Середня свічка (i-1) — та, що «пробила» зону без зустрічної торгівлі.
 
-ЗАПОВНЕННЯ (мітигація) — по наступних барах:
-- бичачий: ціна повертається ВНИЗ у розрив → верх зони опускається до
-  мінімуму бару; торкнулась низу (або нижче) → IMB закрито, не показуємо;
-- ведмежий — дзеркально.
-Тобто показуємо РЕШТУ незаповненого розриву, як TradingView-індикатори FVG.
+ЗАПОВНЕННЯ (мітигація) — КАЛІБРОВКА «ЯК У TRADINGVIEW» (15.11, BTC 1H 11-15.11):
+- зона ЗНИКАЄ, лише коли бар ЗАКРИВАЄТЬСЯ за її дальньою межею (бичачий —
+  close < низу, ведмежий — close > верху). Ґніт, що проколов зону, її НЕ
+  знімає (кейс: розрив 69 110–69 806 проколото ґнотом до 70 188 — у TV зона
+  лишилась, у нас зникала);
+- зона малюється в ПОВНИЙ розмір (`top`/`bottom` = початкові межі), а не
+  «залишок»; глибину проколу видно з `filled_pct` (рахується за ґнотами).
+`mitigation='wick'` — стара поведінка (зрізання ґнотами), лишена для тестів.
 
-ШУМ: розрив менший за `min_atr` × ATR(14) (деф. 0.10) — не імбаланс, а дрібне
+ШУМ: розрив менший за `min_atr` × ATR(14) (деф. 0.15) — не імбаланс, а дрібне
 тремтіння ціни; без цього порогу на 1m/5m графік засипало б смужками.
 
-ОБСЯГ (вимога 09.11, переробка 08.11 «як у TradingView»):
-- `vol` — обсяг ІМПУЛЬСНОЇ (середньої) свічки в МОНЕТАХ (як TV: «11.461K»
-  BTC). Біржа віддає обіг у $ (`v`), тож обсяг у монетах = обіг / типова ціна
-  бару (h+l+c)/3. Раніше тут стояла сума 3 свічок у $ → «3.64B» замість «K».
-- `sell_pct` / `buy_pct` — розклад обсягу трьох свічок розриву за НАПРЯМКОМ
-  свічки (червона → продаж, зелена → купівля, доджі — навпіл). Bybit не віддає
-  taker buy/sell у свічках, тож це наближення; звірено з TV на BTC 1H 05.11:
-  98/2 · 72/28 у TV проти 100/0 · 77/23 у нас (дані різних бірж).
+ОБСЯГ:
+- `vol` — обсяг ІМПУЛЬСНОЇ (середньої) свічки в МОНЕТАХ (як TV: «8.952K»
+  BTC; звірено — бот 8.951K / 9.678K проти TV 8.952K / 9.702K). Біржа віддає
+  обіг у $ (`v`), тож обсяг у монетах = обіг / типова ціна (h+l+c)/3.
+- `sell_pct` / `buy_pct` — розклад обсягу ІМПУЛЬСНОЇ свічки за положенням
+  закриття в діапазоні бару: продаж = (high − close)/(high − low), купівля —
+  решта (15.11). Раніше брався КОЛІР трьох свічок → на кожному русі «100% / 0%»
+  і бірюзова смуга не малювалась узагалі. Біржа taker buy/sell у свічках не
+  віддає, тож це наближення: на 8 зонах BTC 1H середнє відхилення від TV ~11 п.п.
+  (колір 3 свічок — ~40 п.п.). `split='color'` — стара формула.
 - `pct` — частка БІЛЬШОЇ сторони (сумісність зі старим показом).
 
 ЛИШЕ ЧИСТІ ФУНКЦІЇ, без I/O. Бар: {t (мс), o, h, l, p|c|close, v}.
 """
 from typing import Dict, List
 
-MIN_ATR = 0.10         # мінімальний розмір розриву, частка ATR(14)
+MIN_ATR = 0.15         # мінімальний розмір розриву, частка ATR(14) (15.11: 0.10→0.15 — як TV, розрив 0.11·ATR там не малюється)
 ATR_LEN = 14
 MAX_SHOW = 12          # скільки найновіших незаповнених віддаємо
 
@@ -49,8 +54,20 @@ def _vol(b):
         return 0.0
 
 
-def _vol_view(bars, i):
+def _vol_view(bars, i, split='clv'):
     """(обсяг імпульсної свічки в монетах, % продажу, % купівлі) для розриву на барі i."""
+    if split == 'clv':
+        m = bars[i - 1]
+        mid = _vol(m)
+        if mid <= 0:
+            return None, None, None
+        try:
+            hh, ll, cc = float(m['h']), float(m['l']), _close(m)
+        except (KeyError, TypeError, ValueError):
+            return mid, None, None
+        sp = 50 if hh <= ll else round((hh - cc) / (hh - ll) * 100)
+        sp = max(0, min(100, sp))
+        return mid, sp, 100 - sp
     sell = buy = 0.0
     for k in (i - 2, i - 1, i):
         v = _vol(bars[k])
@@ -89,7 +106,8 @@ def _atr(h, l, c, n=ATR_LEN):
 
 
 def detect_imbalances(bars: List[Dict], min_atr: float = MIN_ATR,
-                      max_show: int = MAX_SHOW, keep_filled: bool = False) -> List[Dict]:
+                      max_show: int = MAX_SHOW, keep_filled: bool = False,
+                      mitigation: str = 'close', split: str = 'clv') -> List[Dict]:
     """Незаповнені IMB (найновіший першим):
     [{side: LONG|SHORT, top, bottom, top0, bottom0, t (сек, середня свічка),
       t_form (сек, бар, що підтвердив розрив), filled_pct, filled,
@@ -112,35 +130,41 @@ def detect_imbalances(bars: List[Dict], min_atr: float = MIN_ATR,
             if z['filled']:
                 continue
             if z['side'] == 'LONG':
-                if l[i] <= z['bottom']:
+                if mitigation == 'close' and c[i] < z['bottom0']:
                     z['filled'] = True
-                elif l[i] < z['top']:
-                    z['top'] = l[i]
+                elif mitigation != 'close' and l[i] <= z['bottom']:
+                    z['filled'] = True
+                elif l[i] < z['rt']:
+                    z['rt'] = max(l[i], z['bottom0'])
             else:
-                if h[i] >= z['top']:
+                if mitigation == 'close' and c[i] > z['top0']:
                     z['filled'] = True
-                elif h[i] > z['bottom']:
-                    z['bottom'] = h[i]
+                elif mitigation != 'close' and h[i] >= z['top']:
+                    z['filled'] = True
+                elif h[i] > z['rb']:
+                    z['rb'] = min(h[i], z['top0'])
+            if mitigation != 'close' and not z['filled']:
+                z['top'], z['bottom'] = z['rt'], z['rb']
         a = atr[i] or atr[i - 1]
         thr = (a or 0.0) * float(min_atr)
         if l[i] > h[i - 2] and (l[i] - h[i - 2]) > thr:
-            vol, sp, bp = _vol_view(bars, i)
+            vol, sp, bp = _vol_view(bars, i, split)
             live.append({'vol': vol, 'sell_pct': sp, 'buy_pct': bp,
                          'pct': (None if sp is None else max(sp, bp)), 'side': 'LONG', 'top': l[i], 'bottom': h[i - 2],
-                         'top0': l[i], 'bottom0': h[i - 2],
+                         'top0': l[i], 'bottom0': h[i - 2], 'rt': l[i], 'rb': h[i - 2],
                          't': t[i - 1], 't_form': t[i], 'filled': False})
         elif h[i] < l[i - 2] and (l[i - 2] - h[i]) > thr:
-            vol, sp, bp = _vol_view(bars, i)
+            vol, sp, bp = _vol_view(bars, i, split)
             live.append({'vol': vol, 'sell_pct': sp, 'buy_pct': bp,
                          'pct': (None if sp is None else max(sp, bp)), 'side': 'SHORT', 'top': l[i - 2], 'bottom': h[i],
-                         'top0': l[i - 2], 'bottom0': h[i],
+                         'top0': l[i - 2], 'bottom0': h[i], 'rt': l[i - 2], 'rb': h[i],
                          't': t[i - 1], 't_form': t[i], 'filled': False})
     out = []
     for z in reversed(live):
         if z['filled'] and not keep_filled:
             continue
         full = z['top0'] - z['bottom0']
-        rest = z['top'] - z['bottom']
+        rest = z['rt'] - z['rb']
         z['filled_pct'] = 100 if z['filled'] else (
             round((1 - rest / full) * 100) if full > 0 else 0)
         out.append(z)

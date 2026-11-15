@@ -1015,6 +1015,12 @@ def manual_objective(side, entry, level, label='Manual TP (вручну)'):
     return {'price': lv, 'kind': 'manual', 'label': label,
             'dist_pct': round(abs(lv - e) / e * 100.0, 2)}
 
+
+def forced_book(book) -> Optional[str]:
+    """ЧИСТА: ✋ явний вибір книги людиною → 'real' | 'paper' | None (авто)."""
+    b = str(book or '').lower().strip()
+    return b if b in ('real', 'paper') else None
+
 class TradeManager:
     
     def __init__(self, db=None, notifier=None, bybit=None, scanner=None):
@@ -9010,7 +9016,7 @@ class TradeManager:
         except Exception:
             return False
 
-    def blocks_new_open(self, symbol: str) -> bool:
+    def blocks_new_open(self, symbol: str, book: Optional[str] = None) -> bool:
         """🏦 Trade Manager має ПРІОРИТЕТ (вимога 27.10): paper-угода Test Mode
         НЕ блокує реальну. Нове відкриття блокує:
           • реальна позиція по монеті — завжди;
@@ -9020,6 +9026,11 @@ class TradeManager:
         with self._lock:
             has_real = symbol in self._positions
             has_paper = symbol in self._shadow_positions
+        fb = forced_book(book)
+        if fb == 'real':      # ✋ явно обрана книга — блокує лише своя позиція
+            return has_real
+        if fb == 'paper':
+            return has_paper
         if has_real:
             return True
         if has_paper:
@@ -9947,8 +9958,14 @@ class TradeManager:
 
     def manual_open(self, symbol: str, side: str, bypass_gates: bool = False,
                     opened_by: Optional[str] = None,
-                    manual_sl=None, manual_tp=None, by_hand: bool = False) -> Dict:
+                    manual_sl=None, manual_tp=None, by_hand: bool = False,
+                    book: Optional[str] = None) -> Dict:
         """User-initiated position open from the Decision Center panel.
+
+        book: ✋ ЯВНИЙ вибір книги людиною (вимога 11.11) — 'real' | 'paper'
+        (лише з by_hand). 'real' не питає TRD (монети 🔭 скану поза WATCHLIST
+        його не мають), але потребує увімкненого TM і ліміту позицій;
+        'paper' потребує Test Mode. None — звичайне правило `route_book`.
 
         Uses Position Sizing settings from TM (sizing_mode, fixed_usd_amount,
         leverage, use_sl, use_tp, sl_pct, tp_pct etc.) — exactly the same
@@ -10013,10 +10030,21 @@ class TradeManager:
         # шляхів, ✋ ручних теж: real = TRD ✓ + TM ✓ + стеля дозволяє; інакше
         # paper (якщо Test Mode), інакше відмова з причиною.
         at_limit = self._at_max_positions()
-        book, book_why = self.route_book(self.is_enabled(),
-                                         self._is_tradeable(symbol),
-                                         at_limit, test_mode,
-                                         self._settings.get('max_open_positions', 10))
+        forced = forced_book(book) if by_hand else None
+        if forced == 'real':
+            _miss = [x for x, bad in (('Trade Manager вимкнено', not self.is_enabled()),
+                                      (f"ліміт реальних угод ({self._settings.get('max_open_positions', 10)}) "
+                                       'вичерпано', at_limit)) if bad]
+            book, book_why = ((None, ' · '.join(_miss) + ' — реальну угоду не відкрити')
+                              if _miss else ('real', 'обрано реальну угоду'))
+        elif forced == 'paper':
+            book, book_why = (('paper', 'обрано paper (Test Mode)') if test_mode
+                              else (None, 'Test Mode вимкнено — paper-угоду не відкрити'))
+        else:
+            book, book_why = self.route_book(self.is_enabled(),
+                                             self._is_tradeable(symbol),
+                                             at_limit, test_mode,
+                                             self._settings.get('max_open_positions', 10))
         if book is None:
             return {'ok': False, 'reason': f'{symbol}: {book_why}'}
 

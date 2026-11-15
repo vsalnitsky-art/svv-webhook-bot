@@ -3204,7 +3204,42 @@ def register_api_routes(app):
                     f"{_ss.row_side(row) or '⚖'}")
             return jsonify(ff.hand_open(row['symbol'], side, 'XSPR',
                                         '🔭 Пружина-скан', 'XSPR', note=note,
-                                        price=row.get('price')))
+                                        price=row.get('price'), book=data.get('book')))
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': str(e)})
+
+    @app.route('/api/spring/open', methods=['POST'])
+    def api_spring_open():
+        """✋ {symbol, side?} — відкрити угоду по монеті з таблиці 🌀 Пружина
+        (WATCHLIST). Те саме правило, що в 🔭 скані (`open_plan`): бік обраний
+        людиною, інакше напрямок рядка; ворота не діють (✋ ручне)."""
+        try:
+            data = request.get_json(silent=True) or {}
+            from detection import spring_scan as _ss
+            from detection.smc_scanner import get_smc_scanner
+            from detection.fuel_filter import get_fuel_filter
+            S = str(data.get('symbol') or '').upper().strip()
+            sc = get_smc_scanner()
+            row = None
+            if S and sc is not None and hasattr(sc, 'spring_for'):
+                row = (sc.spring_for([S]) or {}).get(S)
+                if row is not None:
+                    row = dict(row, symbol=S)
+                    if row.get('state') == 'flat':
+                        row['dir'] = None   # те саме правило, що в таблиці
+            ok, side, why = _ss.open_plan(row, data.get('side'))
+            if not ok:
+                if not row:
+                    why = 'монети немає в таблиці 🌀 Пружини'
+                return jsonify({'ok': False, 'symbol': S, 'side': side, 'reason': why})
+            ff = get_fuel_filter()
+            if not ff or not hasattr(ff, 'hand_open'):
+                return jsonify({'ok': False, 'reason': 'Fuel Filter не ініціалізовано'})
+            note = (f"заряд {row.get('charge')} · напрямок рядка "
+                    f"{_ss.row_side(row) or '⚖'}")
+            return jsonify(ff.hand_open(S, side, 'SPR', '🌀 Пружина', 'SPR',
+                                        note=note, price=row.get('price'),
+                                        book=data.get('book')))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 

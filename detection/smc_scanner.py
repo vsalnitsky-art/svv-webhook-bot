@@ -29,6 +29,7 @@ Settings persisted in DB:
 Uses MarketData (Binance → OKX → Bybit fallback) for klines.
 """
 
+import sys
 import time
 import threading
 from datetime import datetime, timezone
@@ -323,6 +324,7 @@ KLINES_LIMIT = 3000          # bars to fetch per scan via paginated API.
 DEFAULT_TIMEFRAME = '5m'      # default timeframe
 DEFAULT_INTERNAL_SIZE = 5     # default Pine Internal Structure size
 MAX_WATCHLIST = 100
+SPRX_SIGNAL_CAP = 40   # 📡 скільки монет 🔭 скан-таблиці сканер сигналів веде понад WATCHLIST (15.11)
 
 # Allowed timeframes (Binance format)
 ALLOWED_TIMEFRAMES = ['1m', '3m', '5m', '15m', '30m', '1h', '4h']
@@ -481,6 +483,10 @@ DEFAULT_SETTINGS = {
     'sprw_gate_banner': False,
     'sprx_gate_enabled': False,
     'sprx_gate_banner': False,
+    # 📡 Сканер сигналів веде ще й монети таблиці «🔭 Пружина — скан біржі»
+    # (вимога 15.11: «Сигнали не проходять через "Пружина — скан біржі"»).
+    # Деф. УВІМК: без цього монети таблиці не дають ЖОДНОГО сигналу.
+    'sprx_scan_signals': True,
     # ⚖ ВОРОТА ЗА БАНЕРОМ «SMC Forecast» (вимога 11.11): банер 🔭 скану
     # (Binance) LONG → пропускаємо LONG-сигнали, SHORT → SHORT; ⚖ → нічого.
     # Окремо — банер 🌀 WATCHLIST (Bybit). Незалежні від таблиць. Деф. ВИМК.
@@ -1859,7 +1865,7 @@ class SMCScanner:
                        'spring_enabled', 'spring_gate_enabled', 'spring_min_pot',
                        'spring_charge_gate_enabled', 'spring_min_charge',
                        'sprw_gate_enabled', 'sprw_gate_banner',
-                       'sprx_gate_enabled', 'sprx_gate_banner',
+                       'sprx_gate_enabled', 'sprx_gate_banner', 'sprx_scan_signals',
                        'spbx_gate_enabled', 'spbw_gate_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
@@ -2020,6 +2026,7 @@ class SMCScanner:
                         'spbx_gate_enabled', 'spbw_gate_enabled',
                         'mm_gate_strength'):
                 self._settings[_gk] = bool(self._settings.get(_gk, False))
+            self._settings['sprx_scan_signals'] = bool(self._settings.get('sprx_scan_signals', True))
             self._settings['liq_gate_enabled'] = bool(
                 self._settings.get('liq_gate_enabled', False))
             self._settings['spring_enabled'] = bool(
@@ -2307,8 +2314,34 @@ class SMCScanner:
                     return
                 time.sleep(1)
     
+    def _scan_extra(self) -> List[str]:
+        """📡 Монети таблиці «🔭 Пружина — скан біржі», яких НЕМАЄ в WATCHLIST,
+        але які сканер сигналів мусить вести (вимога 15.11: «Сигнали не
+        проходять через "Пружина — скан біржі" — немає реакції на ці монети»).
+        Без цього сигнали (CHoCH / VOB / 🆕 Новий OB) рахувались ЛИШЕ для
+        WATCHLIST, і ворота «Через Пружину скан» фактично ніколи не бачили
+        монет своєї таблиці. Тумблер `sprx_scan_signals` (деф. УВІМК), стеля
+        `SPRX_SIGNAL_CAP`. Рушій скану — лише вже піднятий модуль процесу
+        (`sys.modules`), без копії."""
+        if not self._settings.get('sprx_scan_signals', True):
+            return []
+        mod = sys.modules.get('detection.spring_scan')
+        if mod is None or not hasattr(mod, 'signal_symbols'):
+            return []
+        try:
+            wl = set(self._watchlist)
+            return [S for S in (mod.signal_symbols(SPRX_SIGNAL_CAP) or [])
+                    if S and S not in wl]
+        except Exception:
+            return []
+
+    def scan_universe(self) -> List[str]:
+        """Усі монети, які веде скан-цикл: WATCHLIST + монети 🔭 скан-таблиці."""
+        return list(self._watchlist) + SMCScanner._scan_extra(self)
+
     def _scan(self):
-        if not self._watchlist:
+        _univ = self.scan_universe()
+        if not _univ:
             return
         
         from detection.market_data import get_market_data
@@ -2327,7 +2360,7 @@ class SMCScanner:
             from detection.liquidation_map.liquidation_map import get_liquidation_map
             lm = get_liquidation_map()
             if lm:
-                for sym in list(self._watchlist):
+                for sym in _univ:
                     try:
                         lm.request_symbol(sym)
                     except Exception:
@@ -2379,9 +2412,9 @@ class SMCScanner:
             if _lane_n:
                 _ob_spec = (self._settings.get('ob_filter_timeframe', '1h'), 700)
                 _pf_specs = [sp for sp in _pf_specs if sp != _ob_spec]
-            if _pf_specs and len(self._watchlist) > 1:
+            if _pf_specs and len(_univ) > 1:
                 _pf_t0 = time.time()
-                self._prefetch_klines(md, list(self._watchlist), _pf_specs)
+                self._prefetch_klines(md, _univ, _pf_specs)
                 _pf_el = time.time() - _pf_t0
             else:
                 _pf_el = 0.0
@@ -2395,7 +2428,7 @@ class SMCScanner:
         # без вимірів оптимізувати наосліп не можна.
         _scan_t0 = time.time()
         _tm = {'main': 0.0, 'tf': 0.0, 'ob': 0.0, 'vob': 0.0}
-        for symbol in list(self._watchlist):
+        for symbol in _univ:
             if not self._running:
                 return
             # ⚡ БАР TF ВОРІТ МІГ ЗАКРИТИСЬ ПРЯМО ЗАРАЗ, ПОСЕРЕД ПРОХОДУ.
@@ -3120,8 +3153,10 @@ class SMCScanner:
         # `ob` = 1H OB-стан, `vob` = детекція Volumized. Так одразу видно, чи
         # вузьке місце — мережа (пагінація 3000 барів) чи CPU-детектори.
         _el = time.time() - _scan_t0
-        _n = max(1, len(self._watchlist))
-        print(f"[SMC] Scan #{self._scan_count}: {len(self._watchlist)} symbols in "
+        _n = max(1, len(_univ))
+        _nx = len(_univ) - len(self._watchlist)
+        print(f"[SMC] Scan #{self._scan_count}: {len(_univ)} symbols"
+              f"{f' (+{_nx} 🔭 скан)' if _nx > 0 else ''} in "
               f"{_el:.1f}s ({_el / _n:.1f}s/coin) — prefetch {_pf_el:.1f}s · main {_tm['main']:.1f}s · "
               f"tf {_tm['tf']:.1f}s · ob {_tm['ob']:.1f}s · vob {_tm['vob']:.1f}s, "
               f"errors={self._errors}")
@@ -3354,7 +3389,7 @@ class SMCScanner:
         """
         if not self._settings.get('ob_alert_enabled', True):
             return 0
-        syms = list(self._watchlist)
+        syms = SMCScanner.scan_universe(self)
         if not syms:
             return 0
         ob_tf = self._settings.get('ob_filter_timeframe', '1h')
@@ -3850,7 +3885,10 @@ class SMCScanner:
             self._spring = {}
         # 👁 Ознака живого сканування: монету ПЕРЕВІРЕНО цим проходом (навіть
         # коли бар той самий і перераховувати нічого) — сторінка бачить рух.
-        st = self._spring_stats_ref()
+        # ⚠️ Лічильники рядка стану — лише монети WATCHLIST (монети 🔭 скану
+        # сканер теж веде з 15.11, але «N / watchlist %» має лишатись чесним).
+        _in_wl = S in set(getattr(self, '_watchlist', None) or [S])
+        st = self._spring_stats_ref() if _in_wl else {}
         cyc = int(getattr(self, '_scan_count', 0) or 0)
         if st.get('tick_cycle') != cyc:
             st['tick_cycle'], st['tick_n'] = cyc, 0

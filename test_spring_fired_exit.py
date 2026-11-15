@@ -19,7 +19,7 @@ _TM = open(os.path.join(_ROOT, 'detection', 'trade_manager.py'), encoding='utf-8
 _HTML = open(os.path.join(_ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
 _APP = open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
 _IP = open(os.path.join(_ROOT, 'web', 'info_portal.py'), encoding='utf-8').read()
-_JS = open(os.path.join(_ROOT, 'infosite', 'app.js'), encoding='utf-8').read()
+_JS = open(os.path.join(_ROOT, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
 
 
 def _check(c, m):

@@ -6362,7 +6362,8 @@ class FuelFilterDaemon:
         return {'symbol': sym, 'side': side, 'ok': True, 'reason': 'відкрито'}
 
     def hand_open(self, sym: str, side: str, engine: str, name: str,
-                  source: str, note: str = '', price: Optional[float] = None) -> Dict:
+                  source: str, note: str = '', price: Optional[float] = None,
+                  book: Optional[str] = None) -> Dict:
         """✋ РУЧНЕ відкриття ОДНІЄЇ монети з будь-якої таблиці-рекомендації
         (напр. 🔭 Пружина — скан біржі). Той самий шлях, що ✋ групове МММ:
         `_open(by_hand=True)` (жодних воріт, лише технічні умови) → таймер →
@@ -6375,9 +6376,14 @@ class FuelFilterDaemon:
         if side not in ('LONG', 'SHORT'):
             return {'symbol': S, 'side': None, 'ok': False,
                     'reason': 'немає напрямку (⚖) — нічого відкривати'}
-        if self._tm_blocks_open(S):
+        _bk = str(book or '').lower()
+        _bk = _bk if _bk in ('real', 'paper') else None
+        if self._tm_blocks_open(S, _bk):
+            _w = {'real': 'уже є РЕАЛЬНА угода по монеті',
+                  'paper': 'уже є paper-угода по монеті'}.get(_bk)
             return {'symbol': S, 'side': side, 'ok': False,
-                    'reason': 'уже в угоді (відкрита позиція)'}
+                    'reason': _w or ('уже в угоді (відкрита позиція) — оберіть книгу '
+                                     '«🏦 реальна» або «🧪 paper»')}
         mark = None
         try:
             from detection.market_data import get_market_data
@@ -6396,7 +6402,7 @@ class FuelFilterDaemon:
             opened = self._open(S, side, {'mark_price': mark, 'dir': side}, s,
                                 opened_by=_ob_compose('manual', engine),
                                 skip_ctr_safeguard=True, skip_safeguard=True,
-                                by_hand=True)
+                                by_hand=True, book=_bk)
         except Exception as e:
             print(f"[FF-HAND] open error {S}: {e}")
             return {'symbol': S, 'side': side, 'ok': False, 'reason': f'помилка: {e}'}
@@ -7150,8 +7156,10 @@ class FuelFilterDaemon:
               skip_safeguard: bool = False, by_hand: bool = False,
               signal_at: Optional[float] = None,
               origin_trace: Optional[str] = None,
-              opp_wait: bool = False):
-        """Trigger position open via TradeManager/TestMode. Fuel filter does NOT
+              opp_wait: bool = False, book: Optional[str] = None):
+        """Trigger position open via TradeManager/TestMode.
+
+        book: ✋ явна книга ('real'|'paper') — лише з by_hand (вимога 11.11). Fuel filter does NOT
         store position data — it only tracks which symbols it opened and delegates
         the actual position to TM. Positions appear in Trade Manager or Test Mode
         tables based on toggle states.
@@ -7340,12 +7348,22 @@ class FuelFilterDaemon:
 
         # Prefer real TM if both are on
         is_real = tm_enabled
+        _fb = (str(book or '').lower() if by_hand else '')
+        _fb = _fb if _fb in ('real', 'paper') else None
+        if _fb == 'real' and not tm_enabled:
+            self._engine_skip[symbol] = 'Trade Manager вимкнено — реальну угоду не відкрити'
+            return False
+        if _fb == 'paper':
+            if not test_mode:
+                self._engine_skip[symbol] = 'Test Mode вимкнено — paper-угоду не відкрити'
+                return False
+            is_real = False
         mode = 'real' if is_real else 'paper'
         print(f"[FuelFilter] {symbol}: opening in {mode} mode")
 
         # Don't double-open: if TM already holds this symbol (real or shadow),
         # just adopt it into tracking instead of trying to open again.
-        if by_hand and self._tm_blocks_open(symbol):
+        if by_hand and self._tm_blocks_open(symbol, _fb):
             # ✋ Людина просила ВІДКРИТИ, а не «прийняти в облік» наявну —
             # мовчазне adopt читалось би як «відкрито». Друга позиція по тому
             # самому символу (хедж) поки не підтримується книгою TM.
@@ -7371,8 +7389,13 @@ class FuelFilterDaemon:
                     print(f"[FuelFilter] {symbol}: calling tm.manual_open({symbol}, {side}, bypass_gates=True)")
                     if by_hand:
                         try:
-                            res = tm.manual_open(symbol, side, bypass_gates=True,
-                                                 opened_by=opened_by, by_hand=True)
+                            if _fb:
+                                res = tm.manual_open(symbol, side, bypass_gates=True,
+                                                     opened_by=opened_by, by_hand=True,
+                                                     book=_fb)
+                            else:
+                                res = tm.manual_open(symbol, side, bypass_gates=True,
+                                                     opened_by=opened_by, by_hand=True)
                         except TypeError:   # старіший TM без by_hand
                             res = tm.manual_open(symbol, side, bypass_gates=True,
                                                  opened_by=opened_by)
@@ -7455,7 +7478,7 @@ class FuelFilterDaemon:
               f"(fuel {fuel.get('dir')}, exhaustion {exh_str})")
         return True
 
-    def _tm_blocks_open(self, symbol: str) -> bool:
+    def _tm_blocks_open(self, symbol: str, book: Optional[str] = None) -> bool:
         """🏦 Чи блокує наявна позиція НОВЕ відкриття монети. TM має
         ПРІОРИТЕТ (вимога 27.10): paper-угода Test Mode не заважає реальній,
         коли реальна книга доступна (TM ✓ · TRD ✓ · ліміт позицій).
@@ -7465,6 +7488,9 @@ class FuelFilterDaemon:
         tm = _g() if _g else None
         if tm is not None and hasattr(tm, 'blocks_new_open'):
             try:
+                if book in ('real', 'paper'):
+                    # ✋ явна книга: блокує лише позиція В НІЙ
+                    return bool(tm.blocks_new_open(symbol, book))
                 if tm.blocks_new_open(symbol):
                     return True
                 fm = self._fuel_managed.get(symbol)

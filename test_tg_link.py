@@ -65,7 +65,7 @@ def test_bot_and_pages_wire_the_flow():
     _check('Привʼязати Telegram' in tg, 'новому /start підказано про привʼязку')
     au = open(os.path.join(_HERE, 'web', 'auth.py'), encoding='utf-8').read()
     _check("@app.route('/api/me/tg-link'" in au and 'tglink()' in au, 'маршрут + кнопка в кабінеті бота')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('data-tglink' in js and '/api/me/tg-link' in js, 'кнопка на інфосайті')
     print('✓ бот, кабінет і інфосайт повʼязані')
 

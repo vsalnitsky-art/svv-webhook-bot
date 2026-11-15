@@ -222,7 +222,7 @@ def test_source_is_the_banner_compute_decision():
 
 def test_labels_mirrors():
     sl = open(os.path.join(_HERE, 'detection', 'signal_labels.py'), encoding='utf-8').read()
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check("'MMD':              '🧠 МММ-Decision'" in sl and sl.count("'MMD': '🧠'") == 2, 'labels')
     _check('"MMD": "🧠 МММ-Decision"' in js and js.count('"MMD": "🧠"') == 2, 'infosite')
     _check("'MMD': '🧠 МММ-Decision'" in _HTML and _HTML.count("'MMD': '🧠'") == 2, 'page')

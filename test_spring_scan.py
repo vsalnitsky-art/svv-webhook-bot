@@ -448,9 +448,30 @@ def test_open_route_goes_through_hand_open_with_label():
 
 def test_open_button_rendered():
     assert 'function _xsOpenCell(' in HTML and '_xsOpenCell(x) + _xsDelCell(x)' in HTML
-    assert "fetch('/api/spring-scan/open'" in HTML
+    assert "_xsHandOpen('/api/spring-scan/open'" in HTML
     lab = open(os.path.join(ROOT, 'detection', 'signal_labels.py'), encoding='utf-8').read()
     assert "'XSPR':             '🔭 Пружина-скан'" in lab
+
+
+# ── ✋ ТЕ САМЕ ДЛЯ 🌀 ПРУЖИНИ WATCHLIST (вимога 11.11) ──
+def test_watchlist_spring_has_the_same_open_buttons():
+    src = open(os.path.join(ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
+    i = src.index("'/api/spring/open'")
+    body = src[i:src.index('@app.route', i + 10)]
+    # те саме правило (open_plan) і той самий ✋ шлях, свій двигун-мітка
+    assert 'open_plan(' in body and 'ff.hand_open(' in body and "'SPR'" in body
+    assert 'spring_for(' in body
+    assert "_xsOpenCell(r, 'sprOpen')" in HTML and 'function sprOpen(' in HTML
+    assert "_xsHandOpen('/api/spring/open'" in HTML
+    i = HTML.index('id="spr-table"')
+    head = HTML[i:HTML.index('</thead>', i)]
+    assert '✋ Угода' in head
+    import re
+    assert len(re.findall(r'<th[ >]', head)) == 13 and 'id="spr-tbody"><tr><td colspan="13"' in HTML
+    lab = open(os.path.join(ROOT, 'detection', 'signal_labels.py'), encoding='utf-8').read()
+    assert "'SPR':              '🌀 Пружина'" in lab
+    js = open(os.path.join(ROOT, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
+    assert '"SPR": "🌀 Пружина"' in js and "'SPR': '🌀 Пружина'" in HTML
 
 
 if __name__ == '__main__':

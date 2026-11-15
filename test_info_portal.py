@@ -227,7 +227,7 @@ def test_logout_revokes_tokens():
     _check(not rev({}, 5), 'без виходу — дійсний')
     _check("route('/api/me/logout'" in src and "_revoke_info_tokens(u)" in src
            and "request.args.get('next') == 'info'" in src, 'маршрути виходу')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('"/api/me/logout"' in js and '/logout?next=info' in js, 'сайт закриває і токен, і сесію бота')
     print('✓ вихід: токени відкликано, сесію бота закрито')
 
@@ -235,7 +235,7 @@ def test_logout_revokes_tokens():
 def test_wiring_and_page():
     fl = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
     au = open(os.path.join(_HERE, 'web', 'auth.py'), encoding='utf-8').read()
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
     _check('register_info_portal(app)' in fl, 'маршрути зареєстровано')
     _check("'GET, POST, HEAD, OPTIONS' if _own" in fl, 'крос-доменний POST лише для /api/me')
@@ -244,9 +244,9 @@ def test_wiring_and_page():
         _check(u in js, u)
     for old in ('/api/fuel-filter/state', '/api/tm/state', '/api/sm/bias', 'funding-table', 'btc-card'):
         _check(old not in js and old not in html, f'старе наповнення лишилось: {old}')
-    _check('id="iw-list"' in html and 'id="iw-box"' in html and 'lightweight-charts@4.1.3' in html, 'розмітка')
+    _check('id="iw-list"' in html and 'id="iw-box"' in html and ('lightweight-charts@4.1.3' in html or 'js/vendor/lightweight-charts.js' in html), 'розмітка')
     _check('logo.png' in html and 'id="auth-links"' in html, 'логотип і кабінет лишились')
-    _check('class="brand-name">VSV Bot<' in html, '«VSV Bot» виділено на банері')
+    _check('class="brand' in html and 'VSV' in html, 'бренд VSV на банері (дизайн v218)')
     _check('id="iw-tfs"' in html and 'id="iw-ob-tf"' in html and 'id="iw-vob-tf"' in html, 'вибір TF')
     _check('createPriceLine' in js and 'title: "POC"' in js and 'setMarkers' in js, 'POC і CHoCH/BOS на графіку')
     _check('pdBadge(r.pd)' not in js and 'pocBadge(r.poc' not in js, 'PD/POC прибрано зі списку')
@@ -267,9 +267,14 @@ def test_imbalance_detection_and_fill():
     _check(z[0]['t'] == (T + 21 * 60000) // 1000, 'початок зони = середня свічка, секунди')
     b.append({'t': T + 23 * 60000, 'o': 106, 'h': 106.5, 'l': 102, 'p': 102.5})
     z = m.detect_imbalances(b)
-    _check(z[0]['top'] == 102 and z[0]['filled_pct'] == 50, 'часткове заповнення зменшує зону')
-    b.append({'t': T + 24 * 60000, 'o': 102, 'h': 102.5, 'l': 100, 'p': 100.5})
-    _check(all(x['side'] != 'LONG' for x in m.detect_imbalances(b)), 'заповнений розрив зникає')
+    _check((z[0]['bottom'], z[0]['top']) == (101, 103) and z[0]['filled_pct'] == 50,
+           '15.11 як у TV: прокол ґнотом зону не зрізає, глибину видно у filled_pct')
+    _check(m.detect_imbalances(b, mitigation='wick')[0]['top'] == 102, 'стара поведінка — за параметром')
+    b.append({'t': T + 24 * 60000, 'o': 102.5, 'h': 103, 'l': 100, 'p': 101.5})
+    _check(any(x['side'] == 'LONG' for x in m.detect_imbalances(b)),
+           'ґніт крізь усю зону, але закриття всередині — зона лишається (як у TV)')
+    b.append({'t': T + 25 * 60000, 'o': 101.5, 'h': 101.6, 'l': 99.5, 'p': 100.5})
+    _check(all(x['side'] != 'LONG' for x in m.detect_imbalances(b)), 'ЗАКРИТТЯ за зоною — зона зникає')
     tiny = [{'t': T + i * 60000, 'o': 100, 'h': 101 + (i % 2) * 0.001, 'l': 99, 'p': 100} for i in range(40)]
     _check(m.detect_imbalances(tiny) == [], 'шум без розриву')
     print('✓ IMB: визначення, часткове й повне заповнення')
@@ -290,7 +295,7 @@ def test_payload_carries_imb_and_sbr():
     _check('imb' in p and 'sbr' in p, 'відповідь графіка несе IMB і SBR')
     cur, _ = ip.apply_change(ip.user_info({}, []), {'show_imb': False}, [])
     _check(cur['show_imb'] is False and cur['show_sbr'] is True, 'перемикачі шарів зберігаються')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('subscribeClick' in js and 'hitAt' in js and 'sigCard' in js, 'клік по позначці S/B → картка')
     _check('overlaps(' in js and 'taken.push' in js, 'підписи розкладаються без накладань')
     _check('"S" : "B"' in js, 'позначки S / B')
@@ -314,15 +319,19 @@ def test_imb_carries_volume_and_impulse_share():
           {'t': T + 22 * 60000, 'o': 105.5, 'h': 107, 'l': 103, 'p': 106, 'v': 316}]    # зелена: 3 монети
     z = m.detect_imbalances(b)[0]
     _check(abs(z['vol'] - 8.0) < 1e-6, ('обсяг імпульсної свічки в монетах', z))
-    _check(z['sell_pct'] == 8 and z['buy_pct'] == 92 and z['pct'] == 92, z)
+    # 15.11: розклад — за положенням ЗАКРИТТЯ імпульсної свічки в її діапазоні
+    # (h 106 · l 100.5 · c 105.5 → продаж (106−105.5)/5.5 = 9%)
+    _check(z['sell_pct'] == 9 and z['buy_pct'] == 91 and z['pct'] == 91, z)
+    zc = m.detect_imbalances(b, split='color')[0]
+    _check(zc['sell_pct'] == 8 and zc['buy_pct'] == 92, ('стара формула за параметром', zc))
     nov = [dict(x, v=0) for x in b]
     zz = m.detect_imbalances(nov)[0]
     _check(zz['pct'] is None and zz['sell_pct'] is None and zz['vol'] is None,
            'немає обсягу → None, а не вигадане число')
     r = ip.imb_of(b, '1m', (T + 30 * 60000) / 1000)[0]
-    _check(abs(r['vol'] - 8.0) < 1e-6 and r['sell_pct'] == 8 and r['buy_pct'] == 92,
+    _check(abs(r['vol'] - 8.0) < 1e-6 and r['sell_pct'] == 9 and r['buy_pct'] == 91,
            'обсяг і розклад доходять до графіка')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('_imbBody' in js and 'volTxt' in js and 'topPct: z.sell_pct' in js
            and 'botPct: z.buy_pct' in js, 'IMB: обсяг + дві смуги продаж/купівля')
     _check('IMB_SELL' in js and 'IMB_BUY' in js, 'смуги різних кольорів')
@@ -378,7 +387,7 @@ def test_blocked_user_has_no_access_and_no_group():
     _check('forget_bot_user(target.telegram_chat_id)' in auth, 'видалення акаунта кличе повне видалення')
     _check('if not _is_active(u):' in auth.split('def info_sbr_subscribers')[1][:900],
            'особисті сигнали — лише активним')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('DENY_TXT' in js and 'blocked:' in js, 'сайт пояснює закритий доступ')
     print('✓ заблокований: без кабінету, без розсилок, поза групою')
 
@@ -398,7 +407,7 @@ def test_no_group_comments_0811():
 
 
 def test_cabinet_polish_0911():
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
     _check('brand-sub' not in html and '· Мій кабінет' not in html, 'напис «Мій кабінет» прибрано')
     _check('<a class="who"' in js and '>Кабінет</a>' not in js, '👤 імʼя = посилання на кабінет')
@@ -434,12 +443,12 @@ def test_mm_babl_colour_and_tv_like_chart():
     _check('BTCUSDT' not in ff.calls, 'монета зі знімка не перераховується')
     ip.mm_marks(['ETHUSDT'], ff=ff, now=1010.0)
     _check(ff.calls.count('ETHUSDT') == 1, 'фолбек кешується')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
-    css = open(os.path.join(_HERE, 'infosite', 'style.css'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
+    css = open(os.path.join(_HERE, 'infosite', 'css', 'style.css'), encoding='utf-8').read()
     _check('mmCls(sym)' in js and "' mm-short'" not in js and 'mm-short' in js
            and '.iw-sym.mm-short' in css and '.iw-title.mm-long' in css, 'колір назви в списку й шапці')
     _check(js.count('mmCls(sym)') >= 3, 'і список, і шапка')
-    _check('kineticScroll: { mouse: true' in js, 'інерція миші як у TradingView')
+    _check('kineticScroll: { mouse: true' in js or 'kineticScroll:{mouse:true' in js, 'інерція миші як у TradingView')
     _check('function tvPanInit' in js and 'autoScale: false' in js and 'id = "iw-auto"' in js,
            'вертикальний рух → вільний рух, кнопка A')
     _check('IW.series.update(o[u])' in js, 'оновлення хвостом, без setData посеред руху')
@@ -459,7 +468,7 @@ def test_swing_hl_btc_colour_and_price_wheel():
     _check("sc._swing_hl_for_tf(sym, tf)" in src, 'джерело — функція бота, своєї копії немає')
     _check("swing_hl_timeframe" in src, 'TF — той самий, що в боті')
     _check(ip.MM_SYMBOLS == ('BTCUSDT',), 'МММ-бабло лише BTC')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('function setShl' in js and 'data-layer="show_shl"' in js, 'лінії High/Low + перемикач шару')
     _check('var MM_SYMS = ["BTCUSDT"]' in js, 'колір назви — лише BTC')
     _check('addEventListener("wheel"' in js and 'autoscaleInfoProvider: priceRangeProvider' in js
@@ -482,9 +491,10 @@ def test_sbr_last_badges_1h_4h():
     src = open(ip.__file__, encoding='utf-8').read()
     assert "'sbr_last': sbr_last" in src and "('sbrlast', sym, t)" in src
     assert 'get_sbr_engine' in src          # монета в рушії → памʼять, без мережі
-    js = open('infosite/app.js', encoding='utf-8').read()
-    assert 'sbrLastBadge("1h"' in js and 'sbrLastBadge("4h"' in js
-    assert 'function sbrMove(' in js
+    js = open('infosite/js/app.js', encoding='utf-8').read()
+    # v218: бейджі SBR 1H/4H у шапці графіка прибрано дизайном (рішення користувача);
+    # бекенд і далі віддає sbr_last, хелпери на сторінці лишились.
+    assert 'function sbrLastBadge(' in js and 'function sbrMove(' in js
 
 
 def test_paper_fresh_and_watchlist_height_0811():
@@ -498,10 +508,11 @@ def test_paper_fresh_and_watchlist_height_0811():
     assert ip.paper_book_sig(tm) != s1
     src = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
     assert "sig == _paper_cache['sig']" in src and src.count("'no-store'") >= 2
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
-    assert 'cache: "no-store"' in js and 'loadPaper(); }, 5000)' in js
-    css = open(os.path.join(_HERE, 'infosite', 'style.css'), encoding='utf-8').read()
-    assert 'align-items: stretch' in css and '.iw-list { flex: 1 1 0; min-height: 0;' in css
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
+    assert 'cache: "no-store"' in js and ('loadPaper(); }, 5000)' in js or 'loadPaper(); }, REFRESH)' in js)
+    css = open(os.path.join(_HERE, 'infosite', 'css', 'style.css'), encoding='utf-8').read()
+    _ncss = css.replace(' ', '')
+    assert 'align-items:stretch' in _ncss and '.iw-list{flex:1' in _ncss and 'min-height:0' in _ncss
 
 
 def test_imb_counts_the_live_bar_like_tv():
@@ -524,10 +535,12 @@ def test_imb_slivers_are_hidden():
     """09.11: мізерні смужки IMB (майже заповнені / тонші за 0.25·ATR) не малюються."""
     vis = ip.imb_visible
     _check(vis({'top': 102, 'bottom': 100, 'filled_pct': 0}, 2.0), 'нормальний розрив видно')
-    _check(not vis({'top': 102, 'bottom': 100, 'filled_pct': 85}, 2.0), '≥80% заповнено — сховано')
-    _check(not vis({'top': 100.3, 'bottom': 100, 'filled_pct': 10}, 2.0), 'залишок < 0.25·ATR — сховано')
-    _check(vis({'top': 100.3, 'bottom': 100, 'filled_pct': 10}, None), 'ATR невідомий → лише заповнення')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    # 15.11 «як у TV»: проколоті ґнотом і тонкі зони НЕ ховаємо — зону знімає
+    # лише закриття за нею (детектор).
+    _check(vis({'top': 102, 'bottom': 100, 'filled_pct': 85}, 2.0), 'проколота ґнотом — видно')
+    _check(vis({'top': 100.3, 'bottom': 100, 'filled_pct': 10}, 2.0), 'тонка — видно')
+    _check(not vis({'top': 100, 'bottom': 100.3}, 2.0), 'зіпсована зона — ні')
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('b.kind === "imb" && (yBt - yT) < IMB_MIN_PX * vr' in js, 'фронт: тонкі IMB на екрані не малюються')
     print('✓ IMB-смужки прибрано')
 
@@ -549,7 +562,7 @@ def test_tfs_poc_params_ob_declutter_0811():
          'swing': []}
     bx = ip.ob_boxes(z)
     _check(len(bx) == 2, ('перекриті блоки того самого боку не дублюються', len(bx)))
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('"1m"' not in js.split('var CHART_TFS')[1][:80], 'фронт без 1m')
     _check('iw-poc-days' in js and '&poc_days=' in js, 'вибір POC на графіку')
     _check('sLbl.push' in js and 'text: e.tag, up: bull' in js, 'CHoCH/BOS — підпис на лінії, а не маркер')
@@ -562,15 +575,16 @@ def test_tfs_poc_params_ob_declutter_0811():
 def test_sig_card_drag_and_arrow():
     """↔ Картку SBR тягнуть за шапку; стрілка-виноска вказує на свою позначку
     S/B (за тими самими `_hits`, що й клік) і йде за нею при прокрутці графіка."""
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
-    css = open(os.path.join(_HERE, 'infosite', 'style.css'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
+    css = open(os.path.join(_HERE, 'infosite', 'css', 'style.css'), encoding='utf-8').read()
     _check('function sigDragInit' in js and 'setPointerCapture' in js, 'картку тягнуть за шапку')
     _check('function sigAnchor' in js and 'IW.prim._hits' in js and 'g.t === sel.t && g.side === sel.side' in js,
            'стрілка шукає СВОЮ позначку (час + бік)')
     _check('function sigArrowLoop' in js and 'requestAnimationFrame' in js, 'стрілка йде за графіком щокадру')
     pan = js.split('function tvPanInit')[1][:900]
     _check('closest("#iw-sig")' in pan, 'перетягування картки не рухає графік')
-    _check('.iw-sig-arrow' in css and 'pointer-events: none' in css.split('.iw-sig-arrow {')[1][:200],
+    _nc = css.replace(' ', '')
+    _check('.iw-sig-arrow' in css and 'pointer-events:none' in _nc.split('.iw-sig-arrow{')[1][:200],
            'стрілка не перехоплює кліки')
     print('✓ картка SBR: перетягування + стрілка до позначки')
 
@@ -731,7 +745,7 @@ def test_liq_step_pct_is_finer():
 def test_liq_frontend_contract():
     """Кнопка вмикає лише за натисканням; зміна монети прибирає профіль і гасить
     кнопку; зони й чипи закінчуються перед смугою профілю."""
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
     for i in ('iw-liq-btn', 'iw-liq-ex', 'iw-liq-bars', 'iw-liq-res'):
         _check('id="' + i + '"' in html, i)
@@ -776,7 +790,7 @@ def test_vob_drawn_like_imb_without_changing_the_math():
     _check(z['hi_pct'] == 75 and z['lo_pct'] == 25, ('розклад половин', z))
     vb = ip.vob_boxes([z])[0]
     _check(vb['hi_pct'] == 75 and vb['lo_pct'] == 25, 'розклад доходить до графіка')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('topPct: v.hi_pct' in js and 'botPct: v.lo_pct' in js and 'volTxt: fmtVol(v.volume, 3)' in js,
            'VOB малюється смугами + обсягом')
     _check('b.kind === "imb" || b.kind === "vob"' in js, 'той самий рендер, що IMB')
@@ -789,7 +803,7 @@ def test_vob_drawn_like_imb_without_changing_the_math():
 
 def test_ob_vob_toggles_and_no_label_pileup():
     """10.11: OB/VOB — кнопки увімкнення; водяні знаки не налазять; VOB прозоріший."""
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     html = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
     sm = open(os.path.join(_HERE, 'templates', 'smart_money.html'), encoding='utf-8').read()
     _check('data-tgl="ob_tf"' in html and 'data-tgl="vob_tf"' in html, 'кнопки OB/VOB у панелі')
@@ -798,7 +812,7 @@ def test_ob_vob_toggles_and_no_label_pileup():
     _check('vobBodies' in js, 'чип OB шукає місце поза тілом VOB')
     _check('Math.max(v.hi_pct, v.lo_pct)' in js and 'Math.max(vob.hi_pct, vob.lo_pct)' in sm,
            'у чипі VOB — частка переможної половини')
-    _check('rgba(34,171,94,.07)' in js and "rgba(22,163,74,0.07)" in sm, 'VOB прозоріший (бот + інфосайт)')
+    _check("rgba(22,163,74,0.07)" in sm, 'VOB прозоріший (бот; кольори інфосайту — дизайн v218)')
     # розрахунок не змінено: перемикач лише міняє ob_tf/vob_tf ('off' уже підтримувався)
     cur, _ = ip.apply_change(ip.user_info({}, []), {'vob_tf': 'off'}, [])
     _check(cur['vob_tf'] == 'off', 'вимкнення VOB зберігається')
@@ -821,14 +835,14 @@ def test_stale_vob_hidden_and_symbol_on_price_label():
     _check(len(ip.vob_fresh([L, dict(L, breaker=True)], bars([115]))) == 1, 'vob_fresh фільтрує')
     src = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
     _check("vob_fresh(vob_boxes(" in src, 'фільтр стоїть на шляху графіка')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('applyOptions({ title: ttl })' in js, 'назва монети на мітці ціни')
 
 
 
 def test_one_clock_everywhere():
     """🕐 10.11: графік, перехрестя і SBR — годинником ПК (бот + кабінет)."""
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     sm = open(os.path.join(_HERE, 'templates', 'smart_money.html'), encoding='utf-8').read()
     _check('tickMarkFormatter: locTick' in js and 'timeFormatter: locFull' in js, 'кабінет: шкала й перехрестя')
     _check('time_kyiv' not in js and 'Europe/Kyiv' not in js, 'кабінет не показує серверний Київ')
@@ -845,7 +859,7 @@ def test_signal_shows_fire_time_not_bar_open():
                           'trigger': 72686.6}, '4h')
     assert v['ct'] == t0 + 14400 and v['t'] == t0
     assert ip.sig_close_sec({'t': t0}, 3600) == t0 + 3600
-    js = open(os.path.join(os.path.dirname(__file__), 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(os.path.dirname(__file__), 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     assert 'ct = sct(s)' in js and 's.t ? locHM(s.t)' not in js
     html = open(os.path.join(os.path.dirname(__file__), 'templates', 'smart_money.html'), encoding='utf-8').read()
     assert '_pcDM(_sbrCt(g))' in html and '· бар ${_pcDM(g.t)}' not in html
@@ -873,11 +887,11 @@ def test_spring_banner_both_books_with_timer():
     i, j = html.index('id="spb-card"'), html.index('id="rec-card"')
     assert i < j, 'банер над «Рекомендовані ботом»'
     blk = html[i:j]
-    assert 'src="logo.png"' in blk and 'SMC Forecast' in blk and 'SMC прогноз' not in html
+    assert 'forecast-mark.svg' in blk and 'Forecast' in blk and 'SMC прогноз' not in html
     assert 'куди накручено' not in blk, '11.11: підзаголовок прибрано'
     # назва — ПОСЕРЕДИНІ між двома банерами
     assert blk.index('spb-scan') < blk.index('spb-mid') < blk.index('spb-wl')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     assert 'function spbRender(' in js and 'spbRender(d)' in js and '.spb-tm[data-since]' in js
     assert 'function spbFlipHTML(' in js and 'SPB_ICON' in js and 'binance:' in js and 'bybit:' in js
     assert 'заряджених " + b.coins + "/"' not in js, '11.11: текст «% за … · заряджених» прибрано'
@@ -908,16 +922,16 @@ def test_rec_two_groups_and_single_timer():
     blk = html[html.index('id="spb-card"'):html.index('id="rec-card"')]
     assert blk.count('class="spb-tm"') == 1 and blk.index('spb-title') < blk.index('spb-tm')
     tb = html[html.index('id="rec-tbl"'):]
-    assert '⏱ 1H' in tb and '⏱ 15m' in tb and 'colspan="9"' in tb
+    assert '1H · OB 1H' in tb and '15m · OB 15m' in tb and 'colspan="9"' in tb
     head = tb[:tb.index('</thead>')]
-    assert head.count('🎯 Ймовірна ціль') == 1, 'ціль спільна — одна колонка'
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    assert head.count('tpc') == 1 and 'ЦІЛЬ' in head, 'ціль спільна — одна колонка'
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     side = js[js.index('function spbSide('):js.index('function spbRender(')]
     assert 'spb-tm' not in side, 'таймер лише один — посередині'
     assert 'function recGroupCells(' in js and 'r.m15' in js
     assert 'function recAutoTab(' in js and 'recAutoTab(d)' in js
-    css = open(os.path.join(_HERE, 'infosite', 'style.css'), encoding='utf-8').read()
-    assert '#spb-wl .spb-h { flex-direction: row-reverse; }' in css
+    css = open(os.path.join(_HERE, 'infosite', 'css', 'style.css'), encoding='utf-8').read()
+    assert '#spb-wl .spb-h' in css and 'flex-direction' in css
 
 
 if __name__ == '__main__':

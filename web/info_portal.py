@@ -268,12 +268,12 @@ def ohlc_of(klines, n=OHLC_BARS):
     return out
 
 
-IMB_SHOW = 12               # скільки незаповнених IMB малюємо
+IMB_SHOW = 16               # скільки невідпрацьованих IMB малюємо (15.11: 12→16 — як у TV видно всю серію)
 SBR_SHOW = 40               # скільки останніх сигналів SBR на графіку
 
 
-IMB_MAX_FILLED = 80         # заповнено ≥ N% → розрив відпрацьовано, не малюємо
-IMB_MIN_REST_ATR = 0.25     # залишок зони < N·ATR(14) → лише смужка-шум
+IMB_MAX_FILLED = 100        # 15.11: як у TV — зону знімає лише ЗАКРИТТЯ за нею (детектор)
+IMB_MIN_REST_ATR = 0.0      # 15.11: тонкі зони TV малює — не ховаємо
 
 
 def _imb_atr(bars):
@@ -290,17 +290,18 @@ def _imb_atr(bars):
 
 
 def imb_visible(z, atr):
-    """ЧИСТА: чи варто малювати IMB (вимога 09.11 — «мізерні полоси захламляють
-    графік»). Ховаємо розрив, який ціна вже майже закрила (filled_pct ≥
-    IMB_MAX_FILLED) або чий НЕЗАПОВНЕНИЙ залишок тонший за IMB_MIN_REST_ATR·ATR.
-    ATR невідомий → судимо лише за заповненням."""
+    """ЧИСТА: чи малювати IMB. КАЛІБРОВКА 15.11 «як у TradingView»: зону
+    відпрацьовано лише коли бар ЗАКРИВСЯ за нею — це вирішує детектор
+    (`mitigation='close'`), тож тут лишилась тільки перевірка коректності
+    (верх вище низу). Колишні пороги «≥80% заповнено» / «залишок < 0.25·ATR»
+    ховали зони, які TV показує (проколоті ґнотом, тонкі)."""
     try:
-        if float(z.get('filled_pct') or 0) >= IMB_MAX_FILLED:
+        if float(z.get('filled_pct') or 0) > IMB_MAX_FILLED:
             return False
         rest = float(z['top']) - float(z['bottom'])
     except (KeyError, TypeError, ValueError):
         return False
-    if atr and rest < IMB_MIN_REST_ATR * float(atr):
+    if atr and IMB_MIN_REST_ATR and rest < IMB_MIN_REST_ATR * float(atr):
         return False
     return rest > 0
 

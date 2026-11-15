@@ -149,7 +149,7 @@ def test_state_persists_and_exposes_the_section():
 
 def test_labels_mirrors():
     sl = open(os.path.join(_HERE, 'detection', 'signal_labels.py'), encoding='utf-8').read()
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check("'MMF':              '🔮 МММ-Local'" in sl and sl.count("'MMF': '🔮'") == 2, 'labels')
     _check('"MMF": "🔮 МММ-Local"' in js and js.count('"MMF": "🔮"') == 2, 'infosite')
     _check("'MMF': '🔮 МММ-Local'" in _HTML and _HTML.count("'MMF': '🔮'") == 2, 'page')

@@ -489,7 +489,7 @@ def test_engine_label_is_mirrored_everywhere():
            labels.pretty_opened_by('manual → MMM'))
     _check("'MMM': '🧮 МММ-монітор'" in _HTML and "'MMM': '🧮'" in _HTML,
            'дзеркало у smart_money.html не синхронне')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('"MMM": "🧮 МММ-монітор"' in js and '"MMM": "🧮"' in js,
            'дзеркало в infosite/app.js не синхронне')
     print('✓ мітка 🧮 МММ-монітор: бекенд + обидва JS-дзеркала')
@@ -3137,7 +3137,7 @@ def test_the_new_book_engine_label_is_mirrored():
     _check(labels.ENGINE_BADGES.get('MMN', '').endswith('МММ-Trend'),
            labels.ENGINE_BADGES.get('MMN'))
     _check("'MMN':" in _HTML, 'дзеркало у smart_money.html')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('"MMN":' in js, 'дзеркало в infosite/app.js')
     print('✓ мітка двигуна MMN: бекенд + обидва JS-дзеркала')
 

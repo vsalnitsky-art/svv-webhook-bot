@@ -424,7 +424,7 @@ def test_label_is_mirrored_everywhere():
     _check(labels.signal_code_of('ob_alert → Q4') == 'ob_alert', 'код для логіки')
     _check("'ob_alert': '🆕 Новий OB'" in _HTML and "'ob_alert': '🆕'" in _HTML,
            'JS-дзеркало у smart_money.html не синхронне')
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('"ob_alert": "🆕 Новий OB"' in js and '"ob_alert": "🆕"' in js,
            'JS-дзеркало в infosite/app.js не синхронне')
     print('✓ мітка 🆕 Новий OB: бекенд + обидва JS-дзеркала')

@@ -23,7 +23,7 @@ tm_mod = sys.modules[TM.__module__]
 paper_size = tm_mod.paper_size
 _HTML = open(os.path.join(_HERE, 'templates', 'smart_money.html'), encoding='utf-8').read()
 _FLASK = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
-_IJS = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+_IJS = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
 _SRC = open(os.path.join(_HERE, 'detection', 'trade_manager.py'), encoding='utf-8').read()
 _IHTML = open(os.path.join(_HERE, 'infosite', 'index.html'), encoding='utf-8').read()
 _IPORT = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()

@@ -620,10 +620,11 @@ class SpringScan:
         tickers = self._tickers(exchange) or {}
         syms, vols, brk = pick_symbols(tickers, min_vol)
         now = now if now is not None else self._clock()
-        # 🌀 Монети WATCHLIST уже є в таблиці «Пружина» — не дублюємо (вимога 10.11).
+        # 🌀 Монети WATCHLIST беруть участь у РОЗРАХУНКАХ (банер/агрегат — уся
+        # біржа, вимога 11.11), але в ТАБЛИЦЮ не потрапляють: вони вже є в
+        # 🌀 Пружині WATCHLIST (не дублюємо, вимога 10.11).
         wl = self._wl_set()
         brk['in_wl'] = sum(1 for S in syms if S in wl)
-        syms = [S for S in syms if S not in wl]
         for S in [S for S in self._table if S in wl]:
             self._drop(S, self._table.get(S), 'монета в WATCHLIST — уже в 🌀 Пружині', now)
         # 🅱 Скан Binance: монети, яких немає на Bybit (там бот торгує).
@@ -644,6 +645,8 @@ class SpringScan:
         mc = self._settings['min_charge']
         added = 0
         for S, rec in recs.items():
+            if S in wl:                      # лише розрахунок, не таблиця
+                continue
             if S in self._table:
                 if stays_in_table(rec):
                     self._table[S] = self._row(S, rec, now, vols.get(S), flags.get(S))
@@ -824,6 +827,14 @@ class SpringScan:
         with self._lock:
             return self._result.get('agg')
 
+    def signal_symbols(self, cap: int = 40) -> List[str]:
+        """📡 Монети таблиці, які сканер сигналів веде РАЗОМ із WATCHLIST
+        (вимога 15.11: «щоб "Пружина — скан біржі" не ігнорувалась в
+        алгоритмі»). Лише видимі рядки, що є на Bybit (бот торгує й бере бари
+        там), найсильніший заряд першим, стеля `cap` (кожна монета — ~7с циклу)."""
+        rows = [r for r in self.rows() if r.get('bybit') is not False]
+        return [r['symbol'] for r in rows][:max(0, int(cap))]
+
     def rows(self) -> List[Dict]:
         wl = self._wl_set()
         with self._lock:
@@ -875,6 +886,11 @@ def init_spring_scan(db=None, start_loop: bool = False, **kw) -> SpringScan:
 
 def get_spring_scan() -> Optional[SpringScan]:
     return _instance
+
+
+def signal_symbols(cap: int = 40) -> List[str]:
+    """Для сканера сигналів: монети таблиці 🔭 (див. `SpringScan.signal_symbols`)."""
+    return _instance.signal_symbols(cap) if _instance else []
 
 
 def sbr_symbols() -> List[str]:

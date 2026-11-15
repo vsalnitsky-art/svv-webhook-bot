@@ -15,8 +15,8 @@ import test_spring_scan as T  # noqa: E402
 ss, ROOT, HTML = T.ss, T.ROOT, T.HTML
 SRC_SC = open(os.path.join(ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
 APP = open(os.path.join(ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
-CSS = open(os.path.join(ROOT, 'infosite', 'style.css'), encoding='utf-8').read()
-IJS = open(os.path.join(ROOT, 'infosite', 'app.js'), encoding='utf-8').read()
+CSS = open(os.path.join(ROOT, 'infosite', 'css', 'style.css'), encoding='utf-8').read()
+IJS = open(os.path.join(ROOT, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
 TM_SRC = open(os.path.join(ROOT, 'detection', 'trade_manager.py'), encoding='utf-8').read()
 
 
@@ -110,9 +110,10 @@ def test_signed_progress_to_target():
 
 
 def test_sticky_header_is_opaque():
-    i = CSS.index('.rec-wrap .pp-tbl th {')
-    rule = CSS[i:CSS.index('}', i)]
-    _check('sticky' in rule and 'var(--bg)' in rule, 'липка шапка з суцільним тлом')
+    n = CSS.replace(' ', '')
+    i = n.index('.rec-wrap.pp-tblth{')
+    rule = n[i:n.index('}', i)]
+    _check('sticky' in rule and 'background:var(' in rule, 'липка шапка з суцільним тлом')
     print('✓ шапка таблиці не просвічує рядки')
 
 

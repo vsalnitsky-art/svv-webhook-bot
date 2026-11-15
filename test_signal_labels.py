@@ -138,7 +138,7 @@ def _js_map(text, name):
 
 
 def _js_files():
-    for rel in ('templates/smart_money.html', 'infosite/app.js'):
+    for rel in ('templates/smart_money.html', 'infosite/js/app.js'):
         with open(os.path.join(_HERE, rel), encoding='utf-8') as f:
             yield rel, f.read()
 

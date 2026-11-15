@@ -106,9 +106,10 @@ def test_bot_owns_the_banner():
 
 
 def test_infosite_fits_screen():
-    css = open(os.path.join(HERE, 'infosite', 'style.css'), encoding='utf-8').read()
-    assert 'grid-template-columns: minmax(0, 1fr)' in css and '.wrap > * { min-width: 0; }' in css
-    assert '#rec-tbl .g1 { background' not in css, 'групи без окремого тла — без «кусків»'
+    css = open(os.path.join(HERE, 'infosite', 'css', 'style.css'), encoding='utf-8').read()
+    n = css.replace(' ', '')
+    assert 'grid-template-columns:minmax(0,1fr)' in n and '.wrap>*{min-width:0}' in n
+    assert '#rec-tbl.g1{background' not in n, 'групи без окремого тла — без «кусків»'
 
 
 if __name__ == '__main__':

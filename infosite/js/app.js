@@ -86,9 +86,9 @@
   }
 
   var SIGNAL_BADGES_JS = { "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS", "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB", "mm_vob": "🧮 VOB з МММ-монітора", "liq_vob": "💧 VOB + Сканер ліквідності", "ob_alert": "🆕 Новий OB", "poc": "🎯 POC-сетап", "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний", "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний" };
-  var ENGINE_BADGES_JS = { "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4", "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап", "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-Trend", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision", "MMR": "🧩 МММ-Готовність", "MMS": "🔔 МММ-SBR", "XSPR": "🔭 Пружина-скан", "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий" };
-  var SIGNAL_ICON_JS = { "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰", "mm_vob": "🧮", "liq_vob": "💧", "ob_alert": "🆕", "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋", "manual_ui": "✋", "manual_ui_overflow": "✋", "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥", "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭" };
-  var ENGINE_ICON_OVERRIDE_JS = { "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭" };
+  var ENGINE_BADGES_JS = { "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4", "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап", "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-Trend", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision", "MMR": "🧩 МММ-Готовність", "MMS": "🔔 МММ-SBR", "XSPR": "🔭 Пружина-скан", "SPR": "🌀 Пружина", "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий" };
+  var SIGNAL_ICON_JS = { "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰", "mm_vob": "🧮", "liq_vob": "💧", "ob_alert": "🆕", "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋", "manual_ui": "✋", "manual_ui_overflow": "✋", "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥", "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
+  var ENGINE_ICON_OVERRIDE_JS = { "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
   
   function signalCodeOf(raw) { return raw ? String(raw).split(" · ")[0].split(" → ")[0].trim() : ""; }
   function engineCodeOf(raw) { if (!raw) return ""; var parts = String(raw).split(" · ")[0].split(" → "); return parts.length > 1 ? parts[parts.length - 1].trim() : ""; }
@@ -788,14 +788,16 @@
   };
   function _rrect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath(); }
 
-  var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)", IMB_MIN_PX = 4;
+  /* 15.11 IMB «як у TradingView»: зверху помаранчева смуга продажу, знизу бірюзова купівлі
+     (довжина = %), обсяг — праворуч у зоні світлим текстом, зона тягнеться за останню свічку. */
+  var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)", IMB_MIN_PX = 1.5, IMB_EXT_BARS = 20;
   function _imbBar(ctx, X1, w, y, bh, pct, color, hr, vr, font, dark) {
     if (pct == null || pct <= 0 || bh < 1) return;
     var sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, pct)) / 100);
     ctx.fillStyle = color; ctx.fillRect(X1, y, sw, bh);
     ctx.strokeStyle = dark ? "rgba(0,0,0,.55)" : "rgba(0,0,0,.25)"; ctx.lineWidth = Math.max(1, Math.round(hr)); ctx.strokeRect(X1, y, sw, bh);
     if (bh < 9 * vr) return;
-    var fp = Math.max(8, Math.min(32, bh / vr * 0.62)); ctx.font = font(600, fp); ctx.textBaseline = "middle"; ctx.fillStyle = dark ? "rgba(240,242,248,.96)" : "rgba(20,24,32,.9)";
+    var fp = Math.max(7, Math.min(13, bh / vr * 0.5)); ctx.font = font(600, fp); ctx.textBaseline = "middle"; ctx.fillStyle = dark ? "rgba(240,242,248,.96)" : "rgba(20,24,32,.9)";
     var t = pct + "%", tw = ctx.measureText(t).width;
     if (sw >= tw + 10 * hr) { ctx.textAlign = "right"; ctx.fillText(t, X1 + sw - 5 * hr, y + bh / 2); }
     else if (w - sw >= tw + 8 * hr) { ctx.textAlign = "left"; ctx.fillText(t, X1 + sw + 4 * hr, y + bh / 2); }
@@ -807,6 +809,7 @@
       _imbBar(ctx, X1, w, yT, bh, b.topPct, b.topCol || IMB_SELL, hr, vr, font, dark);
       _imbBar(ctx, X1, w, yT + bh, bh, b.botPct, b.botCol || IMB_BUY, hr, vr, font, dark);
     }
+    if (b.kind === "imb") { _imbVol(ctx, b, X1, X2, yT, yB, hr, vr, font, dark); ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; return; }
     if (b.volTxt && h >= 18 * vr && w > 40 * hr) {
       var wk = b.volTxt + "|" + Math.round(w) + "|" + Math.round(h), fv;
       if (b._wk === wk) { fv = b._fv; ctx.font = font(500, fv); }
@@ -816,6 +819,17 @@
       if (wms) wms.push(wm); else wmDraw(ctx, [wm], font, dark);
     }
     ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
+  }
+  /* Обсяг IMB — як у TV: праворуч у зоні, світлий, розмір від висоти зони. */
+  function _imbVol(ctx, b, X1, X2, yT, yB, hr, vr, font, dark) {
+    var w = X2 - X1, h = yB - yT;
+    if (!b.volTxt || h < 7 * vr || w < 30 * hr) return;
+    var fv = Math.max(7, Math.min(46, h / vr * 0.62));
+    ctx.font = font(500, fv);
+    while (fv > 7 && ctx.measureText(b.volTxt).width > w * 0.45) { fv -= 1; ctx.font = font(500, fv); }
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    ctx.fillStyle = dark ? "rgba(236,239,244,.82)" : "rgba(20,24,32,.78)";
+    ctx.fillText(b.volTxt, X2 - 5 * hr, (yT + yB) / 2 + fv * vr * 0.04);
   }
   function wmDraw(ctx, wms, font, dark) {
     var done = [];
@@ -1139,7 +1153,9 @@
     });
     if (IW.show_imb) (c.imb || []).forEach(function (z) {
       var L = z.side === "LONG";
-      out.push({ kind: "imb", thin: true, t: snapSec(z.start, o), top: z.top, bottom: z.bottom,
+      var t0 = snapSec(z.start, o), k0 = o.length - 1;
+      while (k0 > 0 && Number(o[k0].time) > t0) k0--;
+      out.push({ kind: "imb", thin: true, t: t0, top: z.top, bottom: z.bottom, ext: (o.length - 1 - k0) + IMB_EXT_BARS,
         fill: L ? "rgba(38,166,154,.22)" : "rgba(160,92,40,.30)", stroke: L ? "rgba(38,166,154,.6)" : "rgba(234,128,38,.6)", text: L ? "#5eead4" : "#fdba74",
         volTxt: fmtVol(z.vol, 3), topPct: z.sell_pct, botPct: z.buy_pct, topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
     });

@@ -264,7 +264,7 @@ def test_ui_block_is_a_twin_with_its_own_columns():
 
 def test_labels_everywhere():
     sl = open(os.path.join(_HERE, 'detection', 'signal_labels.py'), encoding='utf-8').read()
-    app = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    app = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check("'MMP':              '🧭 МММ-Pull'" in sl and sl.count("'MMP': '🧭'") == 2, 'labels')
     _check('"MMP": "🧭 МММ-Pull"' in app and "'MMP': '🧭 МММ-Pull'" in _HTML, 'JS-дзеркала')
     print('✓ мітка MMP «🧭 МММ-Pull» у Python і обох JS-дзеркалах')

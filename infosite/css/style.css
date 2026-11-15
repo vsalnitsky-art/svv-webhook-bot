@@ -384,3 +384,9 @@ body{font-size:15px}
 
 /* v213: компактний бейдж NOT IN BOT */
 .bdg.ext-badge{font-size:7px;padding:1px 4px;gap:3px;letter-spacing:.04em}
+
+/* 🧭 МММ-бабло на назві BTC (список + шапка графіка) — колір напрямку перекриває градієнт назви */
+.iw-sym.mm-long,.iw-title.mm-long{color:var(--long)}
+.iw-sym.mm-short,.iw-title.mm-short{color:var(--short)}
+.iw-sym.mm-long b,.iw-title.mm-long b,.iw-title.mm-long a{background:none;-webkit-text-fill-color:var(--long);color:var(--long);animation:none}
+.iw-sym.mm-short b,.iw-title.mm-short b,.iw-title.mm-short a{background:none;-webkit-text-fill-color:var(--short);color:var(--short);animation:none}

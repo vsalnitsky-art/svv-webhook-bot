@@ -508,7 +508,7 @@ def test_lane_also_fires_mid_cycle_not_only_at_the_start():
     `now // tf_secs`, без I/O), а очікування зводить до однієї монети."""
     src = open(os.path.join(_HERE, 'detection', 'smc_scanner.py'),
                encoding='utf-8').read()
-    i = src.index('for symbol in list(self._watchlist):')
+    i = src.index('for symbol in _univ:')
     body = src[i:i + 1200]
     _check('self._ob_fast_lane(md)' in body,
            'смуга мусить перевірятись і МІЖ монетами, а не лише на старті циклу')

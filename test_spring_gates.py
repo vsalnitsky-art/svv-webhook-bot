@@ -25,7 +25,7 @@ import test_spring_scan as T  # noqa: E402  (фікстури скану)
 
 ss = T.ss
 HTML = T.HTML
-APP = open(os.path.join(ROOT, 'infosite', 'app.js'), encoding='utf-8').read()
+APP = open(os.path.join(ROOT, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
 IDX = open(os.path.join(ROOT, 'infosite', 'index.html'), encoding='utf-8').read()
 
 
@@ -198,11 +198,14 @@ def test_pass_map_marks_gate_passers():
 
 # ── 3. скан біржі: без WATCHLIST · Bybit ────────────────────────────────────
 def test_scan_skips_watchlist_coins():
+    """11.11: монети WATCHLIST РАХУЮТЬСЯ (агрегат/банер — уся біржа), але в
+    таблицю скану не потрапляють (вони вже в 🌀 Пружині WATCHLIST)."""
     eng, calls = T._mk()
     eng._watchlist = lambda: ['COILUSDT']
     res = eng.scan('bybit', 50e6)
-    assert res['rows'] == [] and 'COILUSDT' not in {s for _, s in calls['fetch']}
-    assert res['breakdown']['in_wl'] == 1
+    assert res['rows'] == [] and 'COILUSDT' in {s for _, s in calls['fetch']}
+    assert res['breakdown']['in_wl'] == 1 and res['analyzed'] == 2
+    assert res['charged'] == 1, 'заряджена монета WATCHLIST враховується в розрахунку'
 
 
 def test_coin_added_to_watchlist_leaves_the_scan_table():
@@ -326,15 +329,15 @@ def test_rec_table_layout():
     i = IDX.index('id="rec-tbl"'); head = IDX[i:IDX.index('</thead>', i)]
     for gone in ('Джерело', 'Стан', 'Потенціал'):
         assert gone not in head, gone
-    assert 'SL' in head and 'Ймовірна ціль' in head
+    assert 'SL' in head and 'ЦІЛЬ' in head
     cols = re.findall(r'<th[^>]*>([^<]*)</th>', head)
     # 11.11: дві групи 1H / 15m — «Заряд» закриває рядок групових заголовків
-    assert 'Заряд' in cols and cols.count('🛑 SL') == 2, cols
+    assert 'Заряд' in cols and cols.count('SL') == 2, cols
     # 11.11: 🎯 TP спільний для обох груп — одна колонка перед групами
-    assert cols.count('🎯 Ймовірна ціль') == 1 and cols.index('🎯 Ймовірна ціль') < cols.index('🛑 SL'), cols
+    assert cols.count('ЦІЛЬ') == 1 and cols.index('ЦІЛЬ') < cols.index('SL'), cols
     assert 'rec-foot' not in IDX
     assert 'function recPath' in APP and 'rec-ic' in APP
-    assert 'rec-wrap' in IDX and '.rec-wrap { max-height' in open(os.path.join(ROOT, 'infosite', 'style.css'), encoding='utf-8').read()
+    assert 'rec-wrap' in IDX and '.rec-wrap{max-height' in open(os.path.join(ROOT, 'infosite', 'css', 'style.css'), encoding='utf-8').read().replace(' ', '')
 
 
 def test_gate_mark_is_left_of_the_coin():
@@ -371,6 +374,42 @@ def test_no_double_dollar():
 
 def test_gone_chips_are_grouped():
     assert 'function _xsGoneGroups' in HTML and "'🗑 ' + g.symbol" in HTML
+
+
+# ── 📡 15.11: сканер сигналів веде й монети 🔭 скан-таблиці ─────────────────
+def test_scanner_universe_includes_scan_table_coins():
+    """«Сигнали не проходять через "Пружина — скан біржі"»: сканер сигналів
+    ішов лише по WATCHLIST, тож монети скан-таблиці не давали жодного сигналу."""
+    m, sc = _scanner({'spring_enabled': True}, {}, wl=['BTCUSDT'])
+    sc._watchlist = ['BTCUSDT']
+    fake = types.ModuleType('detection.spring_scan')
+    fake.signal_symbols = lambda cap=40: ['BTCUSDT', 'AAAUSDT', 'BBBUSDT'][:cap]
+    old = sys.modules.get('detection.spring_scan')
+    sys.modules['detection.spring_scan'] = fake
+    try:
+        assert sc.scan_universe() == ['BTCUSDT', 'AAAUSDT', 'BBBUSDT'], 'WATCHLIST + таблиця, без дублів'
+        sc._settings['sprx_scan_signals'] = False
+        assert sc.scan_universe() == ['BTCUSDT'], 'тумблер вимкнено — лише WATCHLIST'
+    finally:
+        if old is None:
+            sys.modules.pop('detection.spring_scan', None)
+        else:
+            sys.modules['detection.spring_scan'] = old
+    assert m.DEFAULT_SETTINGS['sprx_scan_signals'] is True
+    src = open(os.path.join(ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
+    body = src[src.index('    def _scan(self):'):src.index('# ⏱ ПРОФІЛЮВАННЯ циклу')]
+    assert '_univ = self.scan_universe()' in body and 'self._prefetch_klines(md, _univ' in body
+    assert 'for symbol in _univ:' in src
+
+
+def test_signal_symbols_only_visible_bybit_rows():
+    eng, _ = T._mk()
+    eng.scan('bybit', 50e6)
+    assert eng.signal_symbols() == ['COILUSDT']
+    with eng._lock:
+        eng._table['COILUSDT']['bybit'] = False
+    eng._settings['show_non_bybit'] = True
+    assert eng.signal_symbols() == [], 'монети немає на Bybit — сканер її не веде'
 
 
 if __name__ == '__main__':

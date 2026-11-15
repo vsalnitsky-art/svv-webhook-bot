@@ -65,7 +65,7 @@ _FF_SRC = open(os.path.join(_HERE, 'detection', 'fuel_filter.py'),
                encoding='utf-8').read()
 _HTML = open(os.path.join(_HERE, 'templates', 'smart_money.html'),
              encoding='utf-8').read()
-_APPJS = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+_APPJS = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
 
 
 def _check(c, msg):
@@ -465,7 +465,7 @@ def test_the_new_signal_code_is_labelled_everywhere():
     стоятиме сирий код (задокументована вимога «скрізь означає скрізь»)."""
     _check('liq_vob' in labels.SIGNAL_BADGES, 'немає бейджа в signal_labels')
     _check('liq_vob' in labels.SIGNAL_ICONS, 'немає картинки в signal_labels')
-    for src, name in ((_HTML, 'smart_money.html'), (_APPJS, 'infosite/app.js')):
+    for src, name in ((_HTML, 'smart_money.html'), (_APPJS, 'infosite/js/app.js')):
         _check("liq_vob" in src, f'немає дзеркала мітки у {name}')
     _check("'liq_vob'" in _FF_SRC,
            'черга мусить знати назву сигналу (_kind_lbl у intercept)')

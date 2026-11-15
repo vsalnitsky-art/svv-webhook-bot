@@ -1474,6 +1474,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .xs-found{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
 .xs-del { background:transparent; border:1px solid #3a2a2e; color:#f87171; border-radius:4px; padding:0 6px; font-size:11px; line-height:18px; cursor:pointer; }
 .xs-del:hover { background:rgba(248,113,113,0.12); border-color:#f87171; }
+.xs-book { margin-top:3px; background:#141821; color:#cbd5e1; border:1px solid #2b2f36; border-radius:4px; font-size:10px; padding:0 2px; color-scheme:dark; text-transform:none; }
 .xs-open { background:transparent; border:1px solid #2b2f36; color:#94a3b8; border-radius:4px; padding:0 6px; margin-right:3px; font-size:11px; line-height:18px; cursor:pointer; font-family:monospace; }
 .xs-open-l.rec { border-color:#22c55e; color:#4ade80; background:rgba(34,197,94,0.10); }
 .xs-open-s.rec { border-color:#ef4444; color:#f87171; background:rgba(239,68,68,0.10); }
@@ -2973,7 +2974,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <th style="text-align:right" title="Ширина коробки останніх 24 год у % від ціни">Коробка</th>
                     <th style="text-align:right" title="Обʼєм останніх 12 год проти попередніх 72 (менше 1 — висихає)">Обʼєм</th>
                     <th title="Де монета зараз: у відкритій угоді / у черзі">📍</th>
-                    <th title="✋ Відкрити угоду вручну (як у 🔭 скані): підсвічено напрямок рядка; ворота не діють, лишаються технічні умови. Монета вже в угоді — «—».">✋ Угода</th>
+                    <th title="✋ Відкрити угоду вручну (як у 🔭 скані): підсвічено напрямок рядка; ворота не діють, лишаються технічні умови.">✋ Угода<br><select class="xs-book" onchange="xsBookSet(this.value)" onclick="event.stopPropagation()" title="Куди відкривати ✋: авто — за правилом TRD / Trade Manager / Test Mode; або явно реальна чи paper (напр. paper уже відкрито — відкрити ще й реальну)"><option value="">авто</option><option value="real">🏦 реальна</option><option value="paper">🧪 paper</option></select></th>
                 </tr></thead>
                 <tbody id="spr-tbody"><tr><td colspan="13" class="tm-empty-msg">Завантаження…</td></tr></tbody>
             </table>
@@ -3008,6 +3009,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <input type="checkbox" id="xspr-auto" onchange="xsprSaveSettings()"> 🔁 Автоскан раз на</label>
                 <input type="text" inputmode="numeric" id="xspr-auto-min" value="30" onchange="xsprSaveSettings()" style="width:36px;text-align:right" title="Інтервал автоскану, хвилин (5…1440)"> хв
                 <label title="Лише для скану BINANCE: показувати монети, яких немає на Bybit (USDT-перпетуал). Бот торгує на Bybit, тож відкрити угоду по такій монеті не вийде. ВИМК (дефолт) — такі монети не беруться в роботу взагалі (і не коштують запиту барів); УВІМК — показуються з позначкою «⚠ не на Bybit»." style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="xspr-nonbybit" onchange="xsprSaveSettings()"> 🅱 показувати монети, яких немає на Bybit</label>
+                <label title="📡 Сканер сигналів (CHoCH / VOB / 🆕 Новий OB) веде монети цієї таблиці РАЗОМ із WATCHLIST — інакше вони не дають жодного сигналу і ворота «Через Пружину скан» нічого не пропускають. До 40 монет (найсильніший заряд першим), лише ті, що є на Bybit. Кожна монета додає ~кілька секунд до циклу сканера. Реальна угода по монеті поза WATCHLIST іде за правилом TRD (немає TRD → paper)." style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="xspr-signals" onchange="xsprSaveSignals()" checked> 📡 сигнали по монетах таблиці</label>
                 <button class="xs-btn xs-btn-clr" id="xspr-clear" onclick="xsprClear()" title="🗑 Очистити всю таблицю (разом із кнопками 📨 1H/4H усіх монет). Наступний скан знову додасть заряджені монети.">🗑 Очистити</button>
                 <span id="xspr-cost" style="color:#6b7280"></span>
             </div>
@@ -3031,7 +3033,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     <th style="text-align:right" title="Обʼєм останніх 12 год проти попередніх 72 (менше 1 — висихає)">Обʼєм</th>
                     <th title="Де монета зараз: у відкритій угоді / у черзі">📍</th>
                     <th title="📨 Telegram: увімкніть 1H та/або 4H — щойно на цьому TF прийде сигнал 🔔 SBR У НАПРЯМКУ монети (колонка «Напрямок»), у тему «🔔 Сигнали» піде попередження «монету взято в роботу». Кожен сигнал — один раз.">📨 SBR</th>
-                    <th title="✋ Відкрити угоду по монеті (ручне відкриття: ворота не діють, лишаються технічні умови; реальна чи paper — за звичним правилом TRD / Trade Manager / Test Mode). Підсвічена кнопка — напрямок рядка. Стоп ставить той самий ланцюг «🛑 SL з».">✋ Угода</th>
+                    <th title="✋ Відкрити угоду по монеті (ручне відкриття: ворота не діють, лишаються технічні умови; реальна чи paper — за звичним правилом TRD / Trade Manager / Test Mode). Підсвічена кнопка — напрямок рядка. Стоп ставить той самий ланцюг «🛑 SL з».">✋ Угода<br><select class="xs-book" onchange="xsBookSet(this.value)" onclick="event.stopPropagation()" title="Куди відкривати ✋: авто — за правилом TRD / Trade Manager / Test Mode; або явно реальна чи paper (напр. paper уже відкрито — відкрити ще й реальну)"><option value="">авто</option><option value="real">🏦 реальна</option><option value="paper">🧪 paper</option></select></th>
                     <th title="✕ Прибрати монету з таблиці (разом із її кнопками 1H/4H). Наступний повний скан знову додасть її, якщо вона ще заряджена ≥ фільтра."></th>
                 </tr></thead>
                 <tbody id="xspr-tbody"><tr><td colspan="16" class="tm-empty-msg">Скан ще не запускали — натисніть «🔭 Сканувати»</td></tr></tbody>
@@ -7909,6 +7911,8 @@ async function loadSettings() {
                     const el = document.getElementById(id);
                     if (el) el.checked = !!s[k];
                 });
+            const xsSig = document.getElementById('xspr-signals');
+            if (xsSig) xsSig.checked = s.sprx_scan_signals !== false;   // default ON
             const liqGate = document.getElementById('sm-liq-gate');
             if (liqGate) liqGate.checked = !!s.liq_gate_enabled;        // default OFF
             const sprE = document.getElementById('spr-enabled');
@@ -8261,6 +8265,14 @@ function _smMmGateSync() {
     }
 }
 // 🌀 Окремі ворота «Через Пружину» (налаштування сканера, деф. УВІМК).
+async function xsprSaveSignals() {
+    const el = document.getElementById('xspr-signals');
+    try {
+        const r = await fetch('/api/smc/settings', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({sprx_scan_signals: !!(el && el.checked)})});
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+    } catch (err) { alert('Не збережено: ' + err); }
+}
 async function updateSpringGate() {
     const el = document.getElementById('spr-gate');
     const en = document.getElementById('spr-enabled');
@@ -17215,6 +17227,7 @@ function _sprAggPaint(aggIn, elId, scope) {
     const lean = a.lean === 'LONG' ? `<span style="color:#4ade80;font-weight:700">▲ LONG ${pL.toFixed(0)}%</span>`
         : a.lean === 'SHORT' ? `<span style="color:#f87171;font-weight:700">▼ SHORT ${(100 - pL).toFixed(0)}%</span>`
         : `<span style="color:#cbd5e1;font-weight:700">⚖ рівновага ${pL.toFixed(0)}/${(100 - pL).toFixed(0)}</span>`;
+    const tot = (Number(a.sum_long) || 0) + (Number(a.sum_short) || 0);
     const enough = a.enough !== false;
     const top = (t, side) => t ? `<span class="spr-k">найсильніша ${side}</span><span style="font-family:monospace;color:${side === 'LONG' ? '#4ade80' : '#f87171'}">${t.symbol} ${Math.round(t.pot)}${t.move_pct != null ? ` · ${side === 'LONG' ? '+' : '−'}${Number(t.move_pct).toFixed(2)}%` : ''}</span>` : '';
     const fired = (a.fired_long || a.fired_short) ? `<span title="Уже вистрілили — у натяг не входять">· 💥 вистрілили: <span style="color:#4ade80">▲${a.fired_long || 0}</span> / <span style="color:#f87171">▼${a.fired_short || 0}</span></span>` : '';
@@ -17238,16 +17251,10 @@ function _sprAggPaint(aggIn, elId, scope) {
             + fired + top(a.top_long, 'LONG') + top(a.top_short, 'SHORT');
         return;
     }
-    // ⚖ Калібровка 11.11: смуга = та сама частка, що й вердикт (середнє чистої
-    // переваги натягу і частки монет); числа біля смуги — ЧИСТА перевага натягу.
-    const hasNet = a.net_long != null && a.net_short != null;
-    const vS = hasNet ? a.net_short : a.sum_short, vL = hasNet ? a.net_long : a.sum_long;
-    const lpp = Number(a.lean_pp) || 10;
-    const tip = `Частка LONG ${pL.toFixed(1)}% = середнє з двох мір: чиста перевага натягу (по кожній монеті рахується лише різниця потенціалів у бік переможця) — LONG ${Math.round(a.net_long || 0)} / SHORT ${Math.round(a.net_short || 0)} — і частка монет за напрямком 🟢 ${a.n_long} / 🔴 ${a.n_short}. Напрям — від ${50 + lpp}/${50 - lpp}. Повна сума потенціалів: LONG ${Math.round(a.sum_long || 0)} / SHORT ${Math.round(a.sum_short || 0)}. Монети із зарядом < 45 і вистрілені не враховуються.`;
     el.innerHTML = `<span class="spr-k">куди накручено ${SC}</span>`
-        + `<span style="font-family:monospace;color:#f87171" title="${tip}">SHORT ${Math.round(vS || 0)}</span>`
-        + `<span title="${tip}">${_sprTugHTML(2 * pL, 2 * (100 - pL), true)}</span>`
-        + `<span style="font-family:monospace;color:#4ade80" title="${tip}">${Math.round(vL || 0)} LONG</span>`
+        + `<span style="font-family:monospace;color:#f87171">SHORT ${Math.round(a.sum_short || 0)}</span>`
+        + `<span title="Сума натягу LONG проти SHORT по ${a.coins} монетах із зарядом ≥ 45. Плоскі монети не враховуються — вони нічого не накручують; вистрілені теж — їхня пружина вже розпрямилась.">${_sprTugHTML(tot ? 200 * (a.sum_long || 0) / tot : 0, tot ? 200 * (a.sum_short || 0) / tot : 0, true)}</span>`
+        + `<span style="font-family:monospace;color:#4ade80">${Math.round(a.sum_long || 0)} LONG</span>`
         + lean + `<span>· ${a.coins} монет: 🟢 ${a.n_long} / 🔴 ${a.n_short}</span>`
         + fired
         + top(a.top_long, 'LONG') + top(a.top_short, 'SHORT');
@@ -17978,44 +17985,42 @@ function _xsTgCell(x) {
 // ✋ Відкрити угоду з таблиці скану (вимога 10.11). Підсвічено напрямок рядка.
 function _xsOpenCell(x, fn) {
     fn = fn || 'xsprOpen';
-    // Монета вже в угоді — це показує колонка «📍»; тут кнопок просто немає.
-    if (x.trade_side) return `<td style="color:#4b5563;font-size:11px" title="Монета вже у відкритій угоді (див. 📍)">—</td>`;
+    // Кнопки НЕ ховаємо при відкритій угоді (вимога 11.11): paper уже відкрита →
+    // можна відкрити ще й реальну (книга — випадайка в шапці колонки).
     if (x.bybit === false) return `<td style="color:#6b7280;font-size:11px" title="Монети немає на Bybit — угоду не відкрити">—</td>`;
     const rec = x.dir || x.lean || '';
     const b = sd => `<button class="xs-open xs-open-${sd === 'LONG' ? 'l' : 's'}${rec === sd ? ' rec' : ''}" onclick="${fn}('${x.symbol}','${sd}')" title="✋ Відкрити ${sd} по ${x.symbol}${rec === sd ? ' (напрямок рядка)' : (rec ? ' — ПРОТИ напрямку рядка (' + rec + ')' : '')}">${sd === 'LONG' ? '▲ L' : '▼ S'}</button>`;
     return `<td style="white-space:nowrap">${b('LONG')}${b('SHORT')}</td>`;
 }
-async function xsprOpen(sym, side) {
-    const row = _xsRows.find(r => r.symbol === sym) || {};
+// ✋ Книга для ручного відкриття з таблиць Пружини: '' авто · real · paper.
+function xsBookGet() { try { const v = localStorage.getItem('xsBook') || ''; return (v === 'real' || v === 'paper') ? v : ''; } catch (e) { return ''; } }
+function xsBookSet(v) {
+    try { localStorage.setItem('xsBook', v || ''); } catch (e) {}
+    document.querySelectorAll('.xs-book').forEach(el => { el.value = xsBookGet(); });
+}
+function _xsBookTxt(b) { return b === 'real' ? '🏦 РЕАЛЬНА' : (b === 'paper' ? '🧪 PAPER' : 'авто (TRD / Trade Manager / Test Mode)'); }
+async function _xsHandOpen(url, rows, sym, side, after) {
+    const row = rows.find(r => r.symbol === sym) || {};
     const rec = row.dir || row.lean || '';
-    if (!confirm('✋ Відкрити ' + side + ' по ' + sym + '?' + (rec && rec !== side ? '\n⚠ Напрямок рядка — ' + rec + '.' : ''))) return;
+    const book = xsBookGet();
+    const busy = row.trade_side ? '\n💼 По монеті вже є угода (' + row.trade_side + ').' : '';
+    if (!confirm('✋ Відкрити ' + side + ' по ' + sym + '?\nКнига: ' + _xsBookTxt(book) + busy
+        + (rec && rec !== side ? '\n⚠ Напрямок рядка — ' + rec + '.' : ''))) return;
     try {
-        const r = await fetch('/api/spring-scan/open', {method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({symbol: sym, side})});
+        const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: sym, side, book})});
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         if (!d.ok) throw new Error(d.reason || 'відмова сервера');
         alert('✅ ' + sym + ' ' + side + ' — відкрито');
-        xsprLoad(true);
+        after(true);
         if (typeof loadTMState === 'function') loadTMState(true);
     } catch (e) { alert('Не відкрито: ' + (e && e.message || e)); }
 }
+async function xsprOpen(sym, side) { return _xsHandOpen('/api/spring-scan/open', _xsRows, sym, side, xsprLoad); }
 // ✋ Відкрити угоду з таблиці 🌀 Пружина (WATCHLIST) — той самий алгоритм, що 🔭.
-async function sprOpen(sym, side) {
-    const row = _sprRows.find(r => r.symbol === sym) || {};
-    const rec = row.dir || row.lean || '';
-    if (!confirm('✋ Відкрити ' + side + ' по ' + sym + '?' + (rec && rec !== side ? '\n⚠ Напрямок рядка — ' + rec + '.' : ''))) return;
-    try {
-        const r = await fetch('/api/spring/open', {method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({symbol: sym, side})});
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const d = await r.json();
-        if (!d.ok) throw new Error(d.reason || 'відмова сервера');
-        alert('✅ ' + sym + ' ' + side + ' — відкрито');
-        sprLoad(true);
-        if (typeof loadTMState === 'function') loadTMState(true);
-    } catch (e) { alert('Не відкрито: ' + (e && e.message || e)); }
-}
+async function sprOpen(sym, side) { return _xsHandOpen('/api/spring/open', _sprRows, sym, side, sprLoad); }
+try { document.addEventListener('DOMContentLoaded', () => xsBookSet(xsBookGet())); xsBookSet(xsBookGet()); } catch (e) {}
 // ✕ Прибрати монету / 🗑 очистити таблицю.
 function _xsDelCell(x) {
     return `<td style="text-align:center"><button class="xs-del" onclick="xsprRemove('${x.symbol}')" title="Прибрати ${x.symbol} з таблиці">✕</button></td>`;

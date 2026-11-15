@@ -249,7 +249,7 @@ def test_both_sides_share_one_analysis():
 
 def test_labels_and_gates():
     sl = open(os.path.join(_HERE, 'detection', 'signal_labels.py'), encoding='utf-8').read()
-    js = open(os.path.join(_HERE, 'infosite', 'app.js'), encoding='utf-8').read()
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check("'MMR':              '🧩 МММ-Готовність'" in sl and sl.count("'MMR': '🧩'") == 2, 'labels')
     _check('"MMR": "🧩 МММ-Готовність"' in js and js.count('"MMR": "🧩"') == 2, 'infosite')
     _check("'MMR': '🧩 МММ-Готовність'" in _HTML and _HTML.count("'MMR': '🧩'") == 2, 'page')
