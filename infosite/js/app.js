@@ -788,7 +788,7 @@
   };
   function _rrect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath(); }
 
-  var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)";
+  var IMB_SELL = "rgba(234,128,38,.92)", IMB_BUY = "rgba(38,166,154,.92)", IMB_MIN_PX = 4;
   function _imbBar(ctx, X1, w, y, bh, pct, color, hr, vr, font, dark) {
     if (pct == null || pct <= 0 || bh < 1) return;
     var sw = Math.max(2 * hr, w * Math.min(100, Math.max(0, pct)) / 100);
@@ -859,10 +859,10 @@
           if (x1 == null || yA == null || yB == null) continue;
           var X1 = Math.max(0, x1 * hr), X2 = XR - (LW ? 3 * hr : 0);
           if (b.ext) X2 = Math.min(X2, (x1 + b.ext * ts.options().barSpacing) * hr);
-          if (b.tEnd != null) { var xe = ts.timeToCoordinate(b.tEnd); if (xe != null) X2 = Math.min(X2, (xe + ts.options().barSpacing / 2) * hr); }
           var yT = Math.min(yA, yB) * vr, yBt = Math.max(yA, yB) * vr;
           if (X2 <= X1) continue;
-          if (yBt - yT < 1) yBt = yT + 1; // тонкі валідні зони не пропускаємо
+          if (b.kind === "imb" && (yBt - yT) < IMB_MIN_PX * vr) continue;
+          if (yBt - yT < 1) yBt = yT + 1;
           ctx.fillStyle = b.fill; ctx.fillRect(X1, yT, X2 - X1, yBt - yT);
           if (b.kind === "imb" || b.kind === "vob") _imbBody(ctx, b, X1, X2, yT, yBt, hr, vr, font, dark, wms);
           ctx.strokeStyle = b.stroke; ctx.lineWidth = Math.max(1, Math.round((b.thin ? 1 : 1.2) * hr));
@@ -1093,20 +1093,6 @@
 
   function precisionOf(p) { p = Number(p) || 0; return p < 0.0001 ? 8 : p < 0.01 ? 6 : p < 1 ? 5 : p < 100 ? 4 : 2; }
 
-  /* Об'ємні IMB-зони надходить уже розрахованими з бота. Не підмінюємо їх
-     трисвічковою моделлю FVG: зберігаємо оригінальні start/top/bottom,
-     продовжуємо до правого краю й прибираємо лише повністю пройдені зони. */
-  function imbMitigated(z, o) {
-    var t0 = Number(z.start) || 0, step = o.length > 1 ? Number(o[1].time) - Number(o[0].time) : 0;
-    var from = t0 + step; // свічка утворення не вважається ретестом
-    for (var i = 0; i < o.length; i++) {
-      var b = o[i]; if (Number(b.time) < from) continue;
-      if (z.side === "LONG" && Number(b.low) <= Number(z.bottom)) return true;
-      if (z.side === "SHORT" && Number(b.high) >= Number(z.top)) return true;
-    }
-    return false;
-  }
-
   /* OB і VOB утворює бот. Тут не змінюємо їхні межі чи модель виявлення:
      лише відсіюємо пошкоджені дані, прив'язуємо до реальної ділянки OHLC
      та прибираємо звичайний блок після закриття за протилежною межею. */
@@ -1151,17 +1137,11 @@
         fill: L ? "rgba(41,98,255,.16)" : "rgba(190,90,105,.18)", stroke: L ? "rgba(96,140,255,.4)" : "rgba(224,122,138,.45)", text: L ? "#93c5fd" : "#fda4af",
         label: "OB " + tfLbl(c.ob_tf), sub: (sw ? "swing" : "int") + (b.tag ? " · " + b.tag : "") });
     });
-    if (IW.show_imb) (c.imb || []).forEach(function (raw) {
-      var g = blockGeometry(raw, o);
-      if (!g) return;
-      var z = Object.assign({}, raw, g);
-      if (imbMitigated(z, o)) return;
+    if (IW.show_imb) (c.imb || []).forEach(function (z) {
       var L = z.side === "LONG";
-      out.push({ kind: "imb", thin: true, t: z.start, top: z.top, bottom: z.bottom,
+      out.push({ kind: "imb", thin: true, t: snapSec(z.start, o), top: z.top, bottom: z.bottom,
         fill: L ? "rgba(38,166,154,.22)" : "rgba(160,92,40,.30)", stroke: L ? "rgba(38,166,154,.6)" : "rgba(234,128,38,.6)", text: L ? "#5eead4" : "#fdba74",
-        volTxt: fmtVol(z.vol != null ? z.vol : z.volume, 3),
-        topPct: z.sell_pct != null ? z.sell_pct : z.hi_pct, botPct: z.buy_pct != null ? z.buy_pct : z.lo_pct,
-        topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
+        volTxt: fmtVol(z.vol, 3), topPct: z.sell_pct, botPct: z.buy_pct, topCol: IMB_SELL, botCol: IMB_BUY, label: "IMB" });
     });
     return out;
   }
