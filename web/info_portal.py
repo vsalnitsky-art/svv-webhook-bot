@@ -306,28 +306,96 @@ def imb_visible(z, atr):
     return rest > 0
 
 
-def imb_of(klines, tf, now=None):
-    """📐 IMB (Fair Value Gap) — `detection.imbalance` на барах графіка
-    РАЗОМ із ЖИВИМ (вимога 08.11, кейс BTC 1H: обвал 21:00 — TV уже малював
-    розрив 74.7–75.7K, а кабінет мовчав, бо третя свічка ще не закрилась).
-    Як у TradingView: зона живого бару може змінитись або зникнути до його
-    закриття; закриті бари поводяться як раніше."""
+IMB_BARS = 1500             # історія для Pine-фільтра розміру (1000-барний максимум)
+_imb_split = {}             # (SYM, tf, t_ms) → (bull, bear) — закрита свічка не змінюється
+_IMB_SPLIT_CAP = 4000
+BB_KLINE_URL = 'https://api.bybit.com/v5/market/kline'
+_BB_SUB_INTERVALS = (240, 120, 60, 30, 15, 5, 3, 1)
+
+
+def sub_base_interval(sub_min):
+    """ЧИСТА: найбільший інтервал Bybit, що ділить піддіапазон Pine
+    (6 хв → 3 хв по 2 · 24 хв → 3 хв по 8 · 2 хв → 1 хв по 2)."""
+    for b in _BB_SUB_INTERVALS:
+        if sub_min % b == 0:
+            return b
+    return 1
+
+
+def group_subbars(bars, base_min, sub_min, t0_ms):
+    """ЧИСТА: бари base_min → підсвічки sub_min, вирівняні від початку свічки."""
+    k = max(1, sub_min // base_min)
+    out, cur, key = [], None, None
+    for b in sorted(bars, key=lambda x: int(x['t'])):
+        g = (int(b['t']) - t0_ms) // (sub_min * 60000)
+        if g != key:
+            if cur:
+                out.append(cur)
+            key, cur = g, {'o': b['o'], 'p': b['p'], 'v': float(b['v'])}
+        else:
+            cur['p'] = b['p']
+            cur['v'] += float(b['v'])
+    if cur:
+        out.append(cur)
+    return out
+
+
+def _imb_sub_split(sym, tf, t_ms):
+    """Розклад обсягу середньої свічки за ПІДСВІЧКАМИ — як
+    request.security_lower_tf у Pine (TF/10). Кеш назавжди (свічка закрита)."""
+    key = (sym, tf, int(t_ms))
+    if key in _imb_split:
+        return _imb_split[key]
+    from detection.imbalance import pine_sub_minutes, split_from_subbars
+    bs = bar_sec(tf)
+    sub = pine_sub_minutes(bs)
+    base = sub_base_interval(sub)
     try:
-        from detection.imbalance import detect_imbalances
+        from detection.market_data import get_market_data
+        md = get_market_data()
+        r = md._session.get(BB_KLINE_URL, params={
+            'category': 'linear', 'symbol': sym, 'interval': str(base),
+            'start': int(t_ms), 'end': int(t_ms) + bs * 1000 - 1, 'limit': 1000}, timeout=10)
+        rows = (r.json().get('result') or {}).get('list') or [] if r.status_code == 200 else []
+        bars = [{'t': int(x[0]), 'o': float(x[1]), 'p': float(x[4]), 'v': float(x[5])}
+                for x in rows if int(t_ms) <= int(x[0]) < int(t_ms) + bs * 1000]
+    except Exception:
+        bars = []
+    if len(bars) < 2:
+        return None                       # Pine-фолбек (частка за закриттям)
+    sp = split_from_subbars(group_subbars(bars, base, sub, int(t_ms)))
+    if len(_imb_split) > _IMB_SPLIT_CAP:
+        _imb_split.clear()
+    _imb_split[key] = sp
+    return sp
+
+
+def imb_of(klines, tf, now=None, sym=None, hist=None):
+    """📐 IMB = «PRO Volumatic FVG» Pine-скрипту користувача (15.11, 1:1):
+    той самий покроковий прогін (фільтр розміру від 1000-барного максимуму,
+    мітигація закриттям, видалення накладок, ≤10 зон), відсотки — з підсвічок
+    TF/10 (кеш `_imb_split`, тягне фоновий потік). `hist` — закриті бари
+    глибокої історії (частина 'imb'); `klines` — бари графіка з живим."""
+    try:
+        from detection.imbalance import detect_volfvg
     except Exception:
         return []
-    closed = [k for k in (klines or []) if k.get('t') is not None]
-    atr = _imb_atr(closed)
+    bars = [k for k in (hist or []) if k.get('t') is not None]
+    tail = [k for k in (klines or []) if k.get('t') is not None]
+    if bars and tail:
+        last = int(bars[-1]['t'])
+        bars = bars + [k for k in tail if int(k['t']) > last]
+    elif not bars:
+        bars = tail
+
+    def _split(t):
+        return _imb_split.get((sym, tf, int(t))) if sym else None
     out = []
-    for z in detect_imbalances(closed, max_show=IMB_SHOW * 3):
-        if not imb_visible(z, atr):
-            continue                     # майже заповнений «ошматок» — не засмічує графік
-        if len(out) >= IMB_SHOW:
-            break
+    for z in detect_volfvg(bars, split=_split):
         out.append({'side': z['side'], 'top': z['top'], 'bottom': z['bottom'],
-                    'start': z['t'], 'filled_pct': z.get('filled_pct', 0),
-                    'vol': z.get('vol'), 'pct': z.get('pct'),
-                    'sell_pct': z.get('sell_pct'), 'buy_pct': z.get('buy_pct')})
+                    'start': z['t'], 'filled_pct': 0, 'vol': z.get('vol'),
+                    'pct': z.get('pct'), 'sell_pct': z.get('sell_pct'),
+                    'buy_pct': z.get('buy_pct'), 'approx': z.get('approx')})
     return out
 
 
@@ -576,6 +644,22 @@ def _compute(sc, kind, sym, tf):
             raise ValueError('монету не знайдено на біржі (немає барів)')
         an = detect_smc_structure(kl, internal_size=isize, swing_size=ssize)
         return {'kl': kl, 'events': events_of(an)}, now + BARS_TTL
+    if kind == 'imb':
+        # 📐 Глибока історія для Pine-фільтра + розклад обсягу живих зон.
+        from detection.imbalance import detect_volfvg
+        hk = md.fetch_klines(sym, limit=IMB_BARS, interval=tf)
+        if not hk or len(hk) < 20:
+            raise ValueError('немає барів ' + tf.upper())
+        bs = bar_sec(tf)
+        hk = [k for k in hk if (int(k['t']) // 1000 if int(k['t']) > 1e12 else int(k['t'])) + bs <= now]
+        miss = 0
+        for z in detect_volfvg(hk):
+            if _imb_sub_split(sym, tf, z['mid_t']) is None:
+                miss += 1
+        if hk:
+            _imb_sub_split(sym, tf, int(hk[-1]['t']))   # середня свічка для гепу на живому барі
+        until = next_close(now, tf)
+        return {'kl': hk}, (min(until, now + 120) if miss else until)
     if kind == 'ob':
         from detection.smc_structure import detect_smc_structure
         from detection.ob_detector import detect_order_blocks
@@ -898,7 +982,7 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         hit = _coin_cache.get(ck)
     if hit and now - hit[0] < COIN_TTL:
         # частини все одно «просимо», інакше кеш потоку їх забуде
-        for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf), ('shl', shl_tf(sc))):
+        for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf), ('shl', shl_tf(sc)), ('imb', tf)):
             if t != OFF and _bot_part(sc, k, sym, t) is None:
                 want((k, sym, t))
         for t in SBR_TFS:
@@ -942,7 +1026,8 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         'tf': tf, 'ob_tf': ob_tf, 'vob_tf': vob_tf,
         'poc_days': poc_days, 'poc_tf': poc_tf,
         'ohlc': ohlc, 'events': events,
-        'imb': imb_of((bars or {}).get('kl'), tf, now),
+        'imb': imb_of((bars or {}).get('kl'), tf, now, sym=sym,
+                      hist=(part(sc, 'imb', sym, tf)[0] or {}).get('kl')),
         'sbr': sbr_of((bars or {}).get('kl'), tf, now),
         'sbr_last': sbr_last,
         'ob': ob, 'vob': vob, 'ob_wait': ob_wait, 'vob_wait': vob_wait,

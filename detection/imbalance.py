@@ -189,3 +189,127 @@ def detect_imbalances(bars: List[Dict], min_atr: float = MIN_ATR,
         if len(out) >= int(max_show):
             break
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 📐 «PRO Volumatic FVG» — 1:1 З PINE-СКРИПТУ КОРИСТУВАЧА (15.11)
+#    «Smart Money Concepts [PRO BOT] v3.1», блок PRO_FVG_GROUP. Дефолти:
+#    FVG Size Threshold 10% · Mitigation 'close' · Max FVGs 10 · бокс до
+#    bar_index + 25. Розклад обсягу — свічки МОЛОДШОГО TF (ceil(TF/10) хв):
+#    бичачий обсяг = сума обсягів зелених підсвічок, ведмежий — червоних
+#    (доджі не рахуються); немає даних → частка за положенням закриття
+#    (той самий фолбек, що в Pine). Обсяг зони = бичачий + ведмежий.
+# ═══════════════════════════════════════════════════════════════════════════
+PINE_SIZE_THR = 10          # proFVGSizeThreshold, % від 1000-барного максимуму
+PINE_MAX_COUNT = 10         # proFVGMaxCount
+PINE_RANK_LEN = 1000        # ta.percentile_nearest_rank(diff, 1000, 100)
+PINE_EXT_BARS = 25          # box right = bar_index + 25
+
+
+def pine_sub_minutes(bar_seconds: float) -> int:
+    """proFVGSubTF = max(1, ceil(chartMin / 10)) хвилин."""
+    import math
+    chart_min = max(1.0, float(bar_seconds) / 60.0)
+    return max(1, int(math.ceil(chart_min / 10.0)))
+
+
+def split_from_subbars(subbars) -> tuple:
+    """(бичачий, ведмежий) обсяг: сума обсягів зелених / червоних підсвічок."""
+    bull = bear = 0.0
+    for b in subbars or []:
+        try:
+            o = float(b['o']); c = _close(b); v = float(b['v'])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if c > o:
+            bull += v
+        elif c < o:
+            bear += v
+    return bull, bear
+
+
+def _body_split(bar) -> tuple:
+    """Pine-фолбек: обсяг × (close−low)/(high−low)."""
+    try:
+        h, l, c = float(bar['h']), float(bar['l']), _close(bar)
+    except (KeyError, TypeError, ValueError):
+        return 0.0, 0.0
+    r = (c - l) / (h - l) if h > l else 0.5
+    v = _vol(bar)
+    return v * r, v * (1 - r)
+
+
+def detect_volfvg(bars: List[Dict], split=None, size_thr: float = PINE_SIZE_THR,
+                  max_count: int = PINE_MAX_COUNT, mitigation: str = 'close',
+                  rank_len: int = PINE_RANK_LEN) -> List[Dict]:
+    """Покроковий прогін Pine по барах (останній може бути живим).
+    split(t_ms) → (bull, bear) обсяг підсвічок середньої свічки або None.
+    → живі зони, найновіша першою: {side, top, bottom, t, t_form, mid_t,
+    vol, buy_pct, sell_pct, pct, approx}."""
+    from collections import deque
+    n = len(bars or [])
+    if n < 3:
+        return []
+    try:
+        h = [float(b['h']) for b in bars]
+        l = [float(b['l']) for b in bars]
+        c = [_close(b) for b in bars]
+        tms = [int(float(b['t'])) for b in bars]
+    except (KeyError, TypeError, ValueError):
+        return []
+    sec = [t // 1000 if t > 10 ** 12 else t for t in tms]
+    win = deque()                 # (i, diff) — монотонна черга для ковзного максимуму
+    zones: List[Dict] = []        # індекс 0 — найновіша (як unshift у Pine)
+    for i in range(2, n):
+        bull_d = (l[i] - h[i - 2]) / l[i] * 100 if l[i] else 0.0
+        bear_d = (l[i - 2] - h[i]) / h[i] * 100 if h[i] else 0.0
+        d = max(bull_d, bear_d)
+        while win and win[-1][1] <= d:
+            win.pop()
+        win.append((i, d))
+        while win and win[0][0] <= i - rank_len:
+            win.popleft()
+        rank = win[0][1]
+        pass_bull = rank != 0 and bull_d / rank * 100 > size_thr
+        pass_bear = rank != 0 and bear_d / rank * 100 > size_thr
+        new = []
+        if h[i - 2] < l[i] and h[i - 2] < h[i - 1] and l[i - 2] < l[i] and pass_bull:
+            new.append(('LONG', l[i], h[i - 2]))
+        if l[i - 2] > h[i] and l[i - 2] > l[i - 1] and h[i - 2] > h[i] and pass_bear:
+            new.append(('SHORT', l[i - 2], h[i]))
+        for side, top, bot in new:
+            sp = split(tms[i - 1]) if split else None
+            approx = sp is None
+            bull, bear = (sp if sp else _body_split(bars[i - 1]))
+            tot = bull + bear
+            bp = int(bull / tot * 100) if tot > 0 else 50
+            zones.insert(0, {'side': side, 'top': top, 'bottom': bot,
+                             'top0': top, 'bottom0': bot,
+                             't': sec[i - 1], 't_form': sec[i], 'mid_t': tms[i - 1],
+                             'vol': tot or None, 'buy_pct': bp, 'sell_pct': 100 - bp,
+                             'pct': max(bp, 100 - bp), 'approx': approx,
+                             'filled': False, 'filled_pct': 0})
+        # мітигація
+        lo_src = c[i] if mitigation == 'close' else l[i]
+        hi_src = c[i] if mitigation == 'close' else h[i]
+        for k in range(len(zones) - 1, -1, -1):
+            z = zones[k]
+            if (z['side'] == 'LONG' and lo_src < z['bottom']) or \
+               (z['side'] == 'SHORT' and hi_src > z['top']):
+                zones.pop(k)
+        # накладки — рівно цикл Pine (межі циклів рахуються на їх старті)
+        if len(zones) > 1:
+            for a in range(len(zones) - 1, -1, -1):
+                if a >= len(zones):
+                    continue
+                A = zones[a]
+                for b in range(len(zones) - 1, -1, -1):
+                    if b >= len(zones) or a == b or a >= len(zones):
+                        continue
+                    B = zones[b]
+                    if A['bottom'] < B['top'] < A['top']:
+                        zones.pop(a)
+                        break
+        if len(zones) > max_count:
+            zones.pop()
+    return zones

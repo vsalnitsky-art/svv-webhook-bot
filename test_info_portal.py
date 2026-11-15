@@ -130,7 +130,8 @@ def test_bot_coin_reads_memory_only():
     _check(p['vob'][0]['side'] == 'SHORT' and p['vob'][0]['tf'] == '5M', p['vob'])
     _check(p['events'] and p['events'][-1]['tag'] == 'CHoCH', 'структура CHoCH/BOS з памʼяті сканера')
     # 🏁 High/Low бот у памʼяті не тримає — його рахує фоновий потік (не запит сторінки)
-    _check(not calls and all(k[0] in ('shl', 'sbrlast') for k in ip._want),
+    # 📐 IMB (15.11, Pine 1:1) потребує 1500 барів історії → теж фоновий потік
+    _check(not calls and all(k[0] in ('shl', 'sbrlast', 'imb') for k in ip._want),
            'монета бота + TF бота — жодного звернення до біржі із запиту сторінки')
     _check(('BTCUSDT', 7, '1h') in ip._poc_want, 'POC поставлено фоновому потоку (деф. 7 днів · 1H)')
     _check(ip.coin_payload('BTCUSDT', sc) is p, 'спільний кеш на монету')
@@ -328,9 +329,11 @@ def test_imb_carries_volume_and_impulse_share():
     zz = m.detect_imbalances(nov)[0]
     _check(zz['pct'] is None and zz['sell_pct'] is None and zz['vol'] is None,
            'немає обсягу → None, а не вигадане число')
+    # 15.11: графік рахує Pine «PRO Volumatic FVG» — обсяг і розклад середньої
+    # свічки (без підсвічок — Pine-фолбек за положенням закриття)
     r = ip.imb_of(b, '1m', (T + 30 * 60000) / 1000)[0]
-    _check(abs(r['vol'] - 8.0) < 1e-6 and r['sell_pct'] == 9 and r['buy_pct'] == 91,
-           'обсяг і розклад доходять до графіка')
+    _check(abs(r['vol'] - 8.0) < 1e-6 and r['sell_pct'] == 10 and r['buy_pct'] == 90,
+           ('обсяг і розклад доходять до графіка', r))
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('_imbBody' in js and 'volTxt' in js and 'topPct: z.sell_pct' in js
            and 'botPct: z.buy_pct' in js, 'IMB: обсяг + дві смуги продаж/купівля')
@@ -957,9 +960,41 @@ def test_imb_like_tv_volume_and_overlap_1511():
     md = open(os.path.join(_HERE, 'detection', 'market_data.py'), encoding='utf-8').read()
     _check(md.count("'q': float(k[") == 3, 'усі три біржі віддають обсяг у монетах')
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
-    _check('IMB_BG_SELL' in js and 'IMB_EXT_BARS = 50' in js and 'rgba(0,0,0,.72)' in js,
+    _check('IMB_BG_SELL' in js and 'IMB_EXT_BARS = 25' in js and 'chart.bg_color' in js,
            'кольори й порядок як у TV: темний обсяг поверх смуг, зона далі в майбутнє')
     print('✓ IMB як у TV: обсяг біржі, без накладок, вигляд')
+
+
+def test_imb_is_the_pine_volumatic_fvg_1511():
+    """15.11: IMB кабінету = «PRO Volumatic FVG» з Pine-скрипту користувача 1:1:
+    умови гепу Pine, фільтр розміру (10% від 1000-барного максимуму), мітигація
+    закриттям, видалення зони, в яку «влазить» верх іншої, ≤10 зон, розклад
+    обсягу з підсвічок TF/10."""
+    m = _load('imbalance4', 'detection/imbalance.py')
+    _check(m.pine_sub_minutes(3600) == 6 and m.pine_sub_minutes(900) == 2
+           and m.pine_sub_minutes(14400) == 24, 'підсвічки TF/10 (вгору)')
+    _check(ip.sub_base_interval(6) == 3 and ip.sub_base_interval(24) == 3
+           and ip.sub_base_interval(2) == 1, 'інтервал Bybit, що ділить піддіапазон')
+    _check(m.split_from_subbars([{'o': 1, 'p': 2, 'v': 3}, {'o': 2, 'p': 1, 'v': 1},
+                                 {'o': 1, 'p': 1, 'v': 9}]) == (3.0, 1.0), 'доджі не рахуються')
+    T = 1_700_000_000_000; H = 3600_000
+    b = [{'t': T + i * H, 'o': 100, 'h': 100.5, 'l': 99.5, 'p': 100, 'q': 10} for i in range(30)]
+    # бичачий геп (середня свічка — індекс 31)
+    b += [{'t': T + 30 * H, 'o': 100, 'h': 100.4, 'l': 99.6, 'p': 100.3, 'q': 10},
+          {'t': T + 31 * H, 'o': 100.3, 'h': 104, 'l': 100.2, 'p': 103.8, 'q': 50},
+          {'t': T + 32 * H, 'o': 103.8, 'h': 105, 'l': 102, 'p': 104.5, 'q': 10}]
+    zs = m.detect_volfvg(b, split=lambda t: (30.0, 10.0) if t == T + 31 * H else None)
+    _check(len(zs) == 1 and zs[0]['side'] == 'LONG' and (zs[0]['bottom'], zs[0]['top']) == (100.4, 102)
+           and zs[0]['buy_pct'] == 75 and zs[0]['vol'] == 40.0 and not zs[0]['approx'], zs)
+    # закриття НИЖЧЕ дна → зона зникає (ґніт — ні)
+    b2 = b + [{'t': T + 33 * H, 'o': 104.5, 'h': 104.6, 'l': 100.0, 'p': 101, 'q': 10}]
+    _check(len(m.detect_volfvg(b2)) == 1, 'ґніт крізь дно зону не знімає')
+    b3 = b + [{'t': T + 33 * H, 'o': 104.5, 'h': 104.6, 'l': 100.0, 'p': 100.1, 'q': 10}]
+    _check(m.detect_volfvg(b3) == [], 'закриття нижче дна — зону знято')
+    src = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
+    _check("if kind == 'imb':" in src and 'IMB_BARS = 1500' in src and 'detect_volfvg' in src,
+           'глибока історія і Pine-прогін у фоновому потоці')
+    print('✓ IMB = Pine «PRO Volumatic FVG» 1:1')
 
 
 if __name__ == '__main__':
