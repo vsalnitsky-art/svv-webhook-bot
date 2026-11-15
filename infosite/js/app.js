@@ -73,11 +73,12 @@
     });
   }
 
-  function tvSym(sym) {
+  function tvSym(sym, inBot) {
     var s = String(sym || "").toUpperCase();
     var url = "https://ru.tradingview.com/chart/?symbol=BYBIT:" + s + ".P";
     var m = s.match(/^(.*?)(USDT|USDC\.P|USDC|USD)$/);
-    var inner = m && m[1] ? '<b class="sym-b">' + esc(m[1]) + '</b><small class="sym-q">' + esc(m[2]) + "</small>" : esc(s);
+    var bCls = "sym-b" + (inBot ? " in-bot" : "");
+    var inner = m && m[1] ? '<b class="' + bCls + '">' + esc(m[1]) + '</b><small class="sym-q">' + esc(m[2]) + "</small>" : esc(s);
     return '<a href="' + url + '" target="tvchart" rel="noopener" ' +
       'title="Відкрити BYBIT:' + s + '.P (ф’ючерс) у TradingView" ' +
       'style="color:inherit;text-decoration:none;border-bottom:1px dotted rgba(255,255,255,0.4)">' +
@@ -365,7 +366,7 @@
         : '<span class="iw-chg ' + (chg > 0 ? "up" : (chg < 0 ? "dn" : "")) + '" title="Зміна ціни за ~24 год">' +
           (chg > 0 ? "+" : "") + Number(chg).toFixed(2) + "%</span>";
       return '<div class="iw-row' + (sym === IW.sel ? " sel" : "") + '" data-sym="' + esc(sym) + '">' +
-        '<div class="iw-main"><span class="iw-sym' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '"><b>' + esc(sym.replace(/USDT$/, "")) + '</b><small>USDT</small>' + ext + "</span>" +
+        '<div class="iw-main"><span class="iw-sym' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '"><b class="' + (r.src && r.src !== "ext" ? "in-bot" : "") + '">' + esc(sym.replace(/USDT$/, "")) + '</b><small>USDT</small>' + ext + "</span>" +
         '<span class="iw-quote"><span class="iw-price' + dirCls(sym) + '">' + (livePx(sym) ? fmtPrice(livePx(sym)) : "—") + "</span>" + chgHtml + '</span></div>' +
         bell.btn + '<button class="iw-del" data-del="' + esc(sym) + '" title="Прибрати зі списку">×</button>' + bell.menu +
         (r.err ? '<div class="iw-err" title="' + esc(r.err) + '">⚠ ' + esc(r.err) + "</div>" : "") + "</div>";
@@ -1263,10 +1264,11 @@
     var sym = IW.sel;
     if (!sym) { h.innerHTML = '<span class="iw-title">—</span>'; if (lg) lg.innerHTML = ""; return; }
     var c = IW.coin || {}, px = livePx(sym);
-    h.innerHTML = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym) + "</span>" +
+    /* OHLC-легенда переїхала у шапку графіка; SBR-бейджі 1H/4H видалені. */
+    h.innerHTML = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym, !!(c.src && c.src !== "ext")) + "</span>" +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" + pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
-      sbrLastBadge("1h", (c.sbr_last || {})["1h"], px) + sbrLastBadge("4h", (c.sbr_last || {})["4h"], px) +
-      (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "");
+      (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
+      '<span class="tv-ohlc" id="tv-ohlc"><span class="ohlc-legend"></span></span>';
     /* Легенда шарів переїхала в нижній рядок графіка (chart-footer). */
     if (lg) lg.innerHTML =
       '<span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +

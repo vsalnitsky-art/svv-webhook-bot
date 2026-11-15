@@ -367,3 +367,17 @@ body{font-size:15px}
 .chart-footer #iw-legend{flex-basis:auto;order:0;display:inline-flex;flex-wrap:nowrap;gap:10px;overflow:hidden;white-space:nowrap}
 .chart-footer #iw-legend span{white-space:nowrap}
 .iw-head{min-height:52px;padding:10px 14px 8px}
+
+/* v211: назви монет із переливом; OHLC-легенда в шапці; кнопки авторизації в стилі сайту */
+.iw-sym b{background:linear-gradient(92deg,#f5f7fa 22%,#8fa3bb 50%,#f5f7fa 78%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;animation:brandSheen 5.5s linear infinite}
+.iw-sym b.in-bot{background:linear-gradient(92deg,#ffd45a 22%,#a87b00 50%,#ffd45a 78%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
+.iw-row.sel .iw-sym b{background:linear-gradient(92deg,#ffffff 22%,#b9c9dd 50%,#ffffff 78%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
+.iw-row.sel .iw-sym b.in-bot{background:linear-gradient(92deg,#ffe27a 22%,#c99200 50%,#ffe27a 78%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
+.iw-title .sym-b{font:700 18px var(--mono);letter-spacing:.01em;background:linear-gradient(92deg,#f5f7fa 22%,#8fa3bb 50%,#f5f7fa 78%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent;animation:brandSheen 5.5s linear infinite}
+.iw-title .sym-b.in-bot{background:linear-gradient(92deg,#ffd45a 22%,#a87b00 50%,#ffd45a 78%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;color:transparent}
+.iw-title .sym-q{font:500 11px var(--font);color:var(--muted);margin-left:4px}
+.iw-head .tv-ohlc{margin-left:auto}
+.hero .btn-primary{background:#f0b90b;border-color:#f0b90b;color:#141414}
+.hero .btn-primary:hover{background:#ffd45a;border-color:#ffd45a;color:#141414}
+.hero .btn-ghost{background:var(--elev);color:var(--txt)}
+.hero .btn-ghost:hover{border-color:rgba(240,185,11,.6);color:#ffd45a}
