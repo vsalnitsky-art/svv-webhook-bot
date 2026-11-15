@@ -401,7 +401,7 @@
       t = '<span class="t">' + p2(d.getDate()) + "." + p2(d.getMonth() + 1) + " " + p2(d.getHours()) + ":" + p2(d.getMinutes()) + "</span>";
     }
     el.innerHTML =
-      '<span class="sym">' + (IW.sel || "") + "</span>" + t +
+      t +
       '<span class="k">O</span><span class="v">' + f(o) + "</span>" +
       '<span class="k">H</span><span class="v">' + f(h) + "</span>" +
       '<span class="k">L</span><span class="v">' + f(l) + "</span>" +

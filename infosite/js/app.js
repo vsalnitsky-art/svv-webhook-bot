@@ -360,7 +360,7 @@
     if (IW_SORT === "change") sorted.sort(function (a, b) { var av = Number((IW.rows[a] || {}).chg24), bv = Number((IW.rows[b] || {}).chg24); return (isFinite(bv) ? bv : -Infinity) - (isFinite(av) ? av : -Infinity); });
     host.innerHTML = sorted.map(function (sym) {
       var r = IW.rows[sym] || {};
-      var ext = r.src === "ext" ? '<small title="Поза WATCHLIST бота">🛰</small>' : "";
+      var ext = r.src === "ext" ? '<small title="Outside the bot\'s WATCHLIST">🛰</small>' : "";
       var chg = r.chg24, bell = bellHTML(sym);
       var chgHtml = chg == null ? '<span class="iw-chg">—</span>'
         : '<span class="iw-chg ' + (chg > 0 ? "up" : (chg < 0 ? "dn" : "")) + '" title="Зміна ціни за ~24 год">' +
@@ -1081,7 +1081,7 @@
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true } },
       localization: { locale: "uk-UA", timeFormatter: locFull },
     });
-    IW.series = IW.chart.addCandlestickSeries({ priceFormat: { type: "price", precision: 6, minMove: 0.000001 } });
+    IW.series = IW.chart.addCandlestickSeries({ priceFormat: { type: "price", precision: 2, minMove: 0.01 } });
     applyCandlePalette();
     IW.prim = new BoxPrimitive(); IW.series.attachPrimitive(IW.prim); IW.pocLine = null;
     IW.chart.subscribeClick(function (p) { var s = p && p.point ? IW.prim.hitAt(p.point.x, p.point.y) : null; sigCard(s, p && p.point ? p.point.x : 0, p && p.point ? p.point.y : 0); });
@@ -1267,7 +1267,7 @@
     /* OHLC-легенда переїхала у шапку графіка; SBR-бейджі 1H/4H видалені. */
     h.innerHTML = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym, !!(c.src && c.src !== "ext")) + "</span>" +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" + pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
-      (c.src === "ext" ? '<span class="bdg warn" title="Поза WATCHLIST бота">🛰 поза ботом</span>' : "") +
+      (c.src === "ext" ? '<span class="bdg warn" title="Outside the bot\'s WATCHLIST">🛰 NOT IN BOT</span>' : "") +
       '<span class="tv-ohlc" id="tv-ohlc"><span class="ohlc-legend"></span></span>';
     /* Легенда шарів переїхала в нижній рядок графіка (chart-footer). */
     if (lg) lg.innerHTML =
@@ -1292,7 +1292,7 @@
     /* Єдиний вигляд процесу завантаження скрізь: лого → LOADING → круг.
        Жодних додаткових текстів. */
     var n = $("#iw-note"); if (!n) return;
-    n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg" alt="VSV"><b>LOADING</b><span class="boot-spin" aria-hidden="true"></span></span>';
+    n.innerHTML = '<span class="chart-loading"><img src="img/logo-loading.svg?v=212" alt="VSV"><b>LOADING</b><span class="boot-spin" aria-hidden="true"></span></span>';
     n.style.display = "";
   }
   function setWait(c) {
@@ -1303,8 +1303,14 @@
 
   function drawCoin(c, fit) {
     if (!ensureChart()) { setNote("графічна бібліотека не завантажилась"); return; }
-    var o = c.ohlc || [], key = c.symbol + "|" + c.tf, prec = precisionOf(o.length ? o[o.length - 1].close : 0);
-    if (IW.prec !== prec) { IW.series.applyOptions({ priceFormat: { type: "price", precision: prec, minMove: Math.pow(10, -prec) } }); IW.prec = prec; }
+    var o = c.ohlc || [], key = c.symbol + "|" + c.tf;
+    /* Точність ціни застосовуємо лише за наявності даних: інакше precisionOf(0)
+       давав би 8 знаків, а після перестворення графіка (зміна теми) кеш IW.prec
+       мусить бути скинутий — тоді формат перевстановлюється гарантовано. */
+    if (o.length) {
+      var prec = precisionOf(o[o.length - 1].close);
+      if (IW.prec !== prec) { IW.series.applyOptions({ priceFormat: { type: "price", precision: prec, minMove: Math.pow(10, -prec) } }); IW.prec = prec; }
+    }
     var ttl = String(c.symbol || "");
     if (IW.seriesTitle !== ttl) { IW.series.applyOptions({ title: ttl }); IW.seriesTitle = ttl; }
     var j = -1;
@@ -1357,7 +1363,7 @@
     if (!e.target.closest || !e.target.closest("#theme-btn") || !IW.chart) return;
     setTimeout(function () {
       try { IW.chart.remove(); } catch (x) {}
-      IW.chart = null; IW.series = null; IW.prim = null; IW.pocLine = null; IW.chartKey = "";
+      IW.chart = null; IW.series = null; IW.prim = null; IW.pocLine = null; IW.chartKey = ""; IW.prec = null;
       if (IW.coin) drawCoin(IW.coin, true);
     }, 30);
   });
