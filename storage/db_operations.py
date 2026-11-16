@@ -13,7 +13,7 @@ from storage.db_models import (
     Top100OBSnapshot, Top100OBHistory,
     VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
     LiquidationBucket, LiquidationOISnapshot, LiquidationEvent,
-    LiqHeatmapProfile, TradeArchive
+    LiqHeatmapProfile, TradeArchive, VolAnomaly, TradeResearch
 )
 from config import DEFAULT_SETTINGS
 
@@ -692,6 +692,139 @@ class DBOperations:
         except:
             session.rollback()
             return 0
+        finally:
+            session.close()
+
+    # === ⚠ АНОМАЛІЇ ОБСЯГУ + 🔬 АРХІВ ДОСЛІДЖЕННЯ УГОД (16.11) ===
+
+    _VA_COLS = ('ts', 'symbol', 'tf', 'bar_t', 'kind', 'hint', 'bar_dir', 'rv',
+                'buy_share', 'vol', 'med', 'price', 'bar_chg', 'pre_chg')
+
+    def add_vol_anomaly(self, rec: Dict) -> bool:
+        """Записати аномалію (дубль монета·TF·бар — пропускається)."""
+        session = get_session()
+        try:
+            ex = session.query(VolAnomaly.id).filter(
+                VolAnomaly.symbol == rec.get('symbol'), VolAnomaly.tf == rec.get('tf'),
+                VolAnomaly.bar_t == int(rec.get('bar_t') or 0)).first()
+            if ex:
+                return False
+            row = VolAnomaly(**{k: rec.get(k) for k in self._VA_COLS})
+            row.ctx = json.dumps(rec.get('ctx')) if rec.get('ctx') else None
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] add_vol_anomaly: {e}")
+            return False
+        finally:
+            session.close()
+
+    def update_vol_anomaly(self, row_id: int, fields: Dict) -> bool:
+        session = get_session()
+        try:
+            row = session.get(VolAnomaly, int(row_id))
+            if not row:
+                return False
+            for k in ('o1', 'o4', 'o8', 'hi', 'lo', 'done'):
+                if k in fields:
+                    setattr(row, k, fields[k])
+            session.commit()
+            return True
+        except Exception:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
+    def get_vol_anomalies(self, symbol: str = None, tf: str = None, since: float = None,
+                          until: float = None, undone: bool = None, kind: str = None,
+                          limit: int = 2000) -> List[Dict]:
+        """Аномалії (найновіші першими). `since/until` — за `ts` (закриття
+        свічки), для `undone` — за відкриттям свічки `bar_t`."""
+        session = get_session()
+        try:
+            q = session.query(VolAnomaly)
+            if symbol:
+                q = q.filter(VolAnomaly.symbol == symbol.upper())
+            if tf:
+                q = q.filter(VolAnomaly.tf == tf)
+            if kind:
+                q = q.filter(VolAnomaly.kind == kind)
+            if undone:
+                q = q.filter(VolAnomaly.done.isnot(True))
+                if since is not None:
+                    q = q.filter(VolAnomaly.bar_t >= int(since))
+            else:
+                if since is not None:
+                    q = q.filter(VolAnomaly.ts >= float(since))
+            if until is not None:
+                q = q.filter(VolAnomaly.ts <= float(until))
+            rows = q.order_by(desc(VolAnomaly.ts)).limit(int(limit or 2000)).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] get_vol_anomalies: {e}")
+            return []
+        finally:
+            session.close()
+
+    def purge_vol_anomalies(self, days: int = 365) -> int:
+        import time as _t
+        session = get_session()
+        try:
+            n = session.query(VolAnomaly).filter(
+                VolAnomaly.ts < _t.time() - int(days) * 86400).delete()
+            session.commit()
+            return n
+        except Exception:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+
+    def archive_research(self, rec: Dict, is_paper: bool = False) -> bool:
+        """🔬 Один рядок дослідження закритої угоди (ніколи не чиститься)."""
+        session = get_session()
+        try:
+            def _j(v):
+                return json.dumps(v, ensure_ascii=False, default=str) if v is not None else None
+            row = TradeResearch(
+                is_paper=bool(is_paper), symbol=rec.get('symbol'), side=rec.get('side'),
+                opened_by=(rec.get('opened_by') or '')[:80],
+                opened_at=rec.get('opened_at'), closed_at=rec.get('closed_at'),
+                entry_price=rec.get('entry_price'), exit_price=rec.get('exit_price'),
+                pnl_pct=rec.get('pnl_pct'), peak_pnl_pct=rec.get('peak_pnl_pct'),
+                mae_pnl_pct=rec.get('mae_pnl_pct'), reason=(rec.get('reason') or '')[:40],
+                entry_ctx=_j(rec.get('entry_ctx')), events=_j(rec.get('events')),
+                samples=_j(rec.get('samples')), anomalies=_j(rec.get('anomalies')),
+                summary=_j(rec.get('summary')))
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] archive_research: {e}")
+            return False
+        finally:
+            session.close()
+
+    def get_research(self, is_paper: bool = None, since: float = None,
+                     symbol: str = None, limit: int = 5000) -> List[Dict]:
+        session = get_session()
+        try:
+            q = session.query(TradeResearch)
+            if is_paper is not None:
+                q = q.filter(TradeResearch.is_paper == bool(is_paper))
+            if since is not None:
+                q = q.filter(TradeResearch.closed_at >= float(since))
+            if symbol:
+                q = q.filter(TradeResearch.symbol == symbol.upper())
+            rows = q.order_by(desc(TradeResearch.closed_at)).limit(int(limit or 5000)).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] get_research: {e}")
+            return []
         finally:
             session.close()
 

@@ -71,7 +71,8 @@ def _lite_trade(d: Dict) -> Dict:
     `hist_len` so the UI knows a chart is available; the full series is
     fetched on demand via /api/tm/trade-history."""
     h = d.get('history') or []
-    out = {k: v for k, v in d.items() if k not in ('history', '_last_log_at')}
+    out = {k: v for k, v in d.items()
+           if k not in ('history', '_last_log_at', 'research', 'research_summary')}
     out['hist_len'] = len(h)
     return out
 
@@ -1684,10 +1685,12 @@ class TradeManager:
                 print(f"[TM] trade-log sample error: {e}")
 
     def _sample_trade_logs(self, now: float):
-        """Append a {t, price, pnl, mm, mm_dir, exh} sample to each open
-        position's `history` every trade_log_interval_sec, when the feature is
-        on. Covers real AND shadow positions. The series rides along in the
-        position dict → persisted → carried into the closed record on close."""
+        """Зріз {t, price, pnl, manual_sl, manual_tp} кожної відкритої угоди раз
+        на trade_log_interval_sec (тумблер `trade_log_enabled`). 16.11: аналітику
+        (МММ, CTR, Decision, готовність виходу, ₿, режими) з хронології
+        ПРИБРАНО на вимогу — модалка показує лише шапку і «Шлях монети»; ціна і
+        PnL лишились для піку / просадки в шапці. Показники для калібровки
+        виходів пише 🔬 `_research_tick` (див. detection/trade_research.py)."""
         s = self._settings
         if not s.get('trade_log_enabled', False):
             return
@@ -1696,49 +1699,6 @@ class TradeManager:
         except (TypeError, ValueError):
             interval = 60
         interval = max(10, interval)
-        # Cheap live maps (single call each), tolerant of FF being absent.
-        mm_map, exh_map = {}, {}
-        # NOTE(calibration — DO WHEN DATA READY): the ₿ session (btc_dir/
-        # btc_paused/btc_mm) is sampled into every chronology point below. When the
-        # data is ready, ANALYSE how the ₿ bar behaved DURING each trade's life —
-        # did a ₿ flip / WAIT-pause against the position precede drawdowns/losses?
-        # did staying aligned with ₿ correlate with winners? This decides (a)
-        # whether to gate Queue-2 opens by ₿ (queue2_use_btc) and (b) the deferred
-        # question of DROPPING opposite-side signals at signal time when a
-        # directional gate (₿ / buttons) is active, instead of queuing them.
-        btc_dir, btc_paused, btc_mm = None, None, None
-        try:
-            from detection.fuel_filter import get_fuel_filter
-            ff = get_fuel_filter()
-            if ff:
-                mm_map = ff.get_fuel_strength_map() or {}
-                exh_map = ff.get_exhaustion_map() or {}
-                # ₿ BTCUSDT banner (session) + BTC ММ strength — same for every
-                # sample this tick, recorded so the trade chart can overlay them.
-                sess = ff.get_btc_session() or {}
-                btc_dir = sess.get('dir')
-                btc_paused = bool(sess.get('paused'))
-                btc_mm = (mm_map.get('BTCUSDT') or {}).get('now')
-        except Exception:
-            pass
-        # 🧭 Режим Smart Direction (головний банер) + режим відкриття Черги-2 — щоб
-        # у хронології було видно, ЗА ЯКИХ УМОВ угоду відкрито/закрито. Однакові для
-        # всіх sample цього тіку.
-        sd_mode = None
-        q2_mode = None
-        try:
-            from detection.auto_gate import get_auto_gate
-            _ag = get_auto_gate()
-            if _ag:
-                sd_mode = _ag.get_mode()
-        except Exception:
-            pass
-        try:
-            if ff:
-                _fs = ff.get_settings() or {}
-                q2_mode = 'banner' if _fs.get('queue2_use_btc', True) else 'buttons'
-        except Exception:
-            pass
         with self._lock:
             items = list(self._positions.items()) + list(self._shadow_positions.items())
         changed = False
@@ -1756,110 +1716,15 @@ class TradeManager:
                         else ((entry - price) / entry * 100.0)
                 else:
                     pnl = 0.0
-                mm = mm_map.get(sym) or {}
-                # ⚡ CTR chronology: STC value, last crossover direction, and the
-                # crossover age in bars — recorded per sample so the trade chart
-                # can plot how the CTR reading (and its crossover age) evolved.
-                ctr = self._ctr_snapshot(sym) or {}
-                # Live HOLD-score + Manual SL + distance-to-SL for richer replay.
-                hold_score = None
-                try:
-                    _sc = self._ff_score_dict(sym) if hasattr(self, '_ff_score_dict') else None
-                    if _sc is None:
-                        from detection.fuel_filter import get_fuel_filter
-                        _ff2 = get_fuel_filter()
-                        _sc = _ff2.score_dict(sym) if _ff2 else None
-                    hold_score = (_sc or {}).get('score')
-                except Exception:
-                    hold_score = None
-                # 🤪 Decision Center TRAJECTORY — sampled at a COARSER cadence
-                # than price (heavy: LONG+SHORT eval + context) so we can see how
-                # the verdict evolved intra-trade without loading the -w1 worker.
-                dec_reco = dec_verdict = dec_prob = dec_score = None
-                mtf_align = mtf_trend = mtf_timing = None
-                try:
-                    _dec_iv = int(self._settings.get('trade_log_decision_interval_sec', 180) or 180)
-                    if (now - float(pos.get('_last_dec_at', 0))) >= max(60, _dec_iv):
-                        _due = True
-                        if self._settings.get('entry_score_enabled', True):
-                            _dec = self.compute_decision(sym, price)
-                            if _dec:
-                                dec_reco = _dec.get('recommended')
-                                dec_verdict = _dec.get('verdict')
-                                dec_prob = (_dec.get('prob_long') if side == 'LONG'
-                                            else _dec.get('prob_short'))
-                                dec_score = (_dec.get('long_score') if side == 'LONG'
-                                             else _dec.get('short_score'))
-                        # Multi-TF CTR confluence trajectory (same cadence).
-                        try:
-                            from detection.fuel_filter import get_fuel_filter
-                            _ff3 = get_fuel_filter()
-                            _mtf = _ff3._ctr_confluence(sym, side) if _ff3 else None
-                            if _mtf:
-                                mtf_align = _mtf.get('align')
-                                mtf_trend = _mtf.get('trend')
-                                mtf_timing = _mtf.get('timing')
-                        except Exception:
-                            pass
-                        pos['_last_dec_at'] = now
-                except Exception:
-                    pass
                 try:
                     _msl = float(pos.get('manual_sl') or 0) or None
                 except (TypeError, ValueError):
                     _msl = None
-                dist_to_sl = None
-                if _msl and price:
-                    try:
-                        dist_to_sl = round((price - _msl) / price * 100.0
-                                           if side == 'LONG'
-                                           else (_msl - price) / price * 100.0, 3)
-                    except Exception:
-                        dist_to_sl = None
-                sample = {
-                    't': int(now),
-                    'price': price,
-                    'pnl': round(pnl, 4),
-                    'mm': mm.get('now'),
-                    'mm_dir': mm.get('dir'),
-                    'exh': exh_map.get(sym),
-                    # ⚡ CTR at this moment.
-                    'ctr_stc': ctr.get('stc'),
-                    'ctr_dir': ctr.get('last_dir'),
-                    'ctr_age': ctr.get('last_signal_age_bars'),
-                    # ⭐ hold-score + Manual SL/TP levels + % distance price→SL.
-                    'hold_score': hold_score,
-                    'manual_sl': _msl,
-                    'manual_tp': pos.get('manual_tp'),
-                    'dist_to_sl': dist_to_sl,
-                    # 🤪 Decision Center trajectory (coarse cadence; None between).
-                    'dec_reco': dec_reco,
-                    'dec_verdict': dec_verdict,
-                    'dec_prob': dec_prob,
-                    'dec_score': dec_score,
-                    # ⚡ Multi-TF CTR confluence trajectory (same cadence).
-                    'mtf_align': mtf_align,
-                    'mtf_trend': mtf_trend,
-                    'mtf_timing': mtf_timing,
-                    # 🔄 reversal-after-peak readiness % (stamped by the monitor).
-                    'rev': pos.get('ctr_rev_pct'),
-                    # 🚪 SMC «Готовність виходу» % у цей момент (grade_exit, РАДНИК) —
-                    # крива в модалці: видно, що радник пропонував на піку/впродовж угоди.
-                    'exitg': (pos.get('exit_grade') or {}).get('score'),
-                    # ₿ BTCUSDT banner state + BTC ММ at this moment.
-                    'btc_dir': btc_dir,
-                    'btc_paused': btc_paused,
-                    'btc_mm': btc_mm,
-                    # 🧭 Режим Smart Direction + режим відкриття Черги-2 (умови угоди).
-                    'sd_mode': sd_mode,
-                    'q2_mode': q2_mode,
-                }
+                sample = {'t': int(now), 'price': price, 'pnl': round(pnl, 4),
+                          'manual_sl': _msl, 'manual_tp': pos.get('manual_tp')}
                 with self._lock:
                     hist = pos.setdefault('history', [])
-                    # Baseline point at the EXACT open moment (PnL=0, price=entry)
-                    # so EVERY trade's chart starts cleanly at 0 — otherwise the
-                    # first plotted sample is taken a few seconds AFTER open, by
-                    # when price already drifted, so the line starts off-zero.
+                    # Базова точка в мить відкриття (PnL=0, ціна=вхід).
                     if not hist and pos.get('opened_at') and entry:
                         hist.append({'t': int(pos['opened_at']), 'price': float(entry),
                                      'pnl': 0.0})
@@ -1905,6 +1770,33 @@ class TradeManager:
                         'side': e.get('side'), 'source': e.get('source'),
                         'x': e.get('x')})
         out.reverse()          # oldest → newest for a top-down tree
+        return out
+
+    def _journey_full(self, symbol: str, rec: Dict, closed_at=None) -> list:
+        """🌿 «Шлях монети» = лог бота + ⚠ аномалії обсягу (від 6 год до входу
+        до закриття) + 🔬 події дослідження угоди (💥 вистріл, 🎯 кульмінація,
+        рубежі цілі, трейли) + підсумок на закритті. Старі → нові."""
+        oa = rec.get('opened_at')
+        out = list(self._trade_journey(symbol, oa, closed_at))
+        try:
+            from detection import vol_anomaly as va
+            t0 = (float(oa) - 6 * 3600) if oa else 0.0
+            t1 = (float(closed_at) + 120) if closed_at else time.time()
+            out += va.journey_events(self._trade_anomalies(symbol, t0, t1),
+                                     rec.get('side'), rec.get('entry_price'))
+        except Exception:
+            pass
+        try:
+            from detection import trade_research as tr
+            out += tr.journey_events(rec.get('research') or {})
+            sm = rec.get('research_summary')
+            if sm and closed_at:
+                out.append({'t': float(closed_at) + 0.5, 'event': 'rsummary',
+                            'detail': '', 'side': rec.get('side'), 'source': 'R&D',
+                            'x': sm})
+        except Exception:
+            pass
+        out.sort(key=lambda e: float(e.get('t') or 0))
         return out
 
     def get_trade_history(self, symbol: str, closed_at=None,
@@ -1964,9 +1856,8 @@ class TradeManager:
                 'exit_reason': best.get('reason'),
                 'exit_reason_detail': best.get('reason_detail'),
                 'history': _hist,
-                # 🌿 the coin's journey (activity log) for the tree view.
-                'journey': self._trade_journey(symbol, best.get('opened_at'),
-                                               best.get('closed_at')),
+                # 🌿 the coin's journey (activity log + ⚠ аномалії + 🔬 дослідження).
+                'journey': self._journey_full(symbol, best, best.get('closed_at')),
             })
             return out
         if op:
@@ -1976,12 +1867,9 @@ class TradeManager:
                 'peak_pnl_pct': self._peak_pnl(
                     symbol, op.get('pnl_pct') or 0.0, is_shadow=is_shadow),
                 'entry_decision': op.get('entry_score'),
-                # live Decision Center as of THIS view (heavy — one call)
-                'decision_now': self._decision_snapshot(symbol),
-                'ctr_close': self._ctr_snapshot(symbol),   # "as of now" for open
                 'now_ts': time.time(),
                 'history': list(op.get('history') or []),
-                'journey': self._trade_journey(symbol, op.get('opened_at'), None),
+                'journey': self._journey_full(symbol, op, None),
             })
             return out
         return {'ok': True, 'symbol': symbol, 'history': []}
@@ -2188,6 +2076,7 @@ class TradeManager:
             self._spring_fire_view(symbol)
         except Exception:
             pass
+        self._research_tick(symbol, pos, current_price, False)
         if pos.get('ctr_open') is None:
             _c = self._ctr_snapshot(symbol)
             if _c:
@@ -2882,6 +2771,7 @@ class TradeManager:
             self._spring_fire_view(symbol)
         except Exception:
             pass
+        self._research_tick(symbol, pos, current_price, True)
         if pos.get('ctr_open') is None:
             _c = self._ctr_snapshot(symbol)
             if _c:
@@ -6643,6 +6533,97 @@ class TradeManager:
     # Position open / close / partial
     # ============================================================
     
+    # ── 🔬 ДОСЛІДЖЕННЯ УГОДИ (16.11): 💥 вистріл · 🎯 кульмінація · ⚠ аномалії ──
+    def _research_tick(self, symbol: str, pos: Dict, price, is_shadow: bool) -> None:
+        """Зріз показників + події угоди (`detection.trade_research`). Лише
+        памʼять (кеш живого 1h-бару, без мережі); ніколи не ламає монітор."""
+        try:
+            from detection import trade_research as tr
+            vw = self._spring_fire_view(symbol, fetch=False) or {}
+            ex = self.trade_exh_for(pos, vw) or {}
+            rs = pos.setdefault('research', {})
+            snap = tr.snap_of(pos, price, vw, ex)
+            n0 = len(rs.get('s') or [])
+            new = tr.step(rs, pos.get('side'), time.time(), snap, bar_t=vw.get('t'))
+            # Персист — лише коли є що зберегти (подія / новий зріз раз на 5 хв),
+            # щоб рестарт не губив дослідження угоди.
+            if new or len(rs.get('s') or []) != n0:
+                self._persist_book(is_shadow)
+        except Exception as e:
+            if self._errors <= 10:
+                print(f"[TM] research tick {symbol}: {e}")
+
+    def _trade_anomalies(self, symbol: str, t0, t1) -> List[Dict]:
+        """⚠ Аномалії обсягу монети у вікні [t0, t1] (таблиця sob_vol_anomaly)."""
+        if not self.db or not hasattr(self.db, 'get_vol_anomalies'):
+            return []
+        try:
+            rows = self.db.get_vol_anomalies(symbol=symbol, since=float(t0 or 0),
+                                             until=float(t1 or time.time()), limit=400) or []
+            rows.reverse()                    # старі → нові
+            return rows
+        except Exception:
+            return []
+
+    def _research_attach(self, closed: Dict, pos: Dict) -> None:
+        """Підсумок дослідження в закритий запис (події + підсумок; зрізи —
+        лише в архіві БД, щоб не роздувати блоб закритих угод)."""
+        try:
+            from detection import trade_research as tr
+            rs = pos.get('research') or {}
+            an = self._trade_anomalies(closed.get('symbol'), closed.get('opened_at'),
+                                       closed.get('closed_at'))
+            closed['research'] = {'ev': list(rs.get('ev') or []),
+                                  'pk': rs.get('pk'), 'tr': rs.get('tr')}
+            closed['research_summary'] = tr.summary(
+                closed.get('side'), closed.get('entry_price'), closed.get('exit_price'),
+                closed.get('pnl_pct'), rs, an)
+        except Exception as e:
+            print(f"[TM] research attach: {e}")
+
+    def _research_archive(self, closed: Dict, pos: Dict, is_paper: bool) -> None:
+        """🔬 ПОВНИЙ архів дослідження угоди в `sob_trade_research` (ніколи не
+        чиститься): контекст входу, усі події й зрізи, аномалії від 6 год до
+        входу до закриття, підсумок «що дав би вихід»."""
+        if not self.db or not hasattr(self.db, 'archive_research'):
+            return
+        from detection import trade_research as tr
+        rs = pos.get('research') or {}
+        oa = closed.get('opened_at') or 0
+        an = self._trade_anomalies(closed.get('symbol'), float(oa or 0) - 6 * 3600,
+                                   closed.get('closed_at'))
+        es = pos.get('entry_score') if isinstance(pos.get('entry_score'), dict) else {}
+        ctx = {
+            'spring_open': pos.get('spring_open'), 'spring_open_tgt': pos.get('spring_open_tgt'),
+            'spring_open_late': pos.get('spring_open_late'),
+            'entry_snapshot': pos.get('entry_snapshot'),
+            'decision': {k: es.get(k) for k in ('verdict', 'recommended', 'prob_long',
+                                                 'prob_short', 'headline')} if es else None,
+            'ctr_open': pos.get('ctr_open'), 'ff_kind': pos.get('ff_kind'),
+            'ob4h_open': pos.get('ob4h_open'), 'manual_sl': pos.get('manual_sl'),
+            'manual_tp': pos.get('manual_tp'), 'manual_tp1': pos.get('manual_tp1'),
+            'manual_sl_hist': pos.get('manual_sl_hist'), 'leverage': pos.get('leverage'),
+            'was_manual': bool(pos.get('was_manual')), 'origin_trace': pos.get('origin_trace'),
+            'settings': {k: self._settings.get(k) for k in (
+                'use_spring_fired_exit', 'spring_fired_exit_dir', 'use_exh_exit',
+                'exh_exit_min', 'exh_exit_atr', 'exh_exit_min_profit',
+                'use_sbr_exit', 'sbr_exit_trail')},
+        }
+        in_trade = [a for a in an if float(a.get('ts') or 0) >= float(oa or 0)]
+        self.db.archive_research({
+            'symbol': closed.get('symbol'), 'side': closed.get('side'),
+            'opened_by': closed.get('opened_by'), 'opened_at': oa,
+            'closed_at': closed.get('closed_at'), 'entry_price': closed.get('entry_price'),
+            'exit_price': closed.get('exit_price'), 'pnl_pct': closed.get('pnl_pct'),
+            'peak_pnl_pct': closed.get('peak_pnl_pct'), 'mae_pnl_pct': pos.get('mae_pnl_pct'),
+            'reason': closed.get('reason'), 'entry_ctx': ctx,
+            'events': list(rs.get('ev') or []), 'samples': tr.samples_dicts(rs),
+            'anomalies': an,
+            'summary': closed.get('research_summary') or tr.summary(
+                closed.get('side'), closed.get('entry_price'), closed.get('exit_price'),
+                closed.get('pnl_pct'), rs, in_trade),
+        }, is_paper=is_paper)
+
     def _archive_closed(self, closed: Dict, pos: Dict, is_paper: bool):
         """Append a closed trade to the permanent DB archive (never trimmed).
         Carries the pre-trade snapshot captured at open. Guarded so it can
@@ -6656,6 +6637,10 @@ class TradeManager:
             self.db.archive_trade(closed, entry_snapshot=snap, is_paper=is_paper)
         except Exception as e:
             print(f"[TM] archive_closed error: {e}")
+        try:
+            self._research_archive(closed, pos, is_paper)
+        except Exception as e:
+            print(f"[TM] research archive error: {e}")
 
     def _capture_entry_snapshot(self, symbol: str, side: str,
                                 entry_price: float, decision) -> Dict:
@@ -6939,6 +6924,7 @@ class TradeManager:
             'entry_score': pos.get('entry_score'),
         }
         
+        self._research_attach(closed, pos)   # 🔬 до локу: читає БД аномалій
         with self._lock:
             self._positions.pop(symbol, None)
             self._pos_state.pop(symbol, None)
@@ -7853,6 +7839,7 @@ class TradeManager:
             'ff_exit_close': self._ff_exit_snapshot(symbol),
         }
 
+        self._research_attach(closed, pos)   # 🔬 до локу: читає БД аномалій
         with self._lock:
             self._positions.pop(symbol, None)
             self._pos_state.pop(symbol, None)
@@ -8403,6 +8390,7 @@ class TradeManager:
             'ff_exit_close': self._ff_exit_snapshot(symbol),
         }
 
+        self._research_attach(closed, pos)   # 🔬 до локу: читає БД аномалій
         with self._lock:
             self._shadow_positions.pop(symbol, None)
             self._shadow_pos_state.pop(symbol, None)

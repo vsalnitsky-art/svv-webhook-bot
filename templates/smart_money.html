@@ -1525,6 +1525,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .smcf-all { font:700 0.66rem monospace; color:#8b93a7; }
 .smcf-all.up { color:#00e676; } .smcf-all.dn { color:#ff4d5e; }
 @media (max-width: 760px) { .smcf-grid { grid-template-columns:1fr; } .smcf-mid { order:-1; } }
+.vanom-btn { font-size:0.68rem; color:#dde3ee; text-decoration:none; border:1px solid #2b2f36; background:#141821; border-radius:4px; padding:2px 8px; }
+.vanom-btn:hover { border-color:#fbbf24; color:#fbbf24; }
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -4929,6 +4931,36 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     </div>
     </div>
 
+    <!-- ⚠ АНОМАЛІЇ ОБСЯГУ · 🔬 ДОСЛІДЖЕННЯ УГОД (16.11): датасет для навчання
+         бота рішенням входу / виходу. Усе пишеться в БД; тут — статистика і
+         вивантаження. Торгівлі не стосується. -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
+        <div style="font-size:0.8rem;font-weight:700;color:#fbbf24;cursor:pointer;user-select:none" onclick="togglePanel('vanom')" title="Клік — згорнути/розгорнути"><span id="vanom-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> ⚠ АНОМАЛІЇ ОБСЯГУ · 🔬 ДОСЛІДЖЕННЯ УГОД <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— архів даних для навчання бота ідеальному входу й виходу</span></div>
+        <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="⚠ Детектор аномалій обсягу (15M / 1H, закриття свічки)"><input type="checkbox" id="vanom-enabled" onchange="vanomSave()"><span class="tm-toggle-slider"></span></label>
+    </div>
+    <div id="vanom-body" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;margin-bottom:12px">
+        <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:0.72rem;color:#8b93a7;margin-bottom:8px">
+            <span>Монети: <select id="vanom-scope" onchange="vanomSave()" style="background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;padding:2px 4px"><option value="watchlist">WATCHLIST + угоди</option><option value="trades">лише відкриті угоди</option></select></span>
+            <span>Період: <select id="vanom-days" onchange="vanomLoad()" style="background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;padding:2px 4px"><option value="1">1 доба</option><option value="7">7 діб</option><option value="30" selected>30 діб</option><option value="0">усе</option></select></span>
+            <span id="vanom-st"></span>
+            <span style="margin-left:auto;display:flex;gap:6px">
+                <a class="vanom-btn" href="#" onclick="vanomExport('anom');return false" title="Усі аномалії з наслідками (CSV)">⬇ Аномалії CSV</a>
+                <a class="vanom-btn" href="#" onclick="vanomExport('rcsv');return false" title="Підсумки дослідження закритих угод (CSV)">⬇ Дослідження CSV</a>
+                <a class="vanom-btn" href="#" onclick="vanomExport('rjson');return false" title="ПОВНИЙ архів: контекст входу, події, зрізи, аномалії, підсумок (JSON)">⬇ Архів JSON</a>
+            </span>
+        </div>
+        <div style="overflow-x:auto"><table class="tm-table" id="vanom-table" style="width:100%">
+            <thead><tr><th>Аномалія</th><th>TF</th><th title="Скільки записано / з повним наслідком (8 свічок)">Записано</th>
+                <th title="Частка, де ціна через 4 свічки пішла ПРОТИ тренду, що був до аномалії (рух &lt; 0.2% не рахується)">↩ Розворот</th>
+                <th title="Для 🧽 і ⚡: частка, де ціна через 4 свічки пішла в бік, на який вказувала аномалія">✓ У бік підказки</th>
+                <th title="Середній рух ціни через 4 / 8 свічок у бік підказки (для 🔥/📈 — просто рух)">Сер. рух 4 / 8 св.</th></tr></thead>
+            <tbody id="vanom-tbody"><tr><td colspan="6" style="color:#8b93a7">—</td></tr></tbody>
+        </table></div>
+        <div style="font-size:0.66rem;color:#8b93a7;margin-top:6px;line-height:1.5">
+            Кожна угода пише в БД 🔬 дослідження (зрізи раз на 5 хв + події: 💥 вистріл, 🎯 кульмінація, рубежі цілі Пружини, трейли, пік / дно з показниками). Після закриття — підсумок «якби вийти на першій події». Деталі угоди — 📈 біля назви монети → «Шлях монети».
+        </div>
+    </div>
+
     <!-- ====================== TRADE MANAGER ====================== -->
     <div class="tm-section">
         <div class="tm-header" id="tm-header">
@@ -6681,6 +6713,53 @@ async function sendManualSignal() {
 // 🪗 ГАРМОШКА КОЖНОЇ ЧЕРГИ ОКРЕМО. Згорнута черга не малює свою таблицю —
 // це прибирає найважчі DOM-перебудови (черги оновлюються кожні 30с).
 // Стан кожної запам'ятовується окремо (UI-налаштування, не дані).
+// ⚠ АНОМАЛІЇ ОБСЯГУ · 🔬 ДОСЛІДЖЕННЯ (16.11) — статистика + вивантаження.
+const _VANOM_UA = { absorb: '🧽 Поглинання', climax: '🔥 Кульмінація', side: '⚡ Перекіс', spike: '📈 Сплеск' };
+function _vanomPct(v) { return v == null ? '<span style="color:#6b7280">—</span>' : `<b>${(+v).toFixed(1)}%</b>`; }
+function _vanomMv(v) { return v == null ? '—' : `<b style="color:${v >= 0 ? '#4ade80' : '#f87171'}">${v >= 0 ? '+' : ''}${(+v).toFixed(2)}%</b>`; }
+function vanomRows(st) {
+    if (!Array.isArray(st) || !st.length)
+        return '<tr><td colspan="6" style="color:#8b93a7">Даних ще немає — детектор пише аномалії на закритті свічок 15M / 1H.</td></tr>';
+    return st.map(r => `<tr><td>${_VANOM_UA[r.kind] || r.kind}</td><td>${String(r.tf || '').toUpperCase()}</td>`
+        + `<td style="font-family:monospace">${r.n} / ${r.done}</td>`
+        + `<td>${_vanomPct(r.reversal_pct)} <span style="color:#6b7280;font-size:0.66rem">з ${r.decided}</span></td>`
+        + `<td>${_vanomPct(r.hint_pct)} <span style="color:#6b7280;font-size:0.66rem">з ${r.hint_n}</span></td>`
+        + `<td style="font-family:monospace">${_vanomMv(r.avg4)} / ${_vanomMv(r.avg8)}</td></tr>`).join('');
+}
+async function vanomLoad() {
+    const days = (document.getElementById('vanom-days') || {}).value || '30';
+    try {
+        const d = await (await fetch('/api/vol-anomaly/state?days=' + encodeURIComponent(days))).json();
+        if (!d || !d.ok) throw new Error((d && d.reason) || 'немає відповіді');
+        const st = (d.state || {}).settings || {};
+        const en = document.getElementById('vanom-enabled'); if (en) en.checked = st.enabled !== false;
+        const sc = document.getElementById('vanom-scope'); if (sc && st.scope) sc.value = st.scope;
+        const s2 = (d.state || {}).stat || {};
+        const el = document.getElementById('vanom-st');
+        if (el) el.innerHTML = `записано за період: <b style="color:#cbd5e1">${d.total}</b>`
+            + (s2.last_at ? ` · остання перевірка ${new Date(s2.last_at * 1000).toLocaleTimeString('uk-UA')}` : '')
+            + (s2.errors ? ` · <span style="color:#f87171" title="${String(s2.last_err || '').replace(/"/g, '&quot;')}">помилок ${s2.errors}</span>` : '');
+        const tb = document.getElementById('vanom-tbody'); if (tb) tb.innerHTML = vanomRows(d.stats);
+    } catch (e) {
+        const el = document.getElementById('vanom-st'); if (el) el.innerHTML = `<span style="color:#f87171">помилка: ${e.message || e}</span>`;
+    }
+}
+async function vanomSave() {
+    const en = document.getElementById('vanom-enabled'), sc = document.getElementById('vanom-scope');
+    try {
+        await fetch('/api/vol-anomaly/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: !!(en && en.checked), scope: sc ? sc.value : 'watchlist' }) });
+    } catch (e) {}
+    vanomLoad();
+}
+function vanomExport(kind) {
+    const days = (document.getElementById('vanom-days') || {}).value || '30';
+    const u = kind === 'anom' ? '/api/vol-anomaly/export?fmt=csv&days=' + days
+        : (kind === 'rcsv' ? '/api/tm/research-export?fmt=csv&days=' + days
+                           : '/api/tm/research-export?days=' + days);
+    window.open(u, '_blank');
+}
+
 function togglePanel(pid) {
     const body = document.getElementById(pid + '-body');
     const car = document.getElementById(pid + '-caret');
@@ -6694,6 +6773,7 @@ function togglePanel(pid) {
     // стан одразу, а не чекаємо до 30с наступного полла.
     if (open && pid === 'fund') { try { fsprLoad(true); } catch (e) {} }
     if (open && pid === 'xspr') { try { xsprLoad(true); } catch (e) {} }
+    if (open && pid === 'vanom') { try { vanomLoad(); } catch (e) {} }
     if (open && (pid === 'q4' || pid === 'mm' || pid === 'mmn' || pid === 'mmc' || pid === 'mmf' || pid === 'mmp' || pid === 'mmd' || pid === 'mmr' || pid === 'mms')) {
         try { loadFuelFilterStatus(); } catch (e) {}
     }
@@ -6719,11 +6799,11 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['spr', 'xspr', 'tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'tmclosed', 'testmode', 'tmpclosed'];
+const _PANEL_IDS = ['vanom', 'spr', 'xspr', 'tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'tmclosed', 'testmode', 'tmpclosed'];
 // Секції, ЗГОРНУТІ ЗА ЗАМОВЧУВАННЯМ (доки користувач сам не розгорне): список
 // монет МММ-монітора — вимога 18.09. Для решти дефолт лишається «розгорнуто»,
 // тобто збережений вибір користувача завжди сильніший за цей список.
-const _PANEL_CLOSED_BY_DEFAULT = new Set(['tmgen', 'mmlist', 'mmnlist', 'mmclist', 'mmflist', 'mmplist', 'mmdlist', 'mmrlist', 'mmslist']);
+const _PANEL_CLOSED_BY_DEFAULT = new Set(['vanom', 'tmgen', 'mmlist', 'mmnlist', 'mmclist', 'mmflist', 'mmplist', 'mmdlist', 'mmrlist', 'mmslist']);
 (() => {
     _PANEL_IDS.forEach(pid => {
         try {
@@ -6733,6 +6813,17 @@ const _PANEL_CLOSED_BY_DEFAULT = new Set(['tmgen', 'mmlist', 'mmnlist', 'mmclist
             if (closed) togglePanel(pid);
         } catch (e) {}
     });
+})();
+// ⚠ Тумблер детектора аномалій — стан із сервера одразу (легкий запит без
+// статистики); статистику тягне розгортання гармошки.
+(() => {
+    const b = document.getElementById('vanom-body');
+    if (b && b.style.display !== 'none') { try { vanomLoad(); } catch (e) {} return; }
+    fetch('/api/vol-anomaly/state?light=1').then(r => r.json()).then(d => {
+        const st = ((d || {}).state || {}).settings || {};
+        const en = document.getElementById('vanom-enabled'); if (en) en.checked = st.enabled !== false;
+        const sc = document.getElementById('vanom-scope'); if (sc && st.scope) sc.value = st.scope;
+    }).catch(() => {});
 })();
 
 // 🪗 Гармошка логу. За замовчуванням ЗГОРНУТО: поки згорнуто — таблиця НЕ
@@ -19137,9 +19228,8 @@ function tvSym(sym, label) {
 function histSymCell(c, isShadow) {
     const tv = tvSym(c.symbol);
     const sig = signalIconHtml(c.opened_by);   // 🏷 звідки угода — біля назви
-    if (!(c.hist_len > 0)) return `${sig}<b>${tv}</b>`;
     const ca = JSON.stringify(c.closed_at);
-    return `${sig}<b><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${c.hist_len} точок)"`
+    return `${sig}<b><span style="cursor:pointer;margin-right:3px" title="Хронологія угоди: шлях монети, ⚠ аномалії, 🔬 дослідження"`
         + ` onclick="event.stopPropagation();showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
 }
 
@@ -19217,8 +19307,7 @@ function histSymOpen(p, isShadow) {
         || (p.opened_by && /funding/i.test(p.opened_by));
     const fund = fromFunding
         ? '<span title="Монета з 💰 Funding" style="margin-right:3px;font-size:0.72rem">💰</span>' : '';
-    if (!(p.hist_len > 0)) return `${sig}${fund}<b class="tm-sym-name">${tv}</b>`;
-    return `${sig}${fund}<b class="tm-sym-name"><span style="cursor:pointer;margin-right:3px" title="Графік хронології (${p.hist_len} точок)"`
+    return `${sig}${fund}<b class="tm-sym-name"><span style="cursor:pointer;margin-right:3px" title="Хронологія угоди: шлях монети, ⚠ аномалії, 🔬 дослідження"`
         + ` onclick="event.stopPropagation();showTradeHistory('${p.symbol}', null, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
 }
 
@@ -19252,8 +19341,8 @@ async function showTradeHistory(symbol, closedAt, isShadow) {
         if (closedAt != null) q += `&closed_at=${encodeURIComponent(closedAt)}`;
         const d = await (await fetch('/api/tm/trade-history?' + q)).json();
         const h = (d && d.history) || [];
-        if (!h.length) {
-            body.innerHTML = '<div style="padding:24px;color:#888">Немає записаної хронології для цієї угоди (лог був вимкнений або угода надто коротка).</div>';
+        if (!h.length && !(d && Array.isArray(d.journey) && d.journey.length) && !(d && d.entry_price)) {
+            body.innerHTML = '<div style="padding:24px;color:#888">Немає даних для цієї угоди.</div>';
             return;
         }
         body.innerHTML = renderTradeHistoryChart(h, d);
@@ -19263,198 +19352,143 @@ async function showTradeHistory(symbol, closedAt, isShadow) {
 }
 
 // Build two stacked inline-SVG panels: PnL% and МММ/виснаженість over time.
-// 🌿 Coin journey tree — the whole path from the bot's activity log (scan →
-// queue → CTR/Decision → 🎯 recommendation → open → manage → close), oldest→
-// newest, each step with its metrics laid out as chips. `journey` = array of
-// {t, event, detail, side, source, x}.
+// 🌿 «Шлях монети» (16.11) — лог бота + ⚠ аномалії обсягу + 🔬 дослідження
+// угоди (💥 вистріл, 🎯 кульмінація, рубежі цілі, трейли) + підсумок на
+// закритті. Старі → нові. `journey` = [{t, event, detail, side, source, x}].
+const _JR_AN_COL = { absorb: '#c084fc', climax: '#f59e0b', side: '#38bdf8', spike: '#94a3b8' };
+const _JR_AN_UA = { absorb: '🧽 Поглинання', climax: '🔥 Кульмінація', side: '⚡ Перекіс', spike: '📈 Сплеск' };
+const _JR_IFX = {
+    climax_with: '🎯 кульмінація за угодою', climax_against: '🎯 кульмінація проти',
+    fire_with: '💥 вистріл за угодою', fire_against: '💥 вистріл проти',
+    prog50: '🎯 50% шляху до цілі', prog75: '🎯 75% шляху', prog100: '🎯 ціль Пружини',
+    trail_arm: '🎯 трейл «вершина» озброєно', fp75: '💥 готовність вистрілу 75%',
+};
+function _jrPct(v, d) {
+    if (v == null || !isFinite(+v)) return '—';
+    v = +v; d = (d == null) ? 2 : d;
+    return `<b style="color:${v >= 0 ? '#4ade80' : '#f87171'}">${v >= 0 ? '+' : ''}${v.toFixed(d)}%</b>`;
+}
+function _jrChip(k, v, col) {
+    return `<span style="font-size:0.6rem;color:${col || '#cbd5e1'};background:rgba(255,255,255,0.05);border-radius:3px;padding:1px 5px">${k} ${v}</span>`;
+}
+function _jrIndChips(x) {
+    // показники Пружини / Виснаження в мить події (дослідження).
+    const c = [];
+    if (x.pnl != null) c.push(_jrChip('PnL', _jrPct(x.pnl)));
+    if (x.prog != null) c.push(_jrChip('🎯 ціль', `<b>${(+x.prog).toFixed(0)}%</b>`));
+    if (x.fp != null) c.push(_jrChip('💥 готовн.', `<b>${(+x.fp).toFixed(0)}%</b>`));
+    if (x.rx != null) c.push(_jrChip('діап.', `<b>×${(+x.rx).toFixed(2)} ATR</b>`));
+    if (x.vx != null) c.push(_jrChip('обсяг', `<b>×${(+x.vx).toFixed(2)}</b>`));
+    if (x.bx != null) c.push(_jrChip('коробка', `<b>${(+x.bx).toFixed(0)}%</b>`));
+    if (x.sq != null) c.push(_jrChip('стисн.', `<b>${x.sq} бар.</b>`));
+    if (x.tstop != null) c.push(_jrChip('🛡 стоп', `<b>${fmtPriceJS(x.tstop)}</b>`));
+    if (x.px != null) c.push(_jrChip('ціна', `<b>${fmtPriceJS(x.px)}</b>`));
+    return c;
+}
 function journeyTree(journey, meta) {
     if (!Array.isArray(journey) || !journey.length) return '';
     meta = meta || {};
     const ICO = { signal:'⚡', queued:'📥', dropped:'⛔', ejected:'↩️',
         opened:'▶️', closed:'⏹', autosl:'🛡', sltp:'✏️', skipped:'⏳',
-        rejected:'🚫', passthrough:'➡️' };
+        rejected:'🚫', passthrough:'➡️', anomaly:'', research:'🔬', rsummary:'🧾' };
     const COL = { opened:'#4ade80', closed:'#f87171', queued:'#60a5fa',
         dropped:'#f59e0b', ejected:'#f59e0b', autosl:'#fbbf24', sltp:'#38bdf8',
-        skipped:'#8b93a7', signal:'#c084fc', rejected:'#f87171', passthrough:'#8b93a7' };
+        skipped:'#8b93a7', signal:'#c084fc', rejected:'#f87171', passthrough:'#8b93a7',
+        anomaly:'#f59e0b', research:'#f472b6', rsummary:'#fbbf24' };
     const NAME = { signal:'Сигнал', queued:'У черзі', dropped:'Відхилено',
         ejected:'Викинуто', opened:'Відкрито', closed:'Закрито',
         autosl:'Авто-SL', sltp:'SL/TP (користувач)', skipped:'Пропуск',
-        rejected:'Відмова', passthrough:'Пряме' };
+        rejected:'Відмова', passthrough:'Пряме', anomaly:'Аномалія обсягу',
+        research:'Дослідження', rsummary:'Підсумок дослідження' };
     const esc = s => String(s == null ? '' : s)
         .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    // Decision Center verdict → «СЕРЕДНІЙ · SHORT 79% · SHORT».
-    const V_UA = { good:'СИЛЬНИЙ', marginal:'СЕРЕДНІЙ', poor:'СЛАБКИЙ' };
-    const decStr = (dec) => {
-        if (!dec || !(dec.headline || dec.verdict)) return '';
-        const vl = V_UA[dec.verdict] || (dec.verdict ? String(dec.verdict).toUpperCase() : '—');
-        return vl + (dec.headline ? ' · ' + dec.headline : '')
-            + (dec.recommended && dec.recommended !== 'NEUTRAL' ? ' · ' + dec.recommended : '');
-    };
-    const sub = (label, val) => `<div style="font-size:0.66rem;color:#a7b0c0;margin-top:1px">${label}: <b>${esc(val)}</b></div>`;
-    let openDone = false, closeDone = false;
+    const oa = Number(meta.opened_at) || 0;
     const rows = journey.map(e => {
-        const col = COL[e.event] || '#8b93a7';
+        let col = COL[e.event] || '#8b93a7';
+        let nm = NAME[e.event] || e.event || '—';
         const ico = ICO[e.event] || '•';
-        const nm = NAME[e.event] || e.event || '—';
         const t = e.t ? new Date(e.t * 1000).toLocaleString('uk-UA') : '';
         const src = e.source
             ? `<span style="font-size:0.6rem;color:#8b93a7;border:1px solid rgba(255,255,255,0.12);border-radius:3px;padding:0 4px;margin-left:5px">${esc(e.source)}</span>` : '';
         const x = e.x || {};
-        const chips = [];
-        const chip = (k, v) => chips.push(`<span style="font-size:0.6rem;color:#cbd5e1;background:rgba(255,255,255,0.05);border-radius:3px;padding:1px 5px">${k} <b>${esc(v)}</b></span>`);
-        if (x.opp_score != null) chip('🎯', x.opp_score + '%');
-        if (x.entry_score != null) chip('ENTRY', x.entry_score);
-        if (x.ctr_state) chip('CTR', x.ctr_state + (x.ctr_pct != null ? ` ${x.ctr_pct}%` : ''));
-        else if (x.ctr_stc != null) chip('STC', Math.round(x.ctr_stc));
-        if (x.fuel_str != null) chip('МММ', x.fuel_str + '%');
-        if (x.kind) chip('тип', x.kind);
-        if (x.dec && x.dec.score != null) chip('Dec', x.dec.score);
-        if (x.price != null) chip('ціна', fmtPriceJS(x.price));
+        let chips = [];
+        let detail = e.detail
+            ? `<div style="font-size:0.66rem;color:#9aa3b5;margin-top:1px">${esc(e.detail)}</div>` : '';
+        if (e.event === 'anomaly') {
+            col = _JR_AN_COL[x.kind] || col;
+            nm = (_JR_AN_UA[x.kind] || 'Аномалія') + (x.hint === 'up' ? ' ▲' : (x.hint === 'dn' ? ' ▼' : ''));
+            if (oa && e.t < oa) chips.push(_jrChip('', '⏮ до входу', '#8b93a7'));
+            if (x.rel) chips.push(_jrChip('', x.rel === 'with' ? '✓ за угодою' : '⚠ ПРОТИ угоди',
+                x.rel === 'with' ? '#4ade80' : '#f87171'));
+            if (x.rv != null) chips.push(_jrChip('обсяг', `<b>×${(+x.rv).toFixed(1)}</b>`));
+            if (x.buy_share != null) chips.push(_jrChip('покупці', `<b>${Math.round(x.buy_share * 100)}%</b>`));
+            if (x.bar_chg != null) chips.push(_jrChip('свічка', _jrPct(x.bar_chg)));
+            if (x.pre_chg != null) chips.push(_jrChip('тренд до', _jrPct(x.pre_chg)));
+            if (x.price != null) chips.push(_jrChip('ціна', `<b>${fmtPriceJS(x.price)}</b>`));
+            if (x.pnl_then != null && oa && e.t >= oa) chips.push(_jrChip('PnL тоді', _jrPct(x.pnl_then)));
+            const o = [];
+            if (x.o1 != null) o.push('1 св. ' + _jrPct(x.o1));
+            if (x.o4 != null) o.push('4 св. ' + _jrPct(x.o4));
+            if (x.o8 != null) o.push('8 св. ' + _jrPct(x.o8));
+            if (x.hi != null) o.push('макс ↑ ' + _jrPct(x.hi) + ' / ↓ ' + _jrPct(x.lo));
+            if (o.length) {
+                const vd = x.verdict === 'reversal' ? ' · <b style="color:#fbbf24">↩ розворот</b>'
+                    : (x.verdict === 'continuation' ? ' · <b style="color:#38bdf8">→ продовження</b>' : '');
+                detail += `<div style="font-size:0.64rem;color:#a7b0c0;margin-top:2px">📏 Наслідок: ${o.join(' · ')}${vd}${x.done ? '' : ' <span style="color:#8b93a7">(ще рахується)</span>'}</div>`;
+            }
+        } else if (e.event === 'research') {
+            nm = e.detail || nm; detail = '';
+            if (x.rel === 'against') col = '#f87171';
+            else if (x.rel === 'with') col = '#4ade80';
+            chips = _jrIndChips(x);
+        } else if (e.event === 'rsummary') {
+            const pk = x.peak || {}, tr = x.trough || {};
+            const L = [];
+            L.push(`Пік ${_jrPct(pk.pnl)}${pk.t ? ' о ' + esc(new Date(pk.t * 1000).toLocaleTimeString('uk-UA')) : ''}`
+                + (x.peak_share != null ? ` · вихід узяв <b>${x.peak_share}%</b> піку` : '')
+                + (x.giveback != null ? ` · віддано ${_jrPct(-x.giveback)}` : ''));
+            const pkc = _jrIndChips(pk).filter(c => c.indexOf('PnL') < 0);
+            if (pkc.length) L.push('Показники НА ПІКУ: ' + pkc.join(' '));
+            if (tr.pnl != null && tr.pnl < 0) L.push(`Дно ${_jrPct(tr.pnl)}`);
+            const ia = x.if_exit_at || {};
+            const ks = Object.keys(ia);
+            if (ks.length) {
+                L.push('Якби вийти на першій події:');
+                ks.forEach(k => {
+                    const v = ia[k] || {};
+                    const an = k.match(/^anom_(\w+)_(with|against)$/);
+                    const lbl = _JR_IFX[k] || (an ? `⚠ ${(_JR_AN_UA[an[1]] || an[1])} ${an[2] === 'with' ? 'за угодою' : 'проти'}${v.tf ? ' ' + v.tf.toUpperCase() : ''}` : k);
+                    L.push(`&nbsp;&nbsp;• ${lbl}: ${_jrPct(v.pnl)} <span style="color:#8b93a7">(проти фактичного виходу ${_jrPct(v.vs_exit)})</span>`);
+                });
+            }
+            detail = `<div style="font-size:0.66rem;color:#cbd5e1;margin-top:2px;line-height:1.5">${L.join('<br>')}</div>`;
+        } else {
+            if (x.opp_score != null) chips.push(_jrChip('🎯', `<b>${esc(x.opp_score)}%</b>`));
+            if (x.entry_score != null) chips.push(_jrChip('ENTRY', `<b>${esc(x.entry_score)}</b>`));
+            if (x.kind) chips.push(_jrChip('тип', `<b>${esc(x.kind)}</b>`));
+            if (x.price != null) chips.push(_jrChip('ціна', `<b>${fmtPriceJS(x.price)}</b>`));
+        }
         const chipsHtml = chips.length
             ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:3px">${chips.join('')}</div>` : '';
-        const detail = e.detail
-            ? `<div style="font-size:0.66rem;color:#9aa3b5;margin-top:1px">${esc(e.detail)}</div>` : '';
-        // 🧠 Decision Center + exit reason assigned to the OPEN / CLOSE nodes.
-        let dcSub = '';
-        if (e.event === 'opened' && !openDone) {
-            const d = decStr(meta.entry_decision);
-            if (d) dcSub += sub('🤪 Decision Center на вході', d);
-            openDone = true;
-        }
-        if (e.event === 'closed' && !closeDone) {
-            const d = decStr(meta.exit_decision);
-            if (d) dcSub += sub('🤪 Decision Center на виході', d);
-            const rsn = meta.exit_reason_detail || meta.exit_reason;
-            if (rsn) dcSub += sub('🔖 Причина виходу', rsn);
-            closeDone = true;
-        }
         return `<div style="position:relative;padding:0 0 10px 18px">`
             + `<span style="position:absolute;left:-5px;top:3px;width:9px;height:9px;border-radius:50%;background:${col};box-shadow:0 0 0 2px rgba(0,0,0,0.4)"></span>`
             + `<div style="font-size:0.72rem"><b style="color:${col}">${ico} ${esc(nm)}</b>${src}`
             + `<span style="color:#6b7280;font-size:0.62rem;margin-left:6px">${t}</span></div>`
-            + detail + dcSub + chipsHtml + `</div>`;
+            + detail + chipsHtml + `</div>`;
     }).join('');
+    const nA = journey.filter(e => e.event === 'anomaly').length;
+    const nR = journey.filter(e => e.event === 'research').length;
     return `<div style="margin-bottom:12px">`
-        + `<div style="font-size:0.75rem;color:#cbd5e1;font-weight:700;margin-bottom:6px">🌿 Шлях монети (з логу бота)</div>`
-        + `<div style="border-left:2px solid rgba(255,255,255,0.12);margin-left:5px;max-height:360px;overflow-y:auto">${rows}</div>`
+        + `<div style="font-size:0.75rem;color:#cbd5e1;font-weight:700;margin-bottom:6px">🌿 Шлях монети (з логу бота)`
+        + `<span style="font-weight:400;color:#8b93a7;margin-left:8px">⚠ аномалій ${nA} · 🔬 подій ${nR}</span></div>`
+        + `<div style="border-left:2px solid rgba(255,255,255,0.12);margin-left:5px;max-height:64vh;overflow-y:auto">${rows}</div>`
         + `</div>`;
 }
 
 function renderTradeHistoryChart(h, meta) {
-    const t0 = h[0].t, tN = h[h.length - 1].t, span = Math.max(1, tN - t0);
-    const W = 860, PAD = 34;
-    const xOf = (s, w) => PAD + ((s.t - t0) / span) * (w - 2 * PAD);
-
-    function panel(title, series, opts) {
-        const H = opts.h || 170;
-        // collect all finite values across series to auto-scale (shared axis)
-        let all = [];
-        series.forEach(se => h.forEach(s => { const v = se.acc(s); if (v != null && isFinite(v)) all.push(v); }));
-        if (!all.length) return '';
-        let lo = (opts.min != null) ? opts.min : Math.min(...all);
-        let hi = (opts.max != null) ? opts.max : Math.max(...all);
-        if (opts.includeZero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0); }
-        if (lo === hi) { lo -= 1; hi += 1; }
-        const yOf = v => PAD + (1 - (v - lo) / (hi - lo)) * (H - 2 * PAD);
-        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">`;
-        svg += `<rect x="0" y="0" width="${W}" height="${H}" fill="rgba(255,255,255,0.02)"/>`;
-        // gridlines: lo / mid / hi (+ zero if in range)
-        [lo, (lo + hi) / 2, hi].forEach(gv => {
-            const y = yOf(gv);
-            svg += `<line x1="${PAD}" y1="${y.toFixed(1)}" x2="${W - PAD}" y2="${y.toFixed(1)}" stroke="rgba(255,255,255,0.08)"/>`;
-            svg += `<text x="4" y="${(y + 3).toFixed(1)}" fill="#8b93a7" font-size="10">${gv.toFixed(opts.dec != null ? opts.dec : 1)}</text>`;
-        });
-        if (lo < 0 && hi > 0) {
-            const yz = yOf(0);
-            svg += `<line x1="${PAD}" y1="${yz.toFixed(1)}" x2="${W - PAD}" y2="${yz.toFixed(1)}" stroke="rgba(255,255,255,0.25)" stroke-dasharray="3 3"/>`;
-        }
-        series.forEach(se => {
-            // Collect drawable points (x, y, sample).
-            const dp = [];
-            h.forEach(s => { const v = se.acc(s); if (v != null && isFinite(v)) dp.push({ x: xOf(s, W), y: yOf(v), s }); });
-            if (!dp.length) return;
-            if (opts.segmentColor || opts.step) {
-                // Per-segment drawing: opts.segmentColor(sample) colours each
-                // segment (e.g. green in profit / red in loss); opts.step draws a
-                // stepped line (flat then vertical) so a value RESET shows as a
-                // sharp vertical drop at the exact sample, not a misleading slope.
-                for (let i = 0; i < dp.length - 1; i++) {
-                    const a = dp[i], b = dp[i + 1];
-                    const col = opts.segmentColor ? opts.segmentColor(a.s) : se.color;
-                    const pts = opts.step
-                        ? `${a.x.toFixed(1)},${a.y.toFixed(1)} ${b.x.toFixed(1)},${a.y.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`
-                        : `${a.x.toFixed(1)},${a.y.toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
-                    svg += `<polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.8"/>`;
-                }
-                // Dots at each point too (helps read sparse coloured series).
-                if (opts.segmentColor) {
-                    dp.forEach(d => { svg += `<circle cx="${d.x.toFixed(1)}" cy="${d.y.toFixed(1)}" r="1.6" fill="${opts.segmentColor(d.s)}"/>`; });
-                }
-            } else {
-                const pts = dp.map(d => `${d.x.toFixed(1)},${d.y.toFixed(1)}`);
-                svg += `<polyline points="${pts.join(' ')}" fill="none" stroke="${se.color}" stroke-width="1.8"/>`;
-            }
-        });
-        // Optional RESET markers: a vertical line at each sample where the first
-        // series' value DROPS (e.g. CTR crossover age resets → a NEW crossover =
-        // the exact turn), coloured by opts.labelColor and tagged ↺.
-        if (opts.markResets) {
-            const acc = series[0].acc;
-            let prevV = null;
-            h.forEach(s => {
-                const v = acc(s);
-                if (v != null && isFinite(v)) {
-                    if (prevV != null && v < prevV) {
-                        const x = xOf(s, W);
-                        const col = opts.labelColor ? opts.labelColor(s) : '#38bdf8';
-                        svg += `<line x1="${x.toFixed(1)}" y1="${PAD}" x2="${x.toFixed(1)}" y2="${(H - PAD).toFixed(1)}" stroke="${col}" stroke-opacity="0.7" stroke-dasharray="3 3"/>`;
-                        svg += `<text x="${x.toFixed(1)}" y="${(PAD - 3).toFixed(1)}" fill="${col}" font-size="9" font-weight="700" text-anchor="middle">↺ розворот</text>`;
-                    }
-                    prevV = v;
-                }
-            });
-        }
-        // Optional numeric value labels on the FIRST series, coloured per-sample
-        // (opts.labelColor). Density is controlled by opts.labelMinDelta: a label
-        // is drawn only when the value moved ≥ that much from the last labelled
-        // one (default 0.5 → every integer step, for the age chart). For a dense
-        // continuous series (STC) set a bigger delta so it stays readable.
-        if (opts.valueLabels) {
-            const se = series[0];
-            const fmt = opts.labelFmt || (v => String(Math.round(v)));
-            const minD = (opts.labelMinDelta != null) ? opts.labelMinDelta : 0.5;
-            let lastLabeled = null;
-            h.forEach((s, i) => {
-                const v = se.acc(s);
-                if (v == null || !isFinite(v)) return;
-                const isLast = (i === h.length - 1);
-                if (!isLast && lastLabeled != null && Math.abs(v - lastLabeled) < minD) return;
-                lastLabeled = v;
-                const x = xOf(s, W), y = yOf(v);
-                const col = opts.labelColor ? opts.labelColor(s) : se.color;
-                svg += `<text x="${x.toFixed(1)}" y="${(y - 5).toFixed(1)}" fill="${col}" `
-                    + `font-size="9" font-weight="700" text-anchor="middle">${fmt(v)}</text>`;
-            });
-        }
-        // Optional labelled vertical reference lines (e.g. 🔺 the PnL peak) so the
-        // exact moment lines up across every stacked panel.
-        if (opts.vlines) {
-            opts.vlines.forEach(vl => {
-                if (vl.t == null) return;
-                const x = PAD + ((vl.t - t0) / span) * (W - 2 * PAD);
-                svg += `<line x1="${x.toFixed(1)}" y1="${PAD}" x2="${x.toFixed(1)}" y2="${(H - PAD).toFixed(1)}" stroke="${vl.color}" stroke-opacity="0.9" stroke-dasharray="4 2" stroke-width="1.5"/>`;
-                // Label at the very BOTTOM of the panel (was near the top, where it
-                // overlapped the series/value labels). Keep it inside the viewBox
-                // and nudge toward the side that has room so it isn't clipped.
-                const anchor = (x < PAD + 40) ? 'start' : (x > W - PAD - 40 ? 'end' : 'middle');
-                svg += `<text x="${x.toFixed(1)}" y="${(H - 4).toFixed(1)}" fill="${vl.color}" font-size="9.5" font-weight="700" text-anchor="${anchor}">${vl.label}</text>`;
-            });
-        }
-        svg += `<text x="${PAD}" y="14" fill="#cbd5e1" font-size="11" font-weight="700">${title}</text>`;
-        const legend = series.map(se => `<span style="color:${se.color}">■ ${se.name}</span>`).join(' &nbsp; ');
-        svg += `</svg>`;
-        return `<div style="margin-bottom:10px">${svg}<div style="font-size:0.66rem;color:#8b93a7;text-align:center">${legend}</div></div>`;
-    }
+    h = Array.isArray(h) ? h : [];
+    const t0 = h.length ? h[0].t : (meta.opened_at || 0);
+    const tN = h.length ? h[h.length - 1].t : (meta.closed_at || meta.now_ts || t0);
 
     const _fmtT = (typeof fmtTimeJS === 'function') ? fmtTimeJS : (t => new Date(t * 1000).toLocaleString());
     // Duration from the actual OPEN → CLOSE (NOT the queue / history span).
@@ -19465,22 +19499,14 @@ function renderTradeHistoryChart(h, meta) {
              : (meta.now_ts != null ? meta.now_ts : tN);
     const dur = Math.max(0, ca - oa);
     const durTxt = dur < 3600 ? `${Math.round(dur / 60)}хв` : `${(dur / 3600).toFixed(1)}год`;
-    const pnlLast = h[h.length - 1].pnl;
-    const pnlCol = (pnlLast >= 0) ? '#22c55e' : '#ef4444';
+    const pnlLast = (meta.pnl_pct != null) ? meta.pnl_pct
+                  : (h.length ? h[h.length - 1].pnl : null);
+    const pnlCol = (pnlLast != null && pnlLast >= 0) ? '#22c55e' : '#ef4444';
     // Peak (MFE, ↑ best) + give-back, and trough (MAE, ↓ worst) drawdown.
     const _pnls = h.map(s => s.pnl).filter(v => v != null && isFinite(v));
     const peakUp = (meta.peak_pnl_pct != null) ? meta.peak_pnl_pct
                  : (_pnls.length ? Math.max(..._pnls) : null);
     const peakDn = _pnls.length ? Math.min(..._pnls) : null;
-    // Sample where PnL topped out (the exact moment it started giving back).
-    // A 🔺 vertical marker at this time is drawn on the PnL / STC / age panels
-    // so the peak→decline moment lines up across all three.
-    let _peakIdx = -1, _peakV = -Infinity;
-    h.forEach((s, i) => { if (s.pnl != null && isFinite(s.pnl) && s.pnl > _peakV) { _peakV = s.pnl; _peakIdx = i; } });
-    const _peakT = (_peakIdx >= 0) ? h[_peakIdx].t : null;
-    const peakVlines = (_peakT != null)
-        ? [{ t: _peakT, label: `🔺 пік ${_peakV >= 0 ? '+' : ''}${_peakV.toFixed(2)}%`, color: '#f5c542' }]
-        : [];
     let peakSpan = '';
     if (peakUp != null) {
         const gb = (meta.pnl_pct != null) ? (peakUp - meta.pnl_pct) : null;
@@ -19501,8 +19527,7 @@ function renderTradeHistoryChart(h, meta) {
         + (meta.exit_price != null ? `<span>Вихід: <b>${fmtPriceJS(meta.exit_price)}</b></span>` : '<span><b>ще відкрита</b></span>')
         + (meta.pnl_pct != null ? `<span>PnL: <b style="color:${pnlCol}">${meta.pnl_pct >= 0 ? '+' : ''}${meta.pnl_pct}%</b></span>` : '')
         + peakSpan + troughSpan
-        + `<span>Тривалість: <b>${durTxt}</b></span>`
-        + `<span>Точок: <b>${h.length}</b></span></div>`;
+        + `<span>Тривалість: <b>${durTxt}</b></span></div>`;
     // Line 2: open/close datetimes (with date).
     const _fmtDT = t => { try { return new Date(t * 1000).toLocaleString('uk-UA'); } catch (e) { return _fmtT(t); } };
     const info2 = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap">`
@@ -19566,163 +19591,11 @@ function renderTradeHistoryChart(h, meta) {
         paperLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">${l1}${l2}</div>`;
     }
 
-    // 🧠 Decision Center — at ENTRY and at EXIT (or "as of now" for open trades).
-    const V_UA = { good: 'СИЛЬНИЙ', marginal: 'СЕРЕДНІЙ', poor: 'СЛАБКИЙ' };
-    const V_COL = { good: '#22c55e', marginal: '#fbbf24', poor: '#f87171' };
-    function dcLineOf(dec, label) {
-        if (!dec || !(dec.headline || dec.verdict)) return '';
-        const vl = V_UA[dec.verdict] || (dec.verdict ? String(dec.verdict).toUpperCase() : '—');
-        const vc = V_COL[dec.verdict] || '#cbd5e1';
-        return `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:4px">`
-            + `${EINSTEIN_ICON} ${label}: <b style="color:${vc}">${vl}</b>`
-            + (dec.headline ? ` · <span style="color:#cbd5e1">${dec.headline}</span>` : '')
-            + (dec.recommended && dec.recommended !== 'NEUTRAL' ? ` · ${dec.recommended}` : '')
-            + `</div>`;
-    }
-    let dcLine = dcLineOf(meta.entry_decision, 'Decision Center на вході')
-        + (isOpen ? dcLineOf(meta.decision_now, 'Decision Center зараз (перегляд)')
-                  : dcLineOf(meta.exit_decision, 'Decision Center на виході'));
-    if (dcLine) dcLine = `<div style="margin-bottom:10px">${dcLine}</div>`;
-
-    // ⚡ CTR reading at open + at close (or "as of now" for an open trade).
-    // Rendered EXACTLY like the WATCHLIST chart badge / queue column: coloured
-    // «🟢 LONG-нахил X%» / «🔴 SHORT-нахил X%» + small coloured crossover, with
-    // the CTR timeframe tag (·1H). Reuses ffCtrCell so all places stay identical.
-    function ctrLineOf(c, label) {
-        if (!c || c.stc == null) return '';
-        // TF показує вже ffCtrCell (сірий тег) — тут його не дублюємо.
-        return `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:4px">`
-            + `⚡ ${label}: ${ffCtrCell(c)}</div>`;
-    }
-    let ctrLine = ctrLineOf(meta.ctr_open, 'CTR на вході')
-        + (isOpen ? ctrLineOf(meta.ctr_close, 'CTR зараз (перегляд)')
-                  : ctrLineOf(meta.ctr_close, 'CTR на виході'));
-    if (ctrLine) ctrLine = `<div style="margin-bottom:10px">${ctrLine}</div>`;
-
-    // 🎯 SMC-«Готовність сетапу» НА ВХОДІ (grade_setup) — стамп при відкритті.
-    // Дає змогу зіставити «готовність на вході → результат угоди».
-    let setupLine = '';
-    if (meta.ff_setup_open) {
-        const _su = String(meta.ff_setup_open).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        setupLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">🎯 SMC-готовність на вході: <b style="color:#c9b8ff">${_su}</b></div>`;
-    }
-    // 🚪 Що радник ВИХОДУ пропонував НА ПІКУ PnL (найкращий момент виходу) і на
-    // закритті — щоб оцінити, чи спіймав би він розворот.
-    let exitLine = '';
-    {
-        const _esc = v => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const _p = [];
-        if (meta.ff_exit_at_peak) {
-            const _pk = (meta.ff_exit_peak_pnl != null) ? ` (пік ${meta.ff_exit_peak_pnl >= 0 ? '+' : ''}${meta.ff_exit_peak_pnl}%)` : '';
-            _p.push(`на піку${_pk}: <b style="color:#fbbf24">${_esc(meta.ff_exit_at_peak)}</b>`);
-        }
-        if (meta.ff_exit_close) _p.push(`на закритті: <b style="color:#f87171">${_esc(meta.ff_exit_close)}</b>`);
-        if (_p.length) exitLine = `<div style="font-size:0.72rem;color:#8b93a7;margin-bottom:10px">🚪 Готовність виходу — ${_p.join(' · ')}</div>`;
-    }
-
-    // ₿ BTCUSDT banner state over time — colored strip (green=LONG, red=SHORT,
-    // grey=WAIT/немає; напівпрозорий = ПАУЗА).
-    function bannerStrip() {
-        if (!h.some(s => s.btc_dir != null || s.btc_paused != null)) return '';
-        const H = 40, top = 18, bh = 14;
-        const colOf = d => d === 'LONG' ? '#22c55e' : (d === 'SHORT' ? '#ef4444' : '#6b7280');
-        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">`;
-        svg += `<text x="${PAD}" y="12" fill="#cbd5e1" font-size="11" font-weight="700">₿ Банер BTCUSDT</text>`;
-        for (let i = 0; i < h.length; i++) {
-            const s = h[i];
-            const x1 = xOf(s, W);
-            const x2 = (i < h.length - 1) ? xOf(h[i + 1], W) : (W - PAD);
-            const w = Math.max(1, x2 - x1);
-            svg += `<rect x="${x1.toFixed(1)}" y="${top}" width="${w.toFixed(1)}" height="${bh}" `
-                + `fill="${colOf(s.btc_dir)}" opacity="${s.btc_paused ? 0.35 : 0.9}"/>`;
-        }
-        svg += `</svg>`;
-        const legend = `<span style="color:#22c55e">■ LONG</span> &nbsp; <span style="color:#ef4444">■ SHORT</span> &nbsp; <span style="color:#6b7280">■ WAIT</span> &nbsp; <span style="color:#8b93a7">напівпрозорий = ПАУЗА</span>`;
-        return `<div style="margin-bottom:10px">${svg}<div style="font-size:0.66rem;color:#8b93a7;text-align:center">${legend}</div></div>`;
-    }
-
-    // Смуга РЕЖИМУ над часом (як банер): показує, який режим був активний на кожен
-    // момент життя угоди — щоб бачити, за яких умов її відкрито/закрито.
-    const SD_COL = { confluence: '#a855f7', smart: '#3b82f6', ctr_stc: '#06b6d4', simple: '#6b7280', banner: '#f59e0b' };
-    const SD_LBL = { confluence: 'Confluence', smart: 'Forecast', ctr_stc: 'CTR_STC', simple: 'Simple', banner: 'За банером ₿' };
-    const Q2_COL = { banner: '#f59e0b', buttons: '#22c55e' };
-    const Q2_LBL = { banner: 'За банером ₿', buttons: 'Відкривати за основними кнопками LONG/SHORT' };
-    function modeStrip(acc, title, colMap, lblMap) {
-        if (!h.some(s => acc(s) != null)) return '';
-        const H = 40, top = 18, bh = 14;
-        const colOf = m => colMap[m] || '#6b7280';
-        let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">`;
-        svg += `<text x="${PAD}" y="12" fill="#cbd5e1" font-size="11" font-weight="700">${title}</text>`;
-        const seen = new Set();
-        for (let i = 0; i < h.length; i++) {
-            const s = h[i], m = acc(s);
-            const x1 = xOf(s, W);
-            const x2 = (i < h.length - 1) ? xOf(h[i + 1], W) : (W - PAD);
-            const w = Math.max(1, x2 - x1);
-            svg += `<rect x="${x1.toFixed(1)}" y="${top}" width="${w.toFixed(1)}" height="${bh}" `
-                + `fill="${colOf(m)}" opacity="0.9"/>`;
-            if (m != null) seen.add(m);
-        }
-        svg += `</svg>`;
-        const legend = [...seen].map(m => `<span style="color:${colOf(m)}">■ ${lblMap[m] || m}</span>`).join(' &nbsp; ')
-            || '<span style="color:#8b93a7">—</span>';
-        return `<div style="margin-bottom:10px">${svg}<div style="font-size:0.66rem;color:#8b93a7;text-align:center">${legend}</div></div>`;
-    }
-    const sdModeStrip = () => modeStrip(s => s.sd_mode, 'Режим Smart Direction (банер)', SD_COL, SD_LBL);
-    const q2ModeStrip = () => modeStrip(s => s.q2_mode, 'Черга-2 — режим відкриття', Q2_COL, Q2_LBL);
-
-    // Profit/loss colour by PnL sign at each sample (🟢 у прибутку / 🔴 у збитку).
-    const pnlColorAt = s => (s.pnl != null && s.pnl >= 0) ? '#22c55e' : '#ef4444';
-    const pnlPanel = panel('PnL, %', [{ name: 'PnL% (🟢 прибуток / 🔴 збиток)', color: pnlCol, acc: s => s.pnl }],
-        { includeZero: true, dec: 2, segmentColor: pnlColorAt, vlines: peakVlines });
-    const mmPanel = panel('МММ монети / BTC МММ / Виснаженість, %', [
-        { name: 'МММ монети', color: '#fbbf24', acc: s => s.mm },
-        { name: 'BTC МММ', color: '#22d3ee', acc: s => s.btc_mm },
-        { name: 'Виснаженість', color: '#f87171', acc: s => s.exh },
-    ], { min: 0, max: 100, dec: 0 });
-    // Price line coloured by whether the trade was in profit/loss at that moment.
-    const pricePanel = panel('Ціна (🟢 у прибутку / 🔴 у збитку)',
-        [{ name: 'Ціна', color: '#60a5fa', acc: s => s.price }],
-        { dec: 4, segmentColor: pnlColorAt, vlines: peakVlines });
-    // ⚡ CTR chronology: STC (0–100, split at 50: <50 LONG-нахил, >50 SHORT-нахил)
-    // and the crossover age in bars — plotted so the whole reading history shows.
-    // STC lean colour by the 50-split at each sample: >50 → SHORT (red), <50 →
-    // LONG (green). Applied to both the line segments and the value labels.
-    const stcLeanColor = s => (s.ctr_stc == null) ? '#9aa3b5'
-        : (s.ctr_stc > 50 ? '#f87171' : (s.ctr_stc < 50 ? '#4ade80' : '#9aa3b5'));
-    const ctrStcPanel = panel('⚡ CTR · STC 0–100 (🔴 >50 SHORT-нахил · 🟢 <50 LONG-нахил)',
-        [{ name: 'STC %', color: '#c084fc', acc: s => s.ctr_stc }],
-        { min: 0, max: 100, dec: 0, segmentColor: stcLeanColor,
-          valueLabels: true, labelColor: stcLeanColor, labelMinDelta: 10,
-          labelFmt: v => Math.round(v) + '%' });
-    // Colour value labels by the crossover DIRECTION at each sample
-    // (🟢 LONG / 🔴 SHORT / grey none) so the numbers read the trend at a glance.
-    const ctrDirColor = s => s.ctr_dir === 'LONG' ? '#4ade80'
-        : (s.ctr_dir === 'SHORT' ? '#f87171' : '#9aa3b5');
-    const ctrAgePanel = panel('⚡ CTR · вік кросовера (барів) — ↺ = момент розвороту',
-        [{ name: 'вік кросов., барів', color: '#38bdf8', acc: s => s.ctr_age }],
-        { min: 0, includeZero: true, dec: 0, valueLabels: true, labelColor: ctrDirColor,
-          step: true, markResets: true });
-    // 🚪 SMC «Готовність виходу» over the trade: 0..100 (grade_exit, РАДНИК).
-    // Colour per-sample by the exit scale (🟢 спокійно · 🟡 увага · 🟠 ≥55 готується
-    // · 🔴 ≥72 закривати). Так видно, що радник пропонував НА ПІКУ і впродовж угоди.
-    const revColor = s => (s.exitg == null) ? '#9aa3b5'
-        : (s.exitg >= 72 ? '#f87171' : (s.exitg >= 55 ? '#fb923c' : (s.exitg >= 40 ? '#facc15' : '#4ade80')));
-    const revPanel = panel('🚪 Готовність виходу (SMC), % — 🔴 ≥72 закривати · 🟠 ≥55 готується',
-        [{ name: 'готовність виходу %', color: '#f5c542', acc: s => s.exitg }],
-        { min: 0, max: 100, dec: 0, segmentColor: revColor,
-          valueLabels: true, labelColor: revColor, labelMinDelta: 12,
-          labelFmt: v => Math.round(v) + '%' });
-
-    // STC + вік кросовера + готовність виходу — ODRAZU після PnL.
+    // 16.11: «Хронологія угоди» = ЛИШЕ шапка + «Шлях монети». Аналітичні
+    // панелі (PnL/CTR/STC/Готовність виходу/МММ/₿/режими, Decision Center)
+    // прибрано на вимогу; ⚠ аномалії і 🔬 дослідження — у «Шляху монети».
     const journeyPanel = journeyTree(meta.journey, meta);
-    // Decision Center (вхід/вихід) + exit reason are now shown INSIDE the journey
-    // tree on the open/close nodes — keep the top lines only as a fallback when
-    // there is no journey (empty activity log for this coin).
-    const _hasJourney = Array.isArray(meta.journey) && meta.journey.length;
-    const dcTop = _hasJourney ? '' : dcLine;
-    const exitTop = _hasJourney ? '' : exitReasonLine;
-    return info + info2 + exitTop + sltpLine + paperLine + dcTop + ctrLine + setupLine + exitLine + journeyPanel + pnlPanel + ctrStcPanel + ctrAgePanel + revPanel + mmPanel + bannerStrip() + sdModeStrip() + q2ModeStrip() + pricePanel;
+    return info + info2 + exitReasonLine + sltpLine + paperLine + journeyPanel;
 }
 
 

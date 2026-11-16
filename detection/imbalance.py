@@ -213,6 +213,36 @@ def pine_sub_minutes(bar_seconds: float) -> int:
     return max(1, int(math.ceil(chart_min / 10.0)))
 
 
+_BB_SUB_INTERVALS = (240, 120, 60, 30, 15, 5, 3, 1)
+
+
+def sub_base_interval(sub_min):
+    """ЧИСТА: найбільший інтервал Bybit, що ділить піддіапазон Pine
+    (6 хв → 3 хв по 2 · 24 хв → 3 хв по 8 · 2 хв → 1 хв по 2)."""
+    for b in _BB_SUB_INTERVALS:
+        if sub_min % b == 0:
+            return b
+    return 1
+
+
+def group_subbars(bars, base_min, sub_min, t0_ms):
+    """ЧИСТА: бари base_min → підсвічки sub_min, вирівняні від початку свічки."""
+    k = max(1, sub_min // base_min)
+    out, cur, key = [], None, None
+    for b in sorted(bars, key=lambda x: int(x['t'])):
+        g = (int(b['t']) - t0_ms) // (sub_min * 60000)
+        if g != key:
+            if cur:
+                out.append(cur)
+            key, cur = g, {'o': b['o'], 'p': b['p'], 'v': float(b['v'])}
+        else:
+            cur['p'] = b['p']
+            cur['v'] += float(b['v'])
+    if cur:
+        out.append(cur)
+    return out
+
+
 def split_from_subbars(subbars) -> tuple:
     """(бичачий, ведмежий) обсяг: сума обсягів зелених / червоних підсвічок."""
     bull = bear = 0.0

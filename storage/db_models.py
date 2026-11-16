@@ -462,6 +462,100 @@ class TradeArchive(Base):
     )
 
 
+class VolAnomaly(Base):
+    """⚠ Аномалія обсягу (16.11) — серверний детектор `detection/vol_anomaly.py`.
+
+    Один рядок на аномальну свічку (монета · TF · бар) з контекстом у мить
+    появи і НАСЛІДКОМ (рух через 1/4/8 свічок, максимум ↑/↓) — датасет, щоб
+    навчити бота рішенням входу/виходу за аномаліями. Пише лише рушій."""
+    __tablename__ = f'{TABLE_PREFIX}vol_anomaly'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts = Column(Float, index=True)            # закриття аномальної свічки (unix)
+    symbol = Column(String(24), index=True)
+    tf = Column(String(5))
+    bar_t = Column(BigInteger)                # відкриття свічки (unix сек)
+    kind = Column(String(8), index=True)      # absorb / climax / side / spike
+    hint = Column(String(3))                  # up / dn / None — куди вказує
+    bar_dir = Column(String(3))               # up / dn — колір свічки
+    rv = Column(Float)                        # обсяг / медіана 20 свічок
+    buy_share = Column(Float)                 # частка покупців 0..1 (None = без розкладу)
+    vol = Column(Float)
+    med = Column(Float)
+    price = Column(Float)                     # закриття свічки
+    bar_chg = Column(Float)                   # рух самої свічки, %
+    pre_chg = Column(Float)                   # тренд за 8 свічок ДО, %
+    o1 = Column(Float)
+    o4 = Column(Float)
+    o8 = Column(Float)
+    hi = Column(Float)
+    lo = Column(Float)
+    done = Column(Boolean, default=False, index=True)
+    ctx = Column(Text)                        # JSON: відкриті угоди по монеті
+
+    __table_args__ = (
+        Index(f'ix_{TABLE_PREFIX}vanom_sym_tf_bar', 'symbol', 'tf', 'bar_t'),
+    )
+
+    def to_dict(self):
+        import json as _j
+        try:
+            ctx = _j.loads(self.ctx) if self.ctx else None
+        except Exception:
+            ctx = None
+        d = {c: getattr(self, c) for c in (
+            'id', 'ts', 'symbol', 'tf', 'bar_t', 'kind', 'hint', 'bar_dir', 'rv',
+            'buy_share', 'vol', 'med', 'price', 'bar_chg', 'pre_chg', 'o1', 'o4',
+            'o8', 'hi', 'lo', 'done')}
+        d['ctx'] = ctx
+        return d
+
+
+class TradeResearch(Base):
+    """🔬 Архів ДОСЛІДЖЕННЯ кожної закритої угоди (16.11, ніколи не чиститься).
+
+    Усе, з чого можна навчити бота ідеальному входу / виходу: контекст на
+    вході, хід угоди (💥 «Пружина вистрілила» / 🎯 «Виснаження»-кульмінація —
+    події й зрізи показників), аномалії обсягу за час угоди, пік / просадка і
+    підсумок «що дало б кожне правило виходу». JSON-поля — схема без міграцій."""
+    __tablename__ = f'{TABLE_PREFIX}trade_research'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    is_paper = Column(Boolean, default=False, index=True)
+    symbol = Column(String(24), index=True)
+    side = Column(String(8))
+    opened_by = Column(String(80))
+    opened_at = Column(Float)
+    closed_at = Column(Float, index=True)
+    entry_price = Column(Float)
+    exit_price = Column(Float)
+    pnl_pct = Column(Float)
+    peak_pnl_pct = Column(Float)
+    mae_pnl_pct = Column(Float)
+    reason = Column(String(40))
+    entry_ctx = Column(Text)                  # JSON
+    events = Column(Text)                     # JSON
+    samples = Column(Text)                    # JSON
+    anomalies = Column(Text)                  # JSON
+    summary = Column(Text)                    # JSON
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        import json as _j
+
+        def _l(v):
+            try:
+                return _j.loads(v) if v else None
+            except Exception:
+                return None
+        d = {c: getattr(self, c) for c in (
+            'id', 'is_paper', 'symbol', 'side', 'opened_by', 'opened_at', 'closed_at',
+            'entry_price', 'exit_price', 'pnl_pct', 'peak_pnl_pct', 'mae_pnl_pct', 'reason')}
+        for c in ('entry_ctx', 'events', 'samples', 'anomalies', 'summary'):
+            d[c] = _l(getattr(self, c))
+        return d
+
+
 class EventLog(Base):
     """Event log for dashboard"""
     __tablename__ = f'{TABLE_PREFIX}event_logs'

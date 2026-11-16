@@ -349,34 +349,18 @@ IMB_BARS = 1500             # історія для Pine-фільтра розм
 _imb_split = {}             # (SYM, tf, t_ms) → (bull, bear) — закрита свічка не змінюється
 _IMB_SPLIT_CAP = 4000
 BB_KLINE_URL = 'https://api.bybit.com/v5/market/kline'
-_BB_SUB_INTERVALS = (240, 120, 60, 30, 15, 5, 3, 1)
 
 
 def sub_base_interval(sub_min):
-    """ЧИСТА: найбільший інтервал Bybit, що ділить піддіапазон Pine
-    (6 хв → 3 хв по 2 · 24 хв → 3 хв по 8 · 2 хв → 1 хв по 2)."""
-    for b in _BB_SUB_INTERVALS:
-        if sub_min % b == 0:
-            return b
-    return 1
+    """Делегат `detection.imbalance.sub_base_interval` (одне джерело з ⚠ аномаліями)."""
+    from detection.imbalance import sub_base_interval as _f
+    return _f(sub_min)
 
 
 def group_subbars(bars, base_min, sub_min, t0_ms):
-    """ЧИСТА: бари base_min → підсвічки sub_min, вирівняні від початку свічки."""
-    k = max(1, sub_min // base_min)
-    out, cur, key = [], None, None
-    for b in sorted(bars, key=lambda x: int(x['t'])):
-        g = (int(b['t']) - t0_ms) // (sub_min * 60000)
-        if g != key:
-            if cur:
-                out.append(cur)
-            key, cur = g, {'o': b['o'], 'p': b['p'], 'v': float(b['v'])}
-        else:
-            cur['p'] = b['p']
-            cur['v'] += float(b['v'])
-    if cur:
-        out.append(cur)
-    return out
+    """Делегат `detection.imbalance.group_subbars`."""
+    from detection.imbalance import group_subbars as _f
+    return _f(bars, base_min, sub_min, t0_ms)
 
 
 def _imb_sub_split(sym, tf, t_ms):

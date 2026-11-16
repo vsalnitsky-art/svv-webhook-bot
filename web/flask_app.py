@@ -574,6 +574,16 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start SBR engine: {e}")
 
+        if not _auto_started.get('vol_anomaly'):
+            _auto_started['vol_anomaly'] = True
+            try:
+                # ⚠ Аномалії обсягу (16.11): закриття 15m / 1h, монети WATCHLIST +
+                # відкритих угод → таблиця sob_vol_anomaly з наслідками (датасет).
+                from detection.vol_anomaly import init_vol_anomaly
+                init_vol_anomaly(db=get_db())
+            except Exception as e:
+                print(f"[APP] Failed to start Volume anomaly monitor: {e}")
+
         if not _auto_started.get('funding_spring'):
             _auto_started['funding_spring'] = True
             try:
@@ -6260,6 +6270,95 @@ def register_api_routes(app):
                                                 is_shadow=shadow))
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
+
+    # ── ⚠ АНОМАЛІЇ ОБСЯГУ + 🔬 АРХІВ ДОСЛІДЖЕННЯ УГОД (16.11) ──────────────
+    def _csv_resp(rows, cols, name):
+        import csv as _csv, io as _io, json as _json
+        buf = _io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(cols)
+        for r in rows:
+            w.writerow([(_json.dumps(r.get(c), ensure_ascii=False)
+                         if isinstance(r.get(c), (dict, list)) else
+                         ('' if r.get(c) is None else r.get(c))) for c in cols])
+        return Response('\ufeff' + buf.getvalue(), mimetype='text/csv; charset=utf-8',
+                        headers={'Content-Disposition': f'attachment; filename={name}'})
+
+    def _days_since(default=30):
+        import time as _t
+        try:
+            d = float(request.args.get('days') or default)
+        except (TypeError, ValueError):
+            d = default
+        return None if d <= 0 else _t.time() - d * 86400
+
+    @app.route('/api/vol-anomaly/state')
+    def api_vol_anomaly_state():
+        from detection.vol_anomaly import get_vol_anomaly, stats as _vstats
+        eng = get_vol_anomaly()
+        if request.args.get('light'):
+            return jsonify({'ok': True, 'state': eng.state() if eng else None})
+        since = _days_since(30)
+        rows = get_db().get_vol_anomalies(since=since, tf=request.args.get('tf') or None,
+                                          limit=50000)
+        return jsonify({'ok': True, 'state': eng.state() if eng else None,
+                        'stats': _vstats(rows), 'total': len(rows)})
+
+    @app.route('/api/vol-anomaly/settings', methods=['POST'])
+    def api_vol_anomaly_settings():
+        from detection.vol_anomaly import get_vol_anomaly, init_vol_anomaly
+        eng = get_vol_anomaly() or init_vol_anomaly(db=get_db())
+        return jsonify({'ok': True, 'settings': eng.update_settings(request.get_json(silent=True) or {})})
+
+    @app.route('/api/vol-anomaly/export')
+    def api_vol_anomaly_export():
+        """⚠ Усі аномалії з наслідками: ?days=30 (0 = усе) &fmt=csv|json &symbol="""
+        rows = get_db().get_vol_anomalies(since=_days_since(30),
+                                          symbol=request.args.get('symbol') or None,
+                                          limit=200000)
+        from detection.vol_anomaly import verdict_of
+        for r in rows:
+            r['verdict'] = verdict_of(r)
+        if request.args.get('fmt') == 'csv':
+            cols = ['ts', 'symbol', 'tf', 'bar_t', 'kind', 'hint', 'bar_dir', 'rv', 'buy_share',
+                    'vol', 'med', 'price', 'bar_chg', 'pre_chg', 'o1', 'o4', 'o8', 'hi', 'lo',
+                    'done', 'verdict', 'ctx']
+            return _csv_resp(rows, cols, 'vol_anomalies.csv')
+        return jsonify({'ok': True, 'rows': rows})
+
+    @app.route('/api/tm/research-export')
+    def api_tm_research_export():
+        """🔬 Архів дослідження закритих угод: ?book=real|paper|all &days=0
+        &fmt=json|csv. JSON — повний (події, зрізи, аномалії, підсумок)."""
+        b = request.args.get('book') or 'all'
+        rows = get_db().get_research(
+            is_paper=None if b == 'all' else (b == 'paper'),
+            since=_days_since(0), symbol=request.args.get('symbol') or None)
+        if request.args.get('fmt') == 'csv':
+            flat = []
+            for r in rows:
+                sm = r.get('summary') or {}
+                pk = sm.get('peak') or {}
+                ia = sm.get('if_exit_at') or {}
+                d = {k: r.get(k) for k in ('id', 'is_paper', 'symbol', 'side', 'opened_by',
+                                           'opened_at', 'closed_at', 'entry_price',
+                                           'exit_price', 'pnl_pct', 'peak_pnl_pct',
+                                           'mae_pnl_pct', 'reason')}
+                d.update({'peak_share': sm.get('peak_share'), 'giveback': sm.get('giveback'),
+                          'peak_prog': pk.get('prog'), 'peak_fp': pk.get('fp'),
+                          'peak_rx': pk.get('rx'), 'peak_vx': pk.get('vx'),
+                          'peak_clx': pk.get('clx'), 'events': sm.get('events'),
+                          'anomalies': sm.get('anomalies')})
+                for k, v in ia.items():
+                    d['ifx_' + k] = (v or {}).get('pnl')
+                flat.append(d)
+            cols = []
+            for d in flat:
+                for k in d:
+                    if k not in cols:
+                        cols.append(k)
+            return _csv_resp(flat, cols, 'trade_research.csv')
+        return jsonify({'ok': True, 'rows': rows})
 
     @app.route('/api/tm/stats')
     def api_tm_stats():
