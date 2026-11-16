@@ -288,12 +288,34 @@ def test_payload_carries_imb_and_sbr():
     now = 1000 + 500 * 900 + 10
     kl = sc._cache['BTCUSDT']['klines']
     _check(isinstance(ip.imb_of(kl, '15m', now), list), 'imb_of')
-    _check(ip.sbr_of(kl, '15m', now) == [], 'SBR лише на 1H / 4H (вимога 09.11)')
+    # 16.11: SBR — на ВСІХ TF графіка (обмеження «лише 1H / 4H» від 09.11 скасовано).
     kl1h = [dict(k, t=(3600 * 400 + i * 3600) * 1000) for i, k in enumerate(kl)]
     sig = ip.sbr_of(kl1h, '1h', 3600 * 400 + 500 * 3600 + 10)
     _check(isinstance(sig, list) and all(set(('side', 't', 'trigger', 'score', 'sl', 'tf')) <= set(x) for x in sig), sig[:1])
+    kl15 = [dict(k, t=(900 * 400 + i * 900) * 1000) for i, k in enumerate(kl)]
+    s15 = ip.sbr_of(kl15, '15m', 900 * 400 + 500 * 900 + 10)
+    _check(len(s15) == len(sig) and all(x['tf'] == '15M' for x in s15), 'на 15m ті самі сигнали, без обмеження TF')
+    _check(ip.SBR_CHART_TFS == ip.CHART_TFS, 'вибір TF SBR = усі TF графіка')
+    _check(ip.sbr_tf_norm('4H') == '4h' and ip.sbr_tf_norm('2h') == 'chart' and ip.sbr_tf_norm(None) == 'chart',
+           'невідомий TF → = графік')
     p = ip.coin_payload('BTCUSDT', sc)
     _check('imb' in p and 'sbr' in p, 'відповідь графіка несе IMB і SBR')
+    _check(p['sbr_tf'] == 'chart' and p['sbr_eff'] == p['tf'] and p['sbr_wait'] is False, 'деф. = TF графіка')
+    asked = []
+    _old_want = ip.want
+    ip.want = lambda key: asked.append(key) or True
+    try:
+        p4 = ip.coin_payload('BTCUSDT', sc, sbr_tf='4h')
+    finally:
+        ip.want = _old_want
+    _check(p4['sbr_eff'] == '4h' and p4['sbr_wait'] is True and ('sbr', 'BTCUSDT', '4h') in asked,
+           'інший TF → рахує фоновий потік, поки «⏳ рахується»')
+    cur2, _ = ip.apply_change(ip.user_info({}, []), {'sbr_tf': '1D'}, [])
+    _check(cur2['sbr_tf'] == '1d', 'вибір TF SBR зберігається')
+    js_ = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
+    _check('function sbrCtl()' in js_ and 'id="iw-sbr-tf"' in js_ and '"iw-sbr-tf": "sbr_tf"' in js_
+           and '&sbr_tf=' in js_ and 'title="SBR — лише на 1H і 4H"' not in js_, 'кнопка + вибір TF SBR у кабінеті')
+    _check('snapSec((s.ct || s.t) - 1, o)' in js_, 'сигнал іншого TF — на свічці графіка, де він спрацював')
     cur, _ = ip.apply_change(ip.user_info({}, []), {'show_imb': False}, [])
     _check(cur['show_imb'] is False and cur['show_sbr'] is True, 'перемикачі шарів зберігаються')
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()

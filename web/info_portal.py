@@ -576,16 +576,25 @@ def imb_of(klines, tf, now=None, sym=None, hist=None):
     return out
 
 
-SBR_TFS = ('1h', '4h')       # SBR — лише ті TF, на яких його веде бот і TG
+SBR_TFS = ('1h', '4h')       # SBR — TF рушія бота, Telegram і особистих підписок
+# 🔔 SBR НА ГРАФІКУ КАБІНЕТУ — на ВСІХ таймфреймах графіка (вимога 16.11).
+# 'chart' = TF графіка; можна обрати й інший TF графіка (сигнали 4H на 15m-
+# графіку тощо) — тоді його рахує фоновий потік (частина 'sbr'), кеш — до
+# закриття бару цього TF.
+SBR_CHART = 'chart'
+SBR_CHART_TFS = CHART_TFS
+
+
+def sbr_tf_norm(v):
+    """ЧИСТА: TF сигналів SBR на графіку → 'chart' або один із TF графіка."""
+    t = str(v or '').lower()
+    return t if t in SBR_CHART_TFS else SBR_CHART
 
 
 def sbr_of(klines, tf, now=None):
-    """🔔 Сигнали Session Band Reversal на ЗАКРИТИХ барах ГРАФІКА — той самий
+    """🔔 Сигнали Session Band Reversal на ЗАКРИТИХ барах — той самий
     `sbr_signals.compute_signals`, що рушій бота (1H/4H) і Telegram.
-    Лише 1H / 4H (вимога 09.11): індикатор калібровано на цих TF, на інших
-    позначки не малюємо."""
-    if str(tf).lower() not in SBR_TFS:
-        return []
+    Будь-який TF (вимога 16.11 скасувала «лише 1H / 4H» від 09.11)."""
     try:
         from detection.sbr_signals import compute_signals, closed_bars
     except Exception:
@@ -929,6 +938,14 @@ def _compute(sc, kind, sym, tf):
         # 🏁 Swing High / Low — ТА САМА функція бота, що лінії Strong/Weak на
         # графіку /smart-money (дилінг-діапазон = єдине джерело з PD-зоною).
         return {'levels': sc._swing_hl_for_tf(sym, tf)}, now + SHL_TTL
+    if kind == 'sbr':
+        # 🔔 SBR на ІНШОМУ TF, ніж графік (вибір у кабінеті): ті самі
+        # compute_signals на закритих свічках свого TF, раз на закриття бару.
+        from detection.sbr_signals import BARS as _SB
+        sk = md.fetch_klines(sym, limit=_SB, interval=tf)
+        if not sk or len(sk) < 30:
+            raise ValueError('немає барів ' + tf.upper())
+        return ({'sigs': sbr_of(sk, tf, now)}, next_close(now, tf) + SETTLE_SEC)
     if kind == 'sbrlast':
         # 🔔 Монети немає в рушії SBR → ТА САМА compute_signals на тих самих
         # 1000 закритих барах (як рушій), раз на закриття бару.
@@ -1199,7 +1216,7 @@ def rows_for(symbols, sc=None):
 
 
 def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, poc_tf=None,
-                 hl_tf=None, vol=False):
+                 hl_tf=None, vol=False, sbr_tf=None):
     sc = sc or _scanner()
     sym = norm_symbol(sym)
     if not sc:
@@ -1215,7 +1232,9 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
     in_bot = _in_bot(sc, sym)
     _vp = info_vob_params(getattr(sc, '_settings', None))
     vol = bool(vol)
-    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf, hl_tf, _vp['on'], _vp['pk'], vol)
+    sbr_tf = sbr_tf_norm(sbr_tf)
+    sbr_eff = tf if sbr_tf == SBR_CHART else sbr_tf       # TF, на якому рахуємо SBR
+    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf, hl_tf, _vp['on'], _vp['pk'], vol, sbr_eff)
     now = time.time()
     with _lock:
         hit = _coin_cache.get(ck)
@@ -1223,7 +1242,8 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         # частини все одно «просимо», інакше кеш потоку їх забуде
         for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf if _vp['on'] else OFF),
                      ('shl', shl_tf(sc)), ('imb', tf),
-                     ('hl', hl_tf), ('vol', tf if vol else OFF)):
+                     ('hl', hl_tf), ('vol', tf if vol else OFF),
+                     ('sbr', sbr_eff if sbr_eff != tf else OFF)):
             if t != OFF and _bot_part(sc, k, sym, t) is None:
                 want((k, sym, t))
         for t in SBR_TFS:
@@ -1253,6 +1273,11 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
     if hl_tf != OFF:
         d, _e = part(sc, 'hl', sym, hl_tf)
         hl, hl_wait = list((d or {}).get('pts') or []), d is None
+    if sbr_eff == tf:
+        sbr, sbr_wait = sbr_of((bars or {}).get('kl'), tf, now), False
+    else:
+        d, _e = part(sc, 'sbr', sym, sbr_eff)
+        sbr, sbr_wait = list((d or {}).get('sigs') or []), d is None and not _e
     vsplit, vol_wait = None, False
     if vol and ohlc:
         d, _e = part(sc, 'vol', sym, tf)
@@ -1285,14 +1310,14 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         'ohlc': ohlc, 'events': events,
         'imb': imb_of((bars or {}).get('kl'), tf, now, sym=sym,
                       hist=(part(sc, 'imb', sym, tf)[0] or {}).get('kl')),
-        'sbr': sbr_of((bars or {}).get('kl'), tf, now),
+        'sbr': sbr, 'sbr_tf': sbr_tf, 'sbr_eff': sbr_eff, 'sbr_wait': sbr_wait,
         'sbr_last': sbr_last,
         'ob': ob, 'vob': vob, 'ob_wait': ob_wait, 'vob_wait': vob_wait,
         'pd': _pd(sc, sym), 'poc': poc, 'poc_state': _st, 'shl': shl, 'ts': now,
         'vsplit': vsplit, 'vol_wait': vol_wait,
     }
     payload['sig'] = sig_of(payload)
-    if not ohlc or ob_wait or vob_wait or hl_wait or vol_wait:
+    if not ohlc or ob_wait or vob_wait or hl_wait or vol_wait or sbr_wait:
         return payload                 # «рахується» не кешуємо
     with _lock:
         _coin_cache[ck] = (now, payload)
@@ -1331,6 +1356,7 @@ def user_info(prefs, uni, dfl=None):
             'ob_tf': norm_tf(info.get('ob_tf'), OB_TFS, dfl['ob_tf'], allow_off=True),
             'vob_tf': norm_tf(info.get('vob_tf'), VOB_TFS, dfl['vob_tf'], allow_off=True),
             'hl_tf': norm_tf(info.get('hl_tf'), HL_TFS, OFF, allow_off=True),
+            'sbr_tf': sbr_tf_norm(info.get('sbr_tf')),
             # що малювати на графіку (лише показ, рахується завжди)
             'show_imb': bool(info.get('show_imb', True)),
             'show_sbr': bool(info.get('show_sbr', True)),
@@ -1377,6 +1403,8 @@ def apply_change(cur, body, uni):
         out['vob_tf'] = norm_tf(body.get('vob_tf'), VOB_TFS, cur.get('vob_tf') or '5m', allow_off=True)
     if 'hl_tf' in body:
         out['hl_tf'] = norm_tf(body.get('hl_tf'), HL_TFS, cur.get('hl_tf') or OFF, allow_off=True)
+    if 'sbr_tf' in body:
+        out['sbr_tf'] = sbr_tf_norm(body.get('sbr_tf'))
     for k in ('show_imb', 'show_sbr', 'show_shl'):
         if k in body:
             out[k] = bool(body.get(k))
@@ -2151,7 +2179,7 @@ def register_info_portal(app):
         Додати можна й будь-яку іншу USDT-монету — її порахує фоновий потік."""
         return jsonify({'ok': True, 'symbols': sorted(universe()),
                         'tfs': list(CHART_TFS), 'ob_tfs': list(OB_TFS),
-                        'vob_tfs': list(VOB_TFS), 'hl_tfs': list(HL_TFS), 'poc_days': list(POC_DAYS),
+                        'vob_tfs': list(VOB_TFS), 'hl_tfs': list(HL_TFS), 'sbr_chart_tfs': list(SBR_CHART_TFS), 'poc_days': list(POC_DAYS),
                         'poc_tfs': list(POC_TFS)})
 
     @app.route('/api/info/rows')
@@ -2182,7 +2210,7 @@ def register_info_portal(app):
         a = request.args
         p = coin_payload(a.get('symbol') or '', tf=a.get('tf'), ob_tf=a.get('ob_tf'),
                          vob_tf=a.get('vob_tf'), poc_days=a.get('poc_days'),
-                         poc_tf=a.get('poc_tf'), hl_tf=a.get('hl_tf'),
+                         poc_tf=a.get('poc_tf'), hl_tf=a.get('hl_tf'), sbr_tf=a.get('sbr_tf'),
                          vol=str(a.get('vol') or '') in ('1', 'true'))
         if p.get('ok') and a.get('sig') and a.get('sig') == p.get('sig'):
             return jsonify({'ok': True, 'same': True, 'sig': p['sig']})

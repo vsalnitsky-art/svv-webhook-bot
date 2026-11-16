@@ -1591,11 +1591,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </label>
                 <input type="text" id="sbr-alarm-sym" class="sm-alarm-in" value="BTC" maxlength="20"
                        onchange="sbrSaveAlarm()" title="Монета (BTC = BTCUSDT)">
-                <select id="sbr-alarm-tf" class="sm-alarm-in" onchange="sbrSaveAlarm()" title="Таймфрейм сигналу">
-                    <option value="any">1H або 4H</option><option value="1h">лише 1H</option><option value="4h">лише 4H</option>
-                </select>
+                <span class="sm-alarm-tfs" id="sbr-alarm-tfs" title="Таймфрейми сигналу: будить СВІЖИЙ сигнал на будь-якому з позначених TF. 15M / 30M / 45M рахуються лише для монети будильника (45M — із 15-хвилинних свічок, межі від 00:00 UTC, як у TradingView).">
+                    <label><input type="checkbox" data-atf="15m" onchange="sbrSaveAlarm()">15M</label><label><input type="checkbox" data-atf="30m" onchange="sbrSaveAlarm()">30M</label><label><input type="checkbox" data-atf="45m" onchange="sbrSaveAlarm()">45M</label><label><input type="checkbox" data-atf="1h" onchange="sbrSaveAlarm()">1H</label><label><input type="checkbox" data-atf="4h" onchange="sbrSaveAlarm()">4H</label>
+                </span>
                 <select id="sbr-alarm-side" class="sm-alarm-in" onchange="sbrSaveAlarm()" title="Який сигнал чекаємо — і яку кнопку вмикаємо">
                     <option value="LONG">LONG → 📈</option><option value="SHORT">SHORT → 📉</option>
+                </select>
+                <select id="sbr-alarm-tm" class="sm-alarm-in sm-alarm-tm" onchange="sbrAlarmTmChange()" title="Що ще зробити з головним тумблером 💼 Trade Manager у момент спрацювання. Бот перемикає його тим самим шляхом, що й тумблер на сторінці, і ПЕРЕВІРЯЄ, що стан справді змінився; результат — у 🧾 Лозі й особисто вам у Telegram.">
+                    <option value="">💼 TM не чіпати</option><option value="on">💼 + увімкнути TM</option><option value="off">💼 + вимкнути TM</option>
                 </select>
                 <span class="sm-alarm-st" id="sbr-alarm-status"></span>
             </span>
@@ -1619,6 +1622,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-alarm-in { background:#141821; color:#dde3ee; border:1px solid #2b2f36; border-radius:4px;
         font-size:0.72rem; height:24px; padding:0 4px; font-family:monospace; color-scheme:dark; }
     input.sm-alarm-in { width:64px; text-transform:uppercase; }
+.sm-alarm-tm { width:auto; text-transform:none; }
+.sm-alarm-tfs { display:inline-flex; gap:2px; }
+.sm-alarm-tfs label { display:inline-flex; align-items:center; gap:2px; padding:1px 5px; border:1px solid rgba(148,163,184,0.25); border-radius:4px; font-family:monospace; font-size:0.68rem; color:#8b93a7; cursor:pointer; user-select:none; }
+.sm-alarm-tfs input { display:none; }
+.sm-alarm-tfs label:has(input:checked) { border-color:rgba(251,191,36,0.6); color:#fbbf24; background:rgba(251,191,36,0.08); }
+.sm-alarm:not(.armed) .sm-alarm-tfs { opacity:0.55; }
     .sm-alarm-st { font-family:monospace; font-size:0.7rem; color:#8b93a7; }
     .sm-side-gates-state.paused { color:#f87171;
         border-color:rgba(248,113,113,0.40); background:rgba(248,113,113,0.10); }
@@ -11468,8 +11477,22 @@ async function onTMToggle() {
     }
     
     updateTMHeader(enabled);
+    _tmEnabledDirty = true;      // `enabled` іде на сервер ЛИШЕ після кліку людини
     await saveTMSettings();
     setTimeout(loadTMState, 500);
+}
+
+/* 💼 Головний тумблер TM може змінити й сам бот (⏰ будильник SBR). Тому:
+   (1) `saveTMSettings` надсилає `enabled` ЛИШЕ після кліку людини
+       (`_tmEnabledDirty`) — інакше перша ж правка будь-якого поля TM мовчки
+       повернула б старе положення з чекбокса;
+   (2) кожен полл `/api/tm/state` ставить чекбокс і шапку за СЕРВЕРОМ. */
+let _tmEnabledDirty = false;
+function _tmSyncMasterToggle(enabled) {
+    const el = document.getElementById('tm-enabled');
+    if (!el || _tmEnabledDirty) return;
+    const on = !!enabled;
+    if (el.checked !== on) { el.checked = on; updateTMHeader(on); }
 }
 
 // Global directional gate toggle — flips LONG or SHORT master allowance
@@ -11678,7 +11701,6 @@ async function saveTMSettings() {
     clearTimeout(_tmSaveTimer);
     _tmSaveTimer = setTimeout(async () => {
         const payload = {
-            enabled: document.getElementById('tm-enabled').checked,
             sizing_mode: document.getElementById('tm-sizing-mode').value,
             fixed_usd_amount: parseFloat(document.getElementById('tm-fixed-usd').value) || 100,
             fixed_pct_balance: parseFloat(document.getElementById('tm-fixed-pct').value) || 2,
@@ -11805,12 +11827,22 @@ async function saveTMSettings() {
             })(),
             entry_score_weights: collectEntryWeights(),
         };
+        const _sendEnabled = _tmEnabledDirty;
+        if (_sendEnabled) payload.enabled = document.getElementById('tm-enabled').checked;
         try {
-            await fetch('/api/tm/settings', {
+            const res = await fetch('/api/tm/settings', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(payload),
             });
+            if (_sendEnabled) {
+                // Позначку знімаємо лише коли сервер ПРИЙНЯВ і віддав той самий стан.
+                const d = res.ok ? await res.json().catch(() => null) : null;
+                if (d && d.settings) {
+                    _tmEnabledDirty = false;
+                    _tmSyncMasterToggle(d.settings.enabled);
+                }
+            }
             updateTMSummary();
         } catch (err) {
             console.error('TM save error', err);
@@ -19734,6 +19766,8 @@ async function loadTMState(isPoll) {
         // own fetch. Refreshed every time the TM state is loaded.
         window._tmEnabled = !!(d.settings && d.settings.enabled);
         window._tmSettings = d.settings || {};
+        // 💼 Чекбокс TM — за СЕРВЕРОМ (його міг перемкнути ⏰ будильник SBR).
+        if (d.settings) _tmSyncMasterToggle(d.settings.enabled);
         // Keep the LONG/SHORT direction buttons in sync with the REAL backing
         // gate on every poll — Smart Direction (AutoGate) rewrites these at
         // runtime, so the buttons must follow the actual saved state, not a
@@ -20820,41 +20854,72 @@ function _sbrApplyAlarm(st) {
     if (!st) return;
     const on = document.getElementById('sbr-alarm-on');
     const sym = document.getElementById('sbr-alarm-sym');
-    const tf = document.getElementById('sbr-alarm-tf');
     const sd = document.getElementById('sbr-alarm-side');
+    const tmSel = document.getElementById('sbr-alarm-tm');
     const box = document.getElementById('sbr-alarm-box');
     const out = document.getElementById('sbr-alarm-status');
     const act = document.activeElement;
     if (on && act !== on) on.checked = !!st.alarm_on;
     if (sym && act !== sym) sym.value = _sbrAlarmShortSym(st.alarm_symbol);
-    if (tf && act !== tf) tf.value = st.alarm_tf || 'any';
+    const tfs = _sbrAlarmTfsOf(st);
+    document.querySelectorAll('#sbr-alarm-tfs input[data-atf]').forEach(c => {
+        if (act !== c) c.checked = tfs.indexOf(c.dataset.atf) >= 0;
+    });
     if (sd && act !== sd) sd.value = st.alarm_side || 'LONG';
+    if (tmSel && act !== tmSel) tmSel.value = st.alarm_tm || '';
     if (box) box.classList.toggle('armed', !!st.alarm_on);
     if (out) {
         const L = st.alarm_last;
         if (st.alarm_on) {
             out.style.color = '#fbbf24';
             out.textContent = '⏳ чекаю ' + _sbrAlarmShortSym(st.alarm_symbol) + ' ' + (st.alarm_side || 'LONG')
-                + ' ' + ({any: '1H/4H', '1h': '1H', '4h': '4H'}[st.alarm_tf] || '1H/4H');
+                + ' ' + tfs.map(x => x.toUpperCase()).join('/')
+                + ({on: ' · +TM ON', off: ' · +TM OFF'}[st.alarm_tm] || '');
         } else if (L && L.at) {
             const t = new Date(_srvToPc(L.at) * 1000);
             const hm = t.toLocaleString('uk-UA', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
             out.style.color = L.ok ? '#4ade80' : '#f87171';
             out.textContent = (L.ok ? '✅ ' : '⚠️ ') + hm + ' · ' + _sbrAlarmShortSym(L.symbol) + ' ' + L.side + ' ' + L.tf
-                + (L.ok ? ' → кнопка ' + L.side + ' ' + (L.note || '') : ' · ' + (L.note || ''));
+                + (L.dir_ok === false || (L.ok === false && L.dir_ok == null) ? ' · ' + (L.note || '')
+                   : ' → кнопка ' + L.side + ' ' + (L.note || ''))
+                + (L.tm ? ' · TM ' + (L.tm_note || '') : '');
         } else {
             out.style.color = '#6b7280';
             out.textContent = 'вимкнено';
         }
     }
 }
+// ⏰ TF будильника: `alarm_tfs` (список), старий бекенд — `alarm_tf`.
+const _SBR_ALARM_TFS = ['15m', '30m', '45m', '1h', '4h'];
+function _sbrAlarmTfsOf(st) {
+    const raw = (st && Array.isArray(st.alarm_tfs)) ? st.alarm_tfs.map(x => String(x).toLowerCase()) : [];
+    const got = _SBR_ALARM_TFS.filter(x => raw.indexOf(x) >= 0);
+    if (got.length) return got;
+    const lg = String((st && st.alarm_tf) || 'any').toLowerCase();
+    return (lg === '1h' || lg === '4h') ? [lg] : ['1h', '4h'];
+}
+function sbrAlarmTmChange() {
+    const sel = document.getElementById('sbr-alarm-tm');
+    if (sel && sel.value === 'on' && !confirm(
+        '⚠️ Будильник УВІМКНЕ Trade Manager — бот почне відкривати РЕАЛЬНІ угоди на Bybit.\n\nПродовжити?')) {
+        sel.value = '';
+    }
+    sbrSaveAlarm();
+}
 async function sbrSaveAlarm() {
     const on = document.getElementById('sbr-alarm-on');
+    let tfs = Array.from(document.querySelectorAll('#sbr-alarm-tfs input[data-atf]'))
+        .filter(c => c.checked).map(c => c.dataset.atf);
+    if (!tfs.length) {        // жодного TF = будильник ні на що не відреагує → не даємо
+        tfs = ['1h', '4h'];
+        document.querySelectorAll('#sbr-alarm-tfs input[data-atf]').forEach(c => { c.checked = tfs.indexOf(c.dataset.atf) >= 0; });
+    }
     const body = {
         alarm_on: !!(on && on.checked),
         alarm_symbol: (document.getElementById('sbr-alarm-sym') || {}).value || 'BTC',
-        alarm_tf: (document.getElementById('sbr-alarm-tf') || {}).value || 'any',
+        alarm_tfs: tfs,
         alarm_side: (document.getElementById('sbr-alarm-side') || {}).value || 'LONG',
+        alarm_tm: (document.getElementById('sbr-alarm-tm') || {}).value || '',
     };
     try {
         const res = await fetch('/api/sbr/settings', {

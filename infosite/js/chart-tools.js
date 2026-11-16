@@ -1,7 +1,7 @@
 /* TradingView-style indicators and fully editable chart drawings for VSV. */
 (function(){
   "use strict";
-  var T={tool:"cursor",drawings:[],draft:null,svg:null,hint:null,selected:null,edit:null,ind:{ema20:false,ema50:false,ema200:false,volume:true},series:{}};
+  var T={tool:"cursor",drawings:[],draft:null,svg:null,hint:null,selected:null,edit:null,ind:{ema20:false,ema50:false,ema200:false,volume:true,volanom:true},series:{}};
   var STORE="vsv_chart_drawings";
   function clone(v){return JSON.parse(JSON.stringify(v))}
   function esc(s){return String(s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
@@ -161,7 +161,7 @@
     if(T.ind.ema50)T.series.ema50=iw.chart.addLineSeries(Object.assign({color:"#2962ff",title:"EMA 50"},opts));
     if(T.ind.ema200)T.series.ema200=iw.chart.addLineSeries(Object.assign({color:"#ec4899",title:"EMA 200"},opts));
     /* 📊 Обсяг (покупці / продавці) малює app.js — тут лише перемикач. */
-    if(window.VSV_HOOK&&window.VSV_HOOK.volume)window.VSV_HOOK.volume(!!T.ind.volume);
+    if(window.VSV_HOOK&&window.VSV_HOOK.volume)window.VSV_HOOK.volume(!!T.ind.volume,T.ind.volanom!==false);
   }
   function updateIndicators(iw,c){if(!iw||!c)return;var data=c.ohlc||[];[20,50,200].forEach(function(n){var s=T.series["ema"+n];if(s)s.setData(ema(data,n))})}
   function syncIndUI(){document.querySelectorAll("[data-indicator]").forEach(function(c){c.checked=!!T.ind[c.getAttribute("data-indicator")]});var sc=document.getElementById("tv-standard-candles");if(sc)sc.checked=localStorage.getItem("vsv_candle_standard")==="1"}

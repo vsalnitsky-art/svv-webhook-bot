@@ -133,7 +133,7 @@ def test_view_only_chart_bars():
 def test_payload_wiring():
     src = open('web/info_portal.py', encoding='utf-8').read()
     cp = src[src.index('def coin_payload'):src.index('# ── Особисті дані користувача')]
-    assert "_vp['pk'], vol)" in cp                              # розклад — у ключі кешу відповіді
+    assert "_vp['pk'], vol, sbr_eff)" in cp                             # розклад — у ключі кешу відповіді
     assert "('vol', tf if vol else OFF)" in cp                  # вимкнено → частина не рахується
     assert "'vsplit': vsplit, 'vol_wait': vol_wait" in cp
     assert "vol=str(a.get('vol') or '') in ('1', 'true')" in src
@@ -210,7 +210,9 @@ def test_legend_text():
     a = re.sub(r'<[^>]+>', '', out['a'])
     assert 'Обсяг 8.952K' in a and 'покупці 36%' in a and 'продавці 64%' in a and 'Δ −' in a and '⚡ угоди' in a
     assert 'vl-dn vl-win' in out['a'] and 'vl-up vl-win' in out['b'] and 'підсвічки 6 хв' in out['b']
-    assert 'чекаємо' in out['c'] and 'покупці' not in out['c'] and out['d'] == ''
+    assert 'чекаємо' in out['c'] and 'покупці' not in out['c']
+    # 16.11: у нижньому рядку підпис «Обсяг» стоїть завжди — порожнеча читалась би як збій
+    assert 'Обсяг' in out['d'] and '—' in out['d'] and 'покупці' not in out['d']
 
 
 def test_live_socket_also_streams_trades():
@@ -248,13 +250,91 @@ def test_native_series_and_wiring():
     assert '(VOL.on ? "&vol=1" : "")' in load and 'c.vol_wait' in load
     assert 'volume: volToggle' in APP
     # chart-tools більше не малює свій (однокольоровий) обсяг
-    assert 'window.VSV_HOOK.volume(!!T.ind.volume)' in TOOLS and 'T.series.volume' not in TOOLS
+    assert 'window.VSV_HOOK.volume(!!T.ind.volume,' in TOOLS and 'T.series.volume' not in TOOLS
     # вимкнули → потік угод зупинено, стрічка скинута
     tg = _block(APP, 'function volToggle', 'function drawCoin')
     assert 'VOL.tape = null' in tg and 'liveSet(IW.coin)' in tg
     assert 'IW.live.set(c && c.symbol, c && c.tf, VOL.on)' in APP
     css = open('infosite/css/style.css', encoding='utf-8').read()
-    assert '.iw-vol-lg{' in css and 'pointer-events:none' in css[css.index('.iw-vol-lg{'):]
+    assert '#iw-legend.vol' in css and '.iw-vol-lg{' not in css, 'дані обсягу — у нижньому рядку, а не плаваючим блоком'
+
+
+# ── 16.11 (друга правка): нижній рядок · аномалії · Σ від свічки ─────────────
+_AN = _block(APP, 'var VOL_AN =', 'function volRow(')
+
+
+def _rows_js(extra):
+    """20 спокійних свічок (обсяг 100, 50/50, зелені) + `extra`."""
+    return ("var rows = []; for (var i = 0; i < 20; i++) rows.push({ts: i, value: 100, buy: 0.5, up: true});"
+            "rows.push(" + extra + ");")
+
+
+def test_anomaly_rules():
+    out = _node("var VOL = {anom: true}; function esc(s){return String(s)}" + _AN + """
+      function at(extra) { var rows = []; for (var i = 0; i < 20; i++) rows.push({ts: i, value: 100, buy: 0.5, up: true});
+        rows.push(extra); var a = volAnomalyAt(rows, 20); return a ? a.k + (a.by ? ':' + a.by : '') + (a.dir ? ':' + a.dir : '') : null; }
+      var few = [{value: 100, buy: .5, up: true}, {value: 900, buy: .5, up: true}];
+      console.log(JSON.stringify({
+        absorbSell: at({value: 160, buy: 0.7, up: false}),     // покупці 70%, свічка червона
+        absorbBuy: at({value: 160, buy: 0.3, up: true}),       // продавці 70%, свічка зелена
+        climax: at({value: 320, buy: 0.55, up: true}),
+        sideUp: at({value: 160, buy: 0.8, up: true}),
+        sideDn: at({value: 160, buy: 0.2, up: false}),
+        spike: at({value: 210, buy: 0.55, up: true}),
+        noSplit: at({value: 330, buy: null, up: true}),
+        calm: at({value: 140, buy: 0.8, up: true}),            // ×1.4 — замало
+        absorbBeatsClimax: at({value: 400, buy: 0.7, up: false}),
+        fewBase: volAnomalyAt(few, 1),
+        med: volMedian([5, 1, 100, 2, 3])
+      }));""")
+    assert out['absorbSell'] == 'absorb:sell' and out['absorbBuy'] == 'absorb:buy'
+    assert out['climax'] == 'climax' and out['spike'] == 'spike'
+    assert out['sideUp'] == 'side:up' and out['sideDn'] == 'side:dn'
+    assert out['noSplit'] == 'climax', 'без розкладу — лише обсягові типи'
+    assert out['calm'] is None and out['fewBase'] is None
+    assert out['absorbBeatsClimax'] == 'absorb:sell', 'поглинання — найвищий пріоритет'
+    assert out['med'] == 3, 'база — медіана (один сплеск не роздуває базу)'
+
+
+def test_anomaly_text_names_the_risk():
+    out = _node("var VOL = {anom: true};" + _AN + """
+      console.log(JSON.stringify([volAnText({k: 'absorb', by: 'sell', rv: 1.8, sh: .7}),
+        volAnText({k: 'climax', rv: 3.4, sh: .6}), volAnText({k: 'side', dir: 'dn', rv: 1.6, sh: .2})]));""")
+    assert 'поглинання' in out[0][0] and 'LONG' in out[0][1] and '×1.8' in out[0][1]
+    assert '×3.4' in out[1][0] and 'навздогін' in out[1][1]
+    assert '80%' in out[2][0] and 'SHORT' in out[2][1]
+
+
+def test_range_sum_from_a_candle_to_now():
+    out = _node("var VOL = {anom: true};" + _AN + """
+      var rows = [{time: 1, value: 50, buy: .5}, {time: 2, value: 100, buy: .8, an: {k: 'side'}},
+                  {time: 3, value: 200, buy: null}, {time: 4, value: 100, buy: .3}];
+      var o = [{time: 1, open: 9, close: 9}, {time: 2, open: 10, close: 11}, {time: 3, open: 11, close: 12},
+               {time: 4, open: 12, close: 10.5}];
+      console.log(JSON.stringify([volRangeSum(rows, 2, o), volRangeSum(rows, 99, o)]));""")
+    m, miss = out
+    assert miss is None
+    assert m['n'] == 3 and m['vol'] == 400 and m['split'] == 2 and m['anoms'] == 1
+    assert abs(m['buy'] - 110) < 1e-9 and abs(m['sell'] - 90) < 1e-9 and abs(m['delta'] - 20) < 1e-9
+    assert abs(m['share'] - 0.55) < 1e-9, 'частка — лише зі свічок, де розклад є'
+    assert abs(m['chg'] - 5.0) < 1e-9, 'ціна: від відкриття першої свічки до поточного закриття'
+
+
+def test_footer_replaces_layer_legend_and_dblclick_only_in_volume_zone():
+    rh = _block(APP, 'function renderHead()', 'function setNote(')
+    assert 'IW.layerLg =' in rh and 'legendPaint()' in rh and 'lg.innerHTML =' not in rh
+    lp = _block(APP, 'function legendPaint()', '/* Перемикач')
+    assert 'VOL.on && VOL.html' in lp and 'IW.layerLg' in lp and 'classList.toggle("vol"' in lp
+    assert 'classList.toggle("rng"' in lp, 'Σ-режим — підсвічена панель'
+    assert 'createElement("div")' not in _block(APP, 'function volLegend()', 'function legendPaint()')
+    dbl = _block(APP, 'function volDbl(', 'function volAnColor(')
+    assert 'VOL_TOP' in dbl and 'volSetRange(p.time)' in dbl
+    assert 'IW.chart.subscribeDblClick(volDbl)' in APP
+    # бібліотека прибирає `time` з originalData → смуга шукає свічку за `ts`
+    assert 'ts: bar.time' in APP and 'originalData.ts === VOL.sel' in APP
+    assert 'volRebuild(IW.coin)' in _block(APP, 'function volSetRange(', 'function volDbl(')
+    assert 'T.ind.volanom!==false' in TOOLS
+    assert 'data-indicator="volanom"' in open('infosite/index.html', encoding='utf-8').read()
 
 
 if __name__ == '__main__':

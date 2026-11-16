@@ -504,21 +504,187 @@ def test_alarm_enables_the_main_button_and_keeps_working():
 
 
 def test_alarm_ui_and_route():
-    for k in ('id="sbr-alarm-on"', 'id="sbr-alarm-sym"', 'id="sbr-alarm-tf"',
-              'id="sbr-alarm-side"', 'id="sbr-alarm-status"', 'function sbrSaveAlarm(',
-              'function _sbrApplyAlarm('):
+    # 16.11: випадайку TF замінили чипи (кілька TF) + вибір дії над TM.
+    for k in ('id="sbr-alarm-on"', 'id="sbr-alarm-sym"', 'id="sbr-alarm-tfs"',
+              'id="sbr-alarm-side"', 'id="sbr-alarm-tm"', 'id="sbr-alarm-status"',
+              'function sbrSaveAlarm(', 'function _sbrApplyAlarm('):
         _check(k in _HTML, k)
     i = _HTML.index('id="sbr-alarm-box"')
     _check(_HTML.index('id="sm-side-gates-state"') < i, 'будильник стоїть у рядку Trade Direction')
     fl = open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
     r = fl[fl.index("def api_sbr_settings("):fl.index("def api_sbr_tg_symbol(")]
-    for k in ('alarm_on', 'alarm_symbol', 'alarm_tf', 'alarm_side'):
+    for k in ('alarm_on', 'alarm_symbol', 'alarm_tf', 'alarm_tfs', 'alarm_side', 'alarm_tm'):
         _check(f"'{k}'" in r, k)
     dg = open(os.path.join(_ROOT, 'detection', 'direction_gate.py'), encoding='utf-8').read()
     _check('def live_enable(' in dg, 'вмикання кнопки живе в direction_gate')
     sb = open(os.path.join(_ROOT, 'detection', 'sbr_signals.py'), encoding='utf-8').read()
     _check('allow_long_entries' not in sb and 'allow_short_entries' not in sb,
            'ключі кнопок не набираються руками')
+
+
+# ── ⏰ Будильник v2 (16.11): 15m / 30m / 45m · дія над Trade Manager ─────────
+def test_alarm_tfs_migration_and_choice():
+    _check(S.alarm_tfs_of({}) == ('1h', '4h'), 'дефолт = 1H+4H (як старе «any»)')
+    _check(S.alarm_tfs_of({'alarm_tf': '4h'}) == ('4h',), 'старий alarm_tf=4h')
+    _check(S.alarm_tfs_of({'alarm_tfs': ['4h', '15M', 'x', '45m']}) == ('15m', '45m', '4h'),
+           'кілька TF, від молодшого, сміття відкинуто')
+    _check(S.alarm_tfs_of({'alarm_tfs': [], 'alarm_tf': '1h'}) == ('1h',), 'порожньо → старий ключ')
+    s = {'alarm_on': True, 'alarm_symbol': 'BTC', 'alarm_side': 'LONG', 'alarm_tfs': ['15m', '4h']}
+    _check(S.alarm_match(s, 'BTCUSDT', [('15m', _asig('LONG'))])[0] == '15m', '15M будить')
+    _check(S.alarm_match(s, 'BTCUSDT', [('1h', _asig('LONG'))]) is None, '1H не обрано')
+    _check(S.alarm_match(s, 'BTCUSDT', [('4h', _asig('LONG')), ('15m', _asig('LONG'))])[0] == '15m',
+           'молодший TF першим')
+    e = S.SbrEngine(_MemDB(), lambda: [], None, None)
+    e.update_settings({'alarm_tf': '4h'})
+    _check(e.get_settings()['alarm_tfs'] == ['4h'], 'старий UI (alarm_tf) переводиться в список')
+    e.update_settings({'alarm_tfs': ['30m', '1h'], 'alarm_tm': 'ON'})
+    st = e.get_settings()
+    _check(st['alarm_tfs'] == ['30m', '1h'] and st['alarm_tm'] == 'on', st)
+    e.update_settings({'alarm_tm': 'зламане'})
+    _check(e.get_settings()['alarm_tm'] == '', 'невідома дія → не чіпати TM')
+
+
+def test_45m_is_built_from_15m_aligned_to_utc_day():
+    day = 1_763_251_200          # 16.11.2025 00:00 UTC
+    bars = []
+    for i in range(7):           # 7 барів 15m → 2 повні групи 45m + 1 неповна
+        t = day + i * 900
+        bars.append({'t': t * 1000, 'o': 100 + i, 'h': 110 + i, 'l': 90 - i, 'p': 101 + i,
+                     'v': 10, 'q': 1})
+    out = S.aggregate_bars(list(reversed(bars)), 2700, 900)
+    _check(len(out) == 2, f'лише повні групи: {out}')
+    a = out[0]
+    _check(a['t'] == day * 1000 and a['o'] == 100 and a['p'] == 103 and a['h'] == 112
+           and a['l'] == 88 and a['v'] == 30 and a['q'] == 3, a)
+    _check(out[1]['t'] == (day + 2700) * 1000, 'межі 45m від 00:00 UTC')
+    _check(86400 % 2700 == 0, '32 бари 45m на добу — епоха й доба вирівняні')
+
+
+def test_low_tfs_only_for_alarm_coin_and_45m_fetches_15m():
+    asked = []
+
+    def fetch(sym, tf, limit):
+        asked.append((sym, tf, limit))
+        return None
+    e = S.SbrEngine(_MemDB(), lambda: ['ETHUSDT'], fetch, None)
+    e.start = lambda: None       # без фонового потоку: він сам почав би тягнути бари
+    plan = dict((tf, pool) for tf, pool in e._plan(['ETHUSDT', 'BTCUSDT']))
+    _check(set(plan) == {'1h', '4h'}, 'будильник вимкнено → лише 1H/4H')
+    e.update_settings({'alarm_on': True, 'alarm_symbol': 'SOL',
+                       'alarm_tfs': ['15m', '45m', '1h']})
+    plan = dict((tf, pool) for tf, pool in e._plan(['ETHUSDT', 'SOLUSDT']))
+    _check(plan.get('15m') == ['SOLUSDT'] and plan.get('45m') == ['SOLUSDT'], plan)
+    _check('30m' not in plan, '30M не обрано → не рахується')
+    _check(plan['1h'] == ['ETHUSDT', 'SOLUSDT'], '1H — увесь всесвіт')
+    e._safe_fetch('SOLUSDT', '45m')
+    e._safe_fetch('SOLUSDT', '15m')
+    _check(asked == [('SOLUSDT', '15m', S.ALARM_BARS * 3), ('SOLUSDT', '15m', S.ALARM_BARS)],
+           f'45M — із 15m: {asked}')
+
+
+def test_low_tf_signal_reaches_only_the_alarm():
+    group, pers, spring, hit = [], [], [], []
+    e = S.SbrEngine(_MemDB(), lambda: [], None, lambda t: (group.append(t) or True, ''),
+                    personal=lambda S_, it: pers.append(it) or (0, 0),
+                    spring=lambda S_, it: spring.append(it))
+    e.update_settings({'tg_symbols': ['BTCUSDT']})
+    e._alarm_check = lambda S_, items, now, s: hit.append(items)
+    e._on_signals('BTCUSDT', [('15m', _asig('LONG'))], 100.0)
+    _check(hit and hit[0][0][0] == '15m', 'будильник бачить 15M')
+    _check(not group and not pers and not spring and not e._events,
+           '15M не йде в групу / особисто / 🔭 скан / журнал')
+    e._on_signals('BTCUSDT', [('15m', _asig('LONG')), ('1h', _asig('LONG'))], 200.0)
+    _check(pers and [x[0] for x in pers[-1]] == ['1h'] and spring
+           and [e_['tfs'] for e_ in e._events] == ['1H'], '1H іде як і раніше')
+
+
+class _FakeTM:
+    def __init__(self, on=False, accept=True):
+        self.on, self.accept, self.calls = on, accept, []
+
+    def is_enabled(self):
+        return self.on
+
+    def update_settings(self, patch):
+        self.calls.append(dict(patch))
+        if self.accept:
+            self.on = bool(patch.get('enabled', self.on))
+        return {'enabled': self.on}
+
+
+def test_alarm_set_tm_verifies_the_real_state():
+    tm = _FakeTM(on=False)
+    _check(S.alarm_set_tm(True, tm) == (True, 'увімкнено', True) and tm.on, 'увімкнено')
+    _check(tm.calls == [{'enabled': True}], 'той самий шлях, що тумблер на сторінці')
+    _check(S.alarm_set_tm(True, tm) == (True, 'вже увімкнено', False), 'вже в стані — без запису')
+    _check(len(tm.calls) == 1, 'зайвого запису немає')
+    _check(S.alarm_set_tm(False, tm) == (True, 'вимкнено', True) and not tm.on, 'вимкнено')
+    deaf = _FakeTM(on=False, accept=False)
+    ok, why, changed = S.alarm_set_tm(True, deaf)
+    _check(not ok and not changed and 'не прийняв' in why,
+           'запит пішов, а стан не змінився → невдача, а не «увімкнено»')
+    src = open(os.path.join(_ROOT, 'detection', 'sbr_signals.py'), encoding='utf-8').read()
+    fn = src[src.index('def alarm_set_tm('):src.index('def alarm_match(')]
+    _check(fn.count('is_enabled()') >= 2, 'стан читається і ДО, і ПІСЛЯ запису')
+
+
+def test_alarm_switches_tm_and_reports_it():
+    dg = types.ModuleType('detection.direction_gate')
+    dg.live_enable = lambda side, source='': (True, 'вже увімкнено')
+    pkg = sys.modules.setdefault('detection', types.ModuleType('detection'))
+    old = sys.modules.get('detection.direction_gate')
+    sys.modules['detection.direction_gate'] = dg
+    pkg.direction_gate = dg
+    sent = []
+    tm = _FakeTM(on=False)
+    try:
+        e = S.SbrEngine(_MemDB(), lambda: [], None, None)
+        e._admin_notify = lambda t: sent.append(t) or True
+        e._tm_switch = lambda on: S.alarm_set_tm(on, tm)
+        e.update_settings({'alarm_on': True, 'alarm_symbol': 'BTC', 'alarm_tfs': ['30m'],
+                           'alarm_side': 'LONG', 'alarm_tm': 'on'})
+        e._on_signals('BTCUSDT', [('30m', _asig('LONG'))], 100.0)
+        L = e.get_settings()['alarm_last']
+        _check(tm.on and L['tm'] == 'on' and L['tm_ok'] and L['tf'] == '30M', L)
+        _check(sent and 'Trade Manager → <b>УВІМКНЕНО</b>' in sent[-1],
+               'зміна TM іде в TG навіть коли кнопка вже була увімкнена')
+        n = len(sent)
+        e._on_signals('BTCUSDT', [('30m', _asig('LONG'))], 200.0)
+        _check(len(sent) == n, 'усе вже в стані → тиша')
+        e.update_settings({'alarm_tm': 'off'})
+        e._on_signals('BTCUSDT', [('30m', _asig('LONG'))], 300.0)
+        _check(not tm.on and 'ВИМКНЕНО' in sent[-1], 'вимкнення TM')
+        deaf = _FakeTM(on=True, accept=False)
+        e._tm_switch = lambda on: S.alarm_set_tm(on, deaf)
+        e._on_signals('BTCUSDT', [('30m', _asig('LONG'))], 400.0)
+        L = e.get_settings()['alarm_last']
+        _check(L['ok'] is False and L['tm_ok'] is False and 'НЕ змінено' in sent[-1], L)
+    finally:
+        if old is not None:
+            sys.modules['detection.direction_gate'] = old
+            pkg.direction_gate = old
+
+
+def test_page_never_overwrites_tm_with_a_stale_checkbox():
+    sv = _HTML[_HTML.index('async function saveTMSettings()'):]
+    sv = sv[:sv.index('\n}\n')]
+    _check("enabled: document.getElementById('tm-enabled').checked," not in sv,
+           '`enabled` більше не їде з кожною правкою TM')
+    _check('if (_sendEnabled) payload.enabled' in sv, '…лише після кліку людини')
+    tg = _HTML[_HTML.index('async function onTMToggle()'):]
+    tg = tg[:tg.index('\n}\n')]
+    _check('_tmEnabledDirty = true' in tg, 'клік по тумблеру ставить позначку')
+    st = _HTML[_HTML.index('async function loadTMState('):]
+    _check('_tmSyncMasterToggle(d.settings.enabled)' in st[:st.index('\n}\n')],
+           'полл ставить чекбокс за сервером')
+    import subprocess
+    js = _HTML[_HTML.index('const _SBR_ALARM_TFS'):_HTML.index('function sbrAlarmTmChange')]
+    r = subprocess.run(['node', '-e', js + """
+        console.log(JSON.stringify([_sbrAlarmTfsOf({alarm_tfs: ['4h', '15m']}),
+            _sbrAlarmTfsOf({alarm_tf: '4h'}), _sbrAlarmTfsOf({})]));"""],
+        capture_output=True, text=True, timeout=30)
+    _check(r.returncode == 0, r.stderr)
+    _check(json.loads(r.stdout) == [['15m', '4h'], ['4h'], ['1h', '4h']], r.stdout)
 
 
 if __name__ == '__main__':

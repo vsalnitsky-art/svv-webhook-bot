@@ -60,8 +60,16 @@ DEFAULTS = {
 }
 
 TFS = ('1h', '4h')
-TF_SEC = {'1h': 3600, '4h': 14400}
-TF_LABEL = {'1h': '1H', '4h': '4H'}
+# ⏰ Молодші TF — ЛИШЕ для будильника (вимога 16.11): рушій рахує їх тільки для
+# монети будильника і лише коли TF обрано. Група TG, особисті підписки, книга
+# 🔔 МММ-SBR, правило виходу і 🔭 скан їх не бачать (фільтрують своїми TF).
+ALARM_ONLY_TFS = ('15m', '30m', '45m')
+TF_SEC = {'15m': 900, '30m': 1800, '45m': 2700, '1h': 3600, '4h': 14400}
+TF_LABEL = {'15m': '15M', '30m': '30M', '45m': '45M', '1h': '1H', '4h': '4H'}
+# 45m біржа не віддає → збираємо з 15m (межі 45m від 00:00 UTC, як TradingView:
+# 1440 / 45 = 32 бари на добу, тож епоха й доба вирівняні однаково).
+AGG_FROM = {'45m': ('15m', 3)}
+ALARM_BARS = 1000      # 15m / 30m — одна сторінка Bybit; 45m — 3000 барів 15m
 BARS = 1000            # «без економії»: 1 сторінка Bybit = 1000 барів на TF
 SETTLE_SEC = 2.0       # пауза після закриття бару — біржа встигає його закрити
 RETRY_SEC = 5.0        # повтор для монет, по яких закритого бару ще немає
@@ -90,13 +98,86 @@ DEFAULT_SETTINGS = {
     # (кнопка вже увімкнена → нічого не робимо і не шумимо).
     'alarm_on': False,
     'alarm_symbol': 'BTCUSDT',
-    'alarm_tf': 'any',        # '1h' | '4h' | 'any'
+    'alarm_tf': 'any',        # ІСТОРИЧНИЙ ключ: '1h' | '4h' | 'any' (лише міграція)
+    # ⏰ TF, сигнали яких будять (вимога 16.11): будь-який набір із ALARM_TF_ALL.
+    'alarm_tfs': ['1h', '4h'],
     'alarm_side': 'LONG',     # 'LONG' | 'SHORT'
+    # 🏦 Дія над головним тумблером Trade Manager (вимога 16.11): '' — не
+    # чіпати · 'on' — увімкнути · 'off' — вимкнути. Деф. не чіпати.
+    'alarm_tm': '',
     'alarm_last': None,       # {at, symbol, side, tf, ok, note} — останнє спрацювання
 }
 
-ALARM_TFS = ('any', '1h', '4h')
+ALARM_TFS = ('any', '1h', '4h')                     # історичний `alarm_tf`
+ALARM_TF_ALL = ('15m', '30m', '45m', '1h', '4h')     # вибір у новому UI
 ALARM_SIDES = ('LONG', 'SHORT')
+ALARM_TM = ('', 'on', 'off')
+
+
+def alarm_tfs_of(settings) -> tuple:
+    """⏰ TF будильника. ЧИСТА. `alarm_tfs` (список) — головне; немає /
+    порожньо → історичний `alarm_tf` ('any' → 1H+4H). Порядок — від молодшого."""
+    s = settings or {}
+    raw = s.get('alarm_tfs')
+    if isinstance(raw, (list, tuple)):
+        got = {str(x).lower() for x in raw}
+        out = tuple(tf for tf in ALARM_TF_ALL if tf in got)
+        if out:
+            return out
+    legacy = str(s.get('alarm_tf') or 'any').lower()
+    return (legacy,) if legacy in TFS else TFS
+
+
+def aggregate_bars(bars, tf_sec: int, base_sec: int):
+    """Бари `base_sec` → бари `tf_sec` (45m із 15m). ЧИСТА. Лише ПОВНІ групи
+    (неповна — живий бар або діра в історії біржі — відкидається)."""
+    k = max(1, int(tf_sec // base_sec))
+    groups: Dict[int, List[Dict]] = {}
+    for b in sorted(bars or [], key=lambda x: int(x.get('t') or 0)):
+        try:
+            g = int(b['t']) // 1000 // tf_sec * tf_sec
+        except Exception:
+            continue
+        groups.setdefault(g, []).append(b)
+    out = []
+    for g in sorted(groups):
+        sub = groups[g]
+        if len(sub) != k:
+            continue
+        cl = lambda x: float(x.get('p', x.get('c', x.get('close'))))
+        out.append({'t': g * 1000, 'o': float(sub[0]['o']),
+                    'h': max(float(x['h']) for x in sub), 'l': min(float(x['l']) for x in sub),
+                    'p': cl(sub[-1]),
+                    'v': sum(float(x.get('v') or 0) for x in sub),
+                    'q': sum(float(x.get('q') or 0) for x in sub)})
+    return out
+
+
+def alarm_set_tm(on: bool, tm=None):
+    """🏦 Будильник перемикає ГОЛОВНИЙ тумблер Trade Manager. → (ok, причина,
+    змінено?). Пише ТИМ САМИМ шляхом, що й тумблер на сторінці
+    (`update_settings({'enabled': …})` — з персистом), і ПЕРЕВІРЯЄ результат
+    живим `is_enabled()`: успіх — лише коли TM справді в потрібному стані,
+    а не «ми відправили запит»."""
+    want = bool(on)
+    if tm is None:
+        try:
+            from detection.trade_manager import get_trade_manager
+            tm = get_trade_manager()
+        except Exception as e:
+            return False, f'Trade Manager недоступний: {e}', False
+    if tm is None or not hasattr(tm, 'update_settings'):
+        return False, 'Trade Manager ще не піднявся', False
+    word = 'увімкнено' if want else 'вимкнено'
+    try:
+        if bool(tm.is_enabled()) == want:
+            return True, 'вже ' + word, False
+        tm.update_settings({'enabled': want})
+        if bool(tm.is_enabled()) != want:
+            return False, 'Trade Manager не прийняв зміну (стан не змінився)', False
+        return True, word, True
+    except Exception as e:
+        return False, f'не вдалося змінити: {e}', False
 
 
 def alarm_norm_symbol(sym) -> str:
@@ -118,11 +199,11 @@ def alarm_match(settings, symbol, items):
     if str(symbol or '').upper() != alarm_norm_symbol(s.get('alarm_symbol')):
         return None
     side = str(s.get('alarm_side') or 'LONG').upper()
-    tf_need = str(s.get('alarm_tf') or 'any').lower()
+    tfs = alarm_tfs_of(s)
     for tf, sig in sorted(items or [], key=lambda x: TF_SEC.get(x[0], 0)):
         if not isinstance(sig, dict) or str(sig.get('side') or '').upper() != side:
             continue
-        if tf_need != 'any' and tf != tf_need:
+        if tf not in tfs:
             continue
         return tf, sig
     return None
@@ -376,6 +457,7 @@ class SbrEngine:
         self._fetch = fetch            # (sym, tf, limit) → bars | None
         self._notify = notify          # (text) → (ok, why)
         self._admin_notify = None      # ⏰ будильник → особисто адміну (None = за замовч.)
+        self._tm_switch = None         # ⏰ (on) → (ok, причина, змінено) — для тестів
         self._clock = clock or time.time
         self._lock = threading.Lock()
         self._state: Dict[str, Dict] = {}      # {SYM: {'1h': snap, '4h': snap}}
@@ -416,14 +498,18 @@ class SbrEngine:
         s['alarm_symbol'] = alarm_norm_symbol(s.get('alarm_symbol'))
         tf = str(s.get('alarm_tf') or 'any').lower()
         s['alarm_tf'] = tf if tf in ALARM_TFS else 'any'
+        s['alarm_tfs'] = list(alarm_tfs_of(s))
         sd = str(s.get('alarm_side') or 'LONG').upper()
         s['alarm_side'] = sd if sd in ALARM_SIDES else 'LONG'
+        tm = str(s.get('alarm_tm') or '').lower()
+        s['alarm_tm'] = tm if tm in ALARM_TM else ''
         if not isinstance(s.get('alarm_last'), dict):
             s['alarm_last'] = None
 
     def get_settings(self) -> Dict:
         with self._lock:
-            return {**self._settings, 'tg_symbols': list(self._settings['tg_symbols'])}
+            return {**self._settings, 'tg_symbols': list(self._settings['tg_symbols']),
+                    'alarm_tfs': list(self._settings.get('alarm_tfs') or [])}
 
     def _save_settings(self):
         try:
@@ -446,9 +532,12 @@ class SbrEngine:
             if 'tg_symbols' in patch and isinstance(patch['tg_symbols'], list):
                 self._settings['tg_symbols'] = sorted(
                     {str(x).upper() for x in patch['tg_symbols'] if x})
-            for k in ('alarm_on', 'alarm_symbol', 'alarm_tf', 'alarm_side'):
+            for k in ('alarm_on', 'alarm_symbol', 'alarm_tf', 'alarm_tfs', 'alarm_side',
+                      'alarm_tm'):
                 if k in patch:
                     self._settings[k] = patch[k]
+            if 'alarm_tf' in patch and 'alarm_tfs' not in patch:
+                self._settings['alarm_tfs'] = None     # старий UI → з `alarm_tf`
             self._alarm_clean(self._settings)
         self._save_settings()
         if self._settings['enabled']:
@@ -596,8 +685,8 @@ class SbrEngine:
             return {}
         done: Dict[str, List[str]] = {}
         jobs = []
-        for tf in TFS:
-            due = self._due(syms, tf, now)
+        for tf, pool in self._plan(syms):
+            due = self._due(pool, tf, now)
             if not due:
                 continue
             if now - self._attempt.get(tf, 0.0) < RETRY_SEC and \
@@ -621,7 +710,7 @@ class SbrEngine:
                 fresh.setdefault(S, []).append(item)
         with self._lock:
             self._ts = now
-            for tf in TFS:
+            for tf in TF_SEC:
                 if tf in done or any(j[1] == tf for j in jobs):
                     self._last_scan[tf] = {'at': now, 'took': round(time.time() - t0, 2),
                                            'asked': sum(1 for j in jobs if j[1] == tf),
@@ -632,6 +721,17 @@ class SbrEngine:
             self._kick_book()
             self._persist()
         return done
+
+    def _plan(self, syms: List[str]) -> List[tuple]:
+        """[(tf, монети)] на прохід: 1H/4H — увесь всесвіт; ⏰ 15m/30m/45m —
+        ЛИШЕ монета будильника і лише обрані TF, поки будильник увімкнений."""
+        plan = [(tf, syms) for tf in TFS]
+        s = self.get_settings()
+        if s.get('alarm_on'):
+            for tf in alarm_tfs_of(s):
+                if tf in ALARM_ONLY_TFS:
+                    plan.append((tf, [s['alarm_symbol']]))
+        return plan
 
     @staticmethod
     def _need_t(tf: str, now: float) -> int:
@@ -726,6 +826,12 @@ class SbrEngine:
 
     def _safe_fetch(self, S: str, tf: str):
         try:
+            if tf in AGG_FROM:
+                base, k = AGG_FROM[tf]
+                return aggregate_bars(self._fetch(S, base, ALARM_BARS * k),
+                                      TF_SEC[tf], TF_SEC[base])
+            if tf in ALARM_ONLY_TFS:
+                return self._fetch(S, tf, ALARM_BARS)
             return self._fetch(S, tf, BARS)
         except Exception as e:
             print(f"[SBR] fetch {S} {tf} error: {e}")
@@ -733,14 +839,19 @@ class SbrEngine:
 
     def _on_signals(self, S: str, items: List[tuple], now: float):
         """Свіжі сигнали монети: подія в журнал + Telegram (якщо відмічена)."""
-        by_side: Dict[str, List[tuple]] = {}
-        for tf, sig in items:
-            by_side.setdefault(sig['side'], []).append((tf, sig))
         s = self.get_settings()
         try:
             self._alarm_check(S, items, now, s)
         except Exception as e:
             print(f"[SBR] alarm error {S}: {e}")
+        # ⏰ Молодші TF рахуються лише для будильника — далі (група, особисті,
+        # 🔭 скан, журнал) ідуть тільки 1H/4H.
+        items = [it for it in items if it[0] in TFS]
+        if not items:
+            return
+        by_side: Dict[str, List[tuple]] = {}
+        for tf, sig in items:
+            by_side.setdefault(sig['side'], []).append((tf, sig))
         # 👤 Особисті сповіщення (кабінет) — НЕЗАЛЕЖНО від групових налаштувань:
         # користувач сам обрав монету й TF. Лише активні акаунти (фільтр у БД).
         pers_ok = pers_bad = 0
@@ -792,7 +903,8 @@ class SbrEngine:
 
 
     def _alarm_check(self, S: str, items: List[tuple], now: float, s: Dict) -> None:
-        """⏰ Збіг → увімкнути головну кнопку + зняти будильник + 🧾 Лог + TG."""
+        """⏰ Збіг → увімкнути головну кнопку напрямку + (за налаштуванням)
+        увімкнути / вимкнути Trade Manager → 🧾 Лог + TG особисто адміну."""
         hit = alarm_match(s, S, items)
         if not hit:
             return
@@ -807,32 +919,45 @@ class SbrEngine:
             _dg = _ilu.module_from_spec(_sp)
             _sp.loader.exec_module(_dg)
         ok, note = _dg.live_enable(side, source='SBR alarm')
+        act = str(s.get('alarm_tm') or '')
+        tm_res = None
+        if act in ('on', 'off'):
+            tm_res = (self._tm_switch or alarm_set_tm)(act == 'on')
         last = {'at': now, 'symbol': S, 'side': side, 'tf': TF_LABEL.get(tf, tf),
-                'ok': bool(ok), 'note': note, 'score': sig.get('score'),
-                'trigger': sig.get('trigger')}
+                'ok': bool(ok) and (tm_res is None or bool(tm_res[0])), 'note': note,
+                'dir_ok': bool(ok), 'score': sig.get('score'), 'trigger': sig.get('trigger'),
+                'tm': act, 'tm_ok': None if tm_res is None else bool(tm_res[0]),
+                'tm_note': None if tm_res is None else tm_res[1]}
         with self._lock:
             self._settings['alarm_last'] = last
         self._save_settings()
-        if ok and note == 'вже увімкнено':
-            return      # кнопка й так увімкнена — без рядка в лозі й без TG
+        dir_changed = bool(ok) and note != 'вже увімкнено'
+        tm_changed = bool(tm_res and tm_res[2])
+        tm_failed = bool(tm_res is not None and not tm_res[0])
+        if ok and not dir_changed and not tm_changed and not tm_failed:
+            return      # усе й так у потрібному стані — без рядка в лозі й без TG
         txt = (f"⏰ Будильник SBR: {S} {side} {TF_LABEL.get(tf, tf)} "
                f"(Score {float(sig.get('score') or 0):.2f}) → "
                + (f"головну кнопку {side} {note}" if ok
                   else f"кнопку {side} НЕ увімкнено: {note}"))
+        if tm_res is not None:
+            txt += (f" · Trade Manager {tm_res[1]}" if tm_res[0]
+                    else f" · Trade Manager НЕ змінено: {tm_res[1]}")
         print(f"[SBR] {txt}")
         try:
             from detection.activity_log import log_activity
             log_activity(S, 'signal', txt, side=side, source='SBR',
-                         extra={'alarm': True, 'ok': bool(ok)})
+                         extra={'alarm': True, 'ok': bool(last['ok']), 'tm': act,
+                                'tm_ok': last['tm_ok']})
         except Exception:
             pass
         # 📨 Будильник — ОСОБИСТО адміну в головний бот, а НЕ в групу (вимога
         # 08.11) і незалежно від групового тумблера `tg_enabled`. Рядка про
-        # увімкнену головну кнопку немає (на прохання); лише відмова — бо тоді
-        # бот НЕ запрацював, і про це треба знати.
+        # увімкнену головну кнопку немає (на прохання); лише відмова. Trade
+        # Manager — інша річ (реальна торгівля), тож його зміна пишеться завжди.
         notify = self._admin_notify or _default_admin_notify
         try:
-            notify(alarm_tg_text(S, side, tf, sig, ok, note))
+            notify(alarm_tg_text(S, side, tf, sig, ok, note, tm=tm_res, tm_act=act))
         except Exception:
             pass
 
@@ -845,7 +970,7 @@ def _default_fetch(sym: str, tf: str, limit: int):
     return get_market_data().fetch_klines(sym, limit=limit, interval=tf)
 
 
-def alarm_tg_text(S, side, tf, sig, ok=True, note='') -> str:
+def alarm_tg_text(S, side, tf, sig, ok=True, note='', tm=None, tm_act='') -> str:
     """⏰ Текст будильника для особистого чату: сигнал без рядка про кнопку."""
     sd = str(side or '').upper()
     lines = [f"⏰ <b>Будильник SBR</b> · #{S} "
@@ -861,6 +986,12 @@ def alarm_tg_text(S, side, tf, sig, ok=True, note='') -> str:
         lines.append(f"🛑 SL: <code>{fmt_price(sig.get('sl'))}</code>")
     if not ok:
         lines.append(f"⚠️ Кнопку {sd} НЕ увімкнено: {note}")
+    if tm is not None:
+        if not tm[0]:
+            lines.append(f"⚠️ Trade Manager НЕ змінено: {tm[1]}")
+        elif tm[2]:
+            lines.append("🏦 Trade Manager → <b>" + ('УВІМКНЕНО' if tm_act == 'on' else 'ВИМКНЕНО')
+                         + "</b>")
     return "\n".join(lines)
 
 
