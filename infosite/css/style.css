@@ -401,3 +401,4 @@ body{font-size:15px}
 .pp-sltf{font:600 9px var(--mono);color:#7dd3fc}
 .pp-sltf.be{color:#4ade80}
 .pp-pin{margin-right:3px}
+.pp-share{font-family:var(--mono,monospace);font-weight:700}.pp-share.hi{color:#20b26c}.pp-share.mid{color:#f7a600}.pp-share.lo{color:#ef454a}

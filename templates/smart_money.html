@@ -12037,7 +12037,7 @@ function reasonLabel(r) {
         'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
         'sbr_exit': '🔔 SBR проти',
         'spring_fired_exit': '💥 Пружина вистрілила',
-        'exh_exit': '🎯 Кульмінація',
+        'exh_exit': '🎯 Досягнення вершини',
         'sbr_trail_exit': '🔔⏳ SBR трейл',
         'signal_exit_and': '🔗 AND (усі проти)',
         'pilot_target': '🎯 Автопілот (ціль)',
@@ -12064,7 +12064,89 @@ function reasonCellHTML(c) {
     const showDetail = rd && rd !== c.reason && rd !== label;
     // Все в ОДИН рядок: підпис + (за потреби) деталь через ·, без переносу.
     const detail = showDetail ? ` · <span style="color:#777">${rd}</span>` : '';
-    return `<td style="color:#aaa;font-size:0.72rem;white-space:nowrap">${label}${detail}</td>`;
+    return `<td style="color:#aaa;font-size:0.72rem;white-space:nowrap">${label}${peakShareHTML(c)}${detail}</td>`;
+}
+
+// 🎯 «Досягнення вершини»: яку частку ПІКУ угоди взято на виході (результат ÷
+// пік × 100, 0..100). Лише для виходу exh_exit; немає піку → null.
+function peakShareOf(c) {
+    if (!c || c.reason !== 'exh_exit') return null;
+    const pk = closedPeakPct(c), fin = Number(c.pnl_pct);
+    if (pk == null || !(pk > 0) || !isFinite(fin)) return null;
+    return Math.max(0, Math.min(100, Math.round(fin / pk * 100)));
+}
+function peakShareHTML(c) {
+    const v = peakShareOf(c);
+    if (v == null) return '';
+    const col = v >= 80 ? '#20b26c' : (v >= 50 ? '#f7a600' : '#ef454a');
+    return ` <b style="color:${col};font-family:monospace" title="Взято ${v}% від вершини (піку) угоди: результат ÷ пік">${v}%</b>`;
+}
+
+// 🏷 Бейдж закритої реальної угоди (картка як у застосунку біржі): монета ·
+// бік ×плече · ROI · ціна входу / виходу. Малюється на canvas → PNG.
+function tmBadgeData(c) {
+    const x = c.exchange || {};
+    const lev = Number(x.leverage || c.leverage || 0) || null;
+    const hasRoi = x.roi_pct != null && isFinite(Number(x.roi_pct));
+    return {
+        symbol: c.symbol, side: c.side, lev,
+        val: hasRoi ? Number(x.roi_pct) : Number(c.pnl_pct || 0),
+        label: hasRoi ? 'ROI' : 'Рух ціни',
+        entry: x.entry_price || c.entry_price, exit: x.exit_price || c.exit_price,
+        when: c.closed_at,
+    };
+}
+function tmBadgeDraw(cv, d) {
+    const W = cv.width, H = cv.height, g = cv.getContext('2d');
+    const bg = g.createLinearGradient(0, 0, W, H);
+    bg.addColorStop(0, '#1b1d24'); bg.addColorStop(1, '#0b0c10');
+    g.fillStyle = bg; g.fillRect(0, 0, W, H);
+    const up = d.val >= 0, col = up ? '#20b26c' : '#ef454a';
+    const glow = g.createRadialGradient(W * 0.8, H * 0.55, 10, W * 0.8, H * 0.55, W * 0.6);
+    glow.addColorStop(0, up ? 'rgba(32,178,108,.28)' : 'rgba(239,69,74,.28)'); glow.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = glow; g.fillRect(0, 0, W, H);
+    const F = 'Inter,-apple-system,Segoe UI,Roboto,sans-serif';
+    g.textBaseline = 'alphabetic';
+    g.fillStyle = '#f7a600'; g.font = '800 34px ' + F; g.fillText('VSV Bot', 44, 78);
+    g.fillStyle = '#fff'; g.font = '700 44px ' + F; g.fillText(d.symbol, 44, 190);
+    const sw = g.measureText(d.symbol).width;
+    const pill = (d.side === 'LONG' ? 'Лонг' : 'Шорт') + (d.lev ? ' ' + d.lev + 'X' : '');
+    g.font = '700 24px ' + F;
+    const pw = g.measureText(pill).width + 28, px = 44 + sw + 18, py = 156;
+    const sc = d.side === 'LONG' ? '#20b26c' : '#ef454a';
+    g.fillStyle = d.side === 'LONG' ? 'rgba(32,178,108,.2)' : 'rgba(239,69,74,.2)';
+    g.beginPath(); (g.roundRect ? g.roundRect(px, py, pw, 42, 10) : g.rect(px, py, pw, 42)); g.fill();
+    g.fillStyle = sc; g.fillText(pill, px + 14, py + 30);
+    g.fillStyle = '#8b8f99'; g.font = '500 26px ' + F; g.fillText(d.label, 44, 270);
+    g.fillStyle = col; g.font = '800 96px ' + F;
+    g.fillText((up ? '+' : '−') + Math.abs(d.val).toFixed(2) + '%', 44, 370);
+    g.fillStyle = '#8b8f99'; g.font = '500 26px ' + F; g.fillText('Ціна входу', 44, 460);
+    g.fillStyle = '#fff'; g.font = '700 36px ' + F; g.fillText(String(fmtPriceJS(d.entry)).replace('$', ''), 44, 506);
+    g.fillStyle = '#8b8f99'; g.font = '500 26px ' + F; g.fillText('Ціна виходу', 44, 580);
+    g.fillStyle = '#fff'; g.font = '700 36px ' + F; g.fillText(String(fmtPriceJS(d.exit)).replace('$', ''), 44, 626);
+    g.fillStyle = '#5b606b'; g.font = '500 22px ' + F;
+    g.fillText(d.when ? _pcFull(d.when) : '', 44, H - 44);
+}
+function tmBadgeOpen(i) {
+    const c = (window._tmClosedRows || [])[i];
+    if (!c) return;
+    let m = document.getElementById('tm-badge-modal');
+    if (!m) {
+        m = document.createElement('div'); m.id = 'tm-badge-modal';
+        m.style.cssText = 'position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center';
+        m.innerHTML = '<div style="background:#17181e;border:1px solid #2b2f36;border-radius:10px;padding:14px;text-align:center">'
+            + '<canvas id="tm-badge-cv" width="640" height="760" style="width:320px;height:380px;border-radius:8px;display:block"></canvas>'
+            + '<div style="margin-top:10px;display:flex;gap:8px;justify-content:center">'
+            + '<a id="tm-badge-dl" class="tm-btn" style="text-decoration:none;padding:5px 12px;border:1px solid #2b2f36;border-radius:6px;color:#f7a600;font-size:0.8rem">⬇ PNG</a>'
+            + '<button onclick="document.getElementById(\'tm-badge-modal\').remove()" style="padding:5px 12px;border:1px solid #2b2f36;border-radius:6px;background:none;color:#aaa;font-size:0.8rem;cursor:pointer">Закрити</button>'
+            + '</div></div>';
+        m.addEventListener('click', e => { if (e.target === m) m.remove(); });
+        document.body.appendChild(m);
+    }
+    const cv = document.getElementById('tm-badge-cv');
+    tmBadgeDraw(cv, tmBadgeData(c));
+    const a = document.getElementById('tm-badge-dl');
+    a.href = cv.toDataURL('image/png'); a.download = c.symbol + '_' + c.side + '_badge.png';
 }
 
 // Inline recap of the at-open decision for closed-trade rows. Compact —
@@ -18775,7 +18857,7 @@ function springFireCellHTML(p) {
 function exhTrailBadgeHTML(p) {
     const t = p && p.exh_trail;
     if (!t || t.stop_px == null) return '';
-    const tip = '🎯 Кульмінація руху (Виснаження угоди ' + (t.pct != null ? t.pct : '—') + '%): '
+    const tip = '🎯 Досягнення вершини руху (Виснаження угоди ' + (t.pct != null ? t.pct : '—') + '%): '
         + 'вершина ' + fmtPriceJS(t.best_px) + ' · стоп ' + fmtPriceJS(t.stop_px)
         + ' · не гірше ' + fmtPriceJS(t.floor_px) + ' — відкат до стопа закриє угоду (веде бот)';
     return `<b title="${tip}" style="margin-left:4px;color:#22d3ee;font-size:0.68rem">🎯 ${fmtPriceJS(t.stop_px)}</b>`;
@@ -19759,6 +19841,7 @@ async function loadTMState(isPoll) {
             window._tmClosedSig = _cSig;
         } else if (window._tmClosedSig !== _cSig) {
             window._tmClosedSig = _cSig;
+            window._tmClosedRows = closed;
             closedTbody.innerHTML = closed.map((c, i) => {
                 const origIdx = rawClosed.length - 1 - i;
                 const pnlClass = c.pnl_pct >= 0 ? 'tm-pnl-pos' : 'tm-pnl-neg';
@@ -19776,7 +19859,7 @@ async function loadTMState(isPoll) {
                     ${closedRealPnlCellHTML(c)}
                     ${peakCellHTML(c)}
                     ${reasonCellHTML(c)}
-                    <td><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMClosed('${c.symbol}', ${JSON.stringify(c.closed_at)}, ${c.exit_price})">✕</button></td>
+                    <td style="white-space:nowrap"><a href="#" class="tm-badge-link" title="Бейдж угоди (картка з ROI) — відкрити / зберегти PNG" style="text-decoration:none;margin-right:6px" onclick="tmBadgeOpen(${i});return false;">🏷</a><button class="tm-delete-btn" title="Delete permanently" onclick="deleteTMClosed('${c.symbol}', ${JSON.stringify(c.closed_at)}, ${c.exit_price})">✕</button></td>
                 </tr>`;
             }).join('');
         }

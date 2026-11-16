@@ -1753,7 +1753,21 @@
         '<td class="r pp-timer" data-since="' + Math.floor(p.opened_at || 0) + '">' + (p.opened_at ? ppTimer(p.opened_at) : "—") + "</td></tr>";
     }).join("");
   }
-  var PP_REASON = { manual: "✋ вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit", manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 автопілот", breakeven: "🟰 беззбиток", sbr_exit: "🔔 протилежний SBR", sbr_trail_exit: "🔔⏳ трейл SBR", opposite_ob_exit: "🧱 протилежний OB", mm_flat_exit: "🧮 МММ ⚖", mm_against_exit: "🧮 МММ проти" };
+  var PP_REASON = { manual: "✋ Закрито вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit", manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 Автопілот: ціль досягнута", breakeven: "🟰 Беззбиток", breakeven_close: "⚖️ Беззбиток", sbr_exit: "🔔 Протилежний сигнал SBR", sbr_trail_exit: "🔔⏳ Трейл після SBR", opposite_ob_exit: "🧱 Новий протилежний OB", mm_flat_exit: "🧮 МММ LiQ ⚖ рівновага", mm_against_exit: "🧮 МММ LiQ проти", reverse_signal: "🔄 Протилежний сигнал (реверс)", reverse_smc: "🔄 Розворот структури", exh_exit: "🎯 Досягнення вершини", spring_fired_exit: "💥 Пружина вистрілила", forecast_1h_exit: "🔮 Прогноз 1H проти", forecast_4h_exit: "🔮 Прогноз 4H проти", forecast_1h_confluence: "🔮 Прогноз 1H + розворот", decision_exit: "🧠 Decision проти", signal_exit_and: "🔗 Усі вердикти проти", htf_flip: "📡 Розворот старшого TF", time_stop: "⏱ Вихід за часом", trailing_stop: "📈 Трейлінг-стоп", external_close: "🌐 Закрито на біржі", auto_gate_wait: "⏸ Пауза Auto-gate", bos_2_partial: "✂️ Часткове BOS-2", bos_3_partial: "✂️ Часткове BOS-3", bos_4_partial: "✂️ Часткове BOS-4", fuel_flipped: "⛽ МММ розвернувся", fuel_faded: "⛽ МММ згас" };
+  // 🎯 «Досягнення вершини»: частка піку угоди, взята на виході (результат ÷ пік).
+  function ppPeakShare(c) {
+    if (!c || c.reason !== "exh_exit") return null;
+    var pk = Number(c.peak_pnl_pct), fin = Number(c.pnl_pct);
+    if (!isFinite(pk) || !isFinite(fin)) return null;
+    if (fin > pk) pk = fin;
+    if (!(pk > 0)) return null;
+    return Math.max(0, Math.min(100, Math.round(fin / pk * 100)));
+  }
+  function ppReason(c) {
+    var t = esc(PP_REASON[c.reason] || c.reason || "—"), v = ppPeakShare(c);
+    if (v == null) return t;
+    return t + ' <b class="pp-share ' + (v >= 80 ? "hi" : v >= 50 ? "mid" : "lo") + '" title="Взято ' + v + '% від вершини (піку) угоди">' + v + "%</b>";
+  }
   function ppRenderClosed(d) {
     var rows = d.closed || [], tb = $("#pp-closed tbody"); $("#pp-closed-n").textContent = rows.length;
     if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">Закритих угод немає</td></tr>'; return; }
@@ -1764,7 +1778,7 @@
         '<td class="r">' + fmtPrice(c.entry_price) + '</td><td class="r">' + fmtPrice(c.exit_price) + "</td>" +
         '<td class="r ' + ppCls(c.net_usd != null ? c.net_usd : pc) + '">' + ppPnlCols(pc, c.net_usd) + "</td>" +
         ppPeak(c) +
-        '<td style="font-family:var(--font)">' + esc(PP_REASON[c.reason] || c.reason || "—") + "</td></tr>";
+        '<td style="font-family:var(--font)">' + ppReason(c) + "</td></tr>";
     }).join("");
   }
   function ppClosedApply() { var on = false; try { on = localStorage.getItem(PP_CL) === "1"; } catch (e) {} $("#pp-closed-body").style.display = on ? "" : "none"; $("#pp-closed-head").setAttribute("aria-expanded", on ? "true" : "false"); }

@@ -243,7 +243,7 @@ def test_exhaustion_climax_exit():
     T = sys.modules['detection.trade_manager']
     _check(T.DEFAULT_SETTINGS['use_exh_exit'] is False, 'дефолт OFF')
     _check(_TM.count('self._exh_exit_tick(symbol, pos, current_price,') == 2, 'обидва монітори')
-    _check(_TM.count("'exh_exit':") >= 2 and "'exh_exit': '🎯 Кульмінація'" in _HTML, 'підписи причини')
+    _check(_TM.count("'exh_exit':") >= 2 and "'exh_exit': '🎯 Досягнення вершини'" in _HTML, 'підписи причини')
     _check('id="tm-use-exh-exit"' in _HTML and 'exhTrailBadgeHTML(p)' in _HTML, 'UI бота')
     _check("'exh_trail'" in _IP and 'pp-exh-st' in _JS, 'інфосайт')
 

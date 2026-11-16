@@ -4611,7 +4611,7 @@ class TradeManager:
                 return False
             pos['exh_trail'] = new
             self._persist_book(is_shadow)
-            msg = (f"🎯 Кульмінація руху: «Виснаження» угоди {new['pct']:g}%"
+            msg = (f"🎯 Досягнення вершини руху: «Виснаження» угоди {new['pct']:g}%"
                    f"{' · сплеск у бік угоди' if vw.get('climax') == side else ''}, "
                    f"ціна {float(current_price):g} — ведемо стоп від вершини "
                    f"{float(new['best_px']):g} на {float(kw['atr_k'] or 0):g}·ATR "
@@ -7630,7 +7630,7 @@ class TradeManager:
             'sbr_exit': '🔔 Протилежний сигнал МММ-SBR після входу',
             'sbr_trail_exit': '🔔⏳ МММ-SBR проти: ціна не продовжила угоду (трейл від ціни сигналу)',
             'spring_fired_exit': '💥 Пружина монети вистрілила після входу',
-            'exh_exit': '🎯 Кульмінація руху: відкат від вершини після сплеску «Виснаження»',
+            'exh_exit': '🎯 Досягнення вершини: відкат від вершини після сплеску «Виснаження»',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
             'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
@@ -10573,7 +10573,7 @@ class TradeManager:
             'sbr_exit': '🔔 SBR проти',
             'sbr_trail_exit': '🔔⏳ SBR трейл',
             'spring_fired_exit': '💥 Пружина вистрілила',
-            'exh_exit': '🎯 Кульмінація',
+            'exh_exit': '🎯 Досягнення вершини',
             'signal_exit_and': '🔗 Signal Exit (AND)',
             'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',
