@@ -160,9 +160,10 @@
     if(T.ind.ema20)T.series.ema20=iw.chart.addLineSeries(Object.assign({color:"#f0b90b",title:"EMA 20"},opts));
     if(T.ind.ema50)T.series.ema50=iw.chart.addLineSeries(Object.assign({color:"#2962ff",title:"EMA 50"},opts));
     if(T.ind.ema200)T.series.ema200=iw.chart.addLineSeries(Object.assign({color:"#ec4899",title:"EMA 200"},opts));
-    if(T.ind.volume){T.series.volume=iw.chart.addHistogramSeries({priceScaleId:"volume",priceFormat:{type:"volume"},lastValueVisible:false,priceLineVisible:false});iw.chart.priceScale("volume").applyOptions({scaleMargins:{top:.82,bottom:0},visible:false})}
+    /* 📊 Обсяг (покупці / продавці) малює app.js — тут лише перемикач. */
+    if(window.VSV_HOOK&&window.VSV_HOOK.volume)window.VSV_HOOK.volume(!!T.ind.volume);
   }
-  function updateIndicators(iw,c){if(!iw||!c)return;var data=c.ohlc||[];[20,50,200].forEach(function(n){var s=T.series["ema"+n];if(s)s.setData(ema(data,n))});if(T.series.volume)T.series.volume.setData(data.map(function(b){return{time:b.time,value:Number(b.volume)||0,color:b.close>=b.open?"rgba(0,187,127,.32)":"rgba(251,44,54,.30)"}}))}
+  function updateIndicators(iw,c){if(!iw||!c)return;var data=c.ohlc||[];[20,50,200].forEach(function(n){var s=T.series["ema"+n];if(s)s.setData(ema(data,n))})}
   function syncIndUI(){document.querySelectorAll("[data-indicator]").forEach(function(c){c.checked=!!T.ind[c.getAttribute("data-indicator")]});var sc=document.getElementById("tv-standard-candles");if(sc)sc.checked=localStorage.getItem("vsv_candle_standard")==="1"}
   function zoom(k){var iw=currentIW();if(!iw||!iw.chart)return;var ts=iw.chart.timeScale(),r=ts.getVisibleLogicalRange();if(!r)return;var mid=(r.from+r.to)/2,w=(r.to-r.from)*k;ts.setVisibleLogicalRange({from:mid-w/2,to:mid+w/2})}
   function closeMenu(){var m=document.getElementById("tv-indicators-menu"),b=document.getElementById("tv-indicators");if(m)m.hidden=true;if(b)b.setAttribute("aria-expanded","false")}

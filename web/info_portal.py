@@ -286,10 +286,25 @@ def ohlc_of(klines, n=OHLC_BARS):
             c = float(k.get('p', k.get('close', 0)))
             out.append({'time': to_sec(k.get('t')),
                         'open': float(k.get('o', c)), 'high': float(k.get('h', c)),
-                        'low': float(k.get('l', c)), 'close': c})
+                        'low': float(k.get('l', c)), 'close': c,
+                        'volume': bar_volume(k, c)})
         except (TypeError, ValueError, AttributeError):
             continue
     return out
+
+
+def bar_volume(k, close=None):
+    """ЧИСТА: обсяг свічки в МОНЕТАХ (як TradingView): поле біржі `q`, інакше
+    обіг $ / ціна закриття. Немає даних → 0."""
+    try:
+        q = float(k.get('q') or 0)
+        if q > 0:
+            return q
+        c = float(close if close is not None else k.get('p', k.get('close', 0)) or 0)
+        v = float(k.get('v') or 0)
+        return (v / c) if (c > 0 and v > 0) else 0.0
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
 
 
 IMB_SHOW = 16               # скільки невідпрацьованих IMB малюємо (15.11: 12→16 — як у TV видно всю серію)
@@ -394,6 +409,144 @@ def _imb_sub_split(sym, tf, t_ms):
     return sp
 
 
+# ── 📊 ОБСЯГ: покупці / продавці в кожній свічці (16.11) ──────────────────
+# Історія: обсяг свічки розкладається за ПІДСВІЧКАМИ Bybit (зелена підсвічка →
+# покупці, червона → продавці) — той самий метод, що «Volume Delta» у
+# TradingView і що вже дає відсотки IMB (`split_from_subbars`). Живу свічку
+# браузер уточнює СПРАВЖНІМИ угодами (publicTrade Bybit, сторона тейкера).
+# На 15m / 30m / 1h підсвічка = TF/10 (як у Pine → число збігається з IMB);
+# на 4h / 1d — крупніша, щоб перше заповнення не коштувало десятків запитів.
+VOL_SUB_MIN = {'4h': 15, '1d': 60}
+VOL_TTL = 30.0               # жива свічка: оновлення розкладу
+VOL_PAGE = 1000              # барів Bybit на запит
+VOL_PAGES_PER_PASS = 4       # запитів за один прохід потоку (найновіші бари — першими)
+
+
+def vol_sub_plan(tf):
+    """ЧИСТА: (підсвічка хв, базовий інтервал Bybit хв) для TF графіка."""
+    t = str(tf or '').lower()
+    sub = VOL_SUB_MIN.get(t)
+    if not sub:
+        from detection.imbalance import pine_sub_minutes
+        sub = pine_sub_minutes(bar_sec(t))
+    return int(sub), int(sub_base_interval(int(sub)))
+
+
+def _sig6(x):
+    try:
+        return float('%.6g' % float(x))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def vol_split_rows(rows, tf, sub, base):
+    """ЧИСТА: бари `base` хв → {t свічки графіка (сек): (покупці, продавці)}."""
+    from detection.imbalance import split_from_subbars
+    bs = bar_sec(tf)
+    groups = {}
+    for r in rows or []:
+        try:
+            groups.setdefault(int(r['t']) // 1000 // bs * bs, []).append(r)
+        except (KeyError, TypeError, ValueError):
+            continue
+    out = {}
+    for t, g in groups.items():
+        b, s = split_from_subbars(group_subbars(g, base, sub, t * 1000))
+        out[t] = (_sig6(b), _sig6(s))
+    return out
+
+
+def vol_step(prev, tf, now, fetch, pages=VOL_PAGES_PER_PASS, bars=OHLC_BARS, page=VOL_PAGE):
+    """Один прохід розкладу обсягу. `fetch(base_min, end_ms)` → до `page`
+    найновіших барів Bybit із t ≤ end_ms ([{t, o, p, v}], будь-який порядок).
+    Заповнює ВІД НАЙНОВІШИХ: спершу жива свічка і свіжі закриті, далі історія
+    вглиб — не більше `pages` запитів за прохід. Уже пораховані закриті свічки
+    не перезапитуються (свічка закрита → розклад остаточний).
+    → {'sub', 'sp': {t: (b, s)}, 'lo', 'hi', 'live': {t, b, s, asof}, 'done'}."""
+    bs = bar_sec(tf)
+    sub, base = vol_sub_plan(tf)
+    t_live = int(now // bs) * bs
+    t_from = t_live - (int(bars) - 1) * bs
+    prev = prev or {}
+    sp, lo, hi = {}, None, None
+    if prev.get('sub') == sub and prev.get('lo') is not None and prev.get('hi') is not None \
+            and int(prev['hi']) > t_from:
+        lo, hi = max(int(prev['lo']), t_from), int(prev['hi'])
+        sp = {int(t): tuple(v) for t, v in (prev.get('sp') or {}).items() if lo <= int(t) < hi}
+    budget = [max(1, int(pages))]
+
+    def fill(end_ms, floor_s):
+        """Сторінки вниз від end_ms до межі floor_s. → (рядки, досягнута межа сек)."""
+        rows, reached = [], None
+        while budget[0] > 0:
+            budget[0] -= 1
+            pg = [r for r in (fetch(base, int(end_ms)) or []) if r.get('t') is not None]
+            if not pg:
+                return rows, floor_s                    # глибшої історії немає
+            oldest = min(int(r['t']) for r in pg)
+            if oldest <= floor_s * 1000 or len(pg) < page:
+                rows += [r for r in pg if int(r['t']) >= floor_s * 1000]
+                return rows, floor_s
+            cut = -(-oldest // (bs * 1000)) * bs        # перша ПОВНІСТЮ покрита свічка
+            if cut * 1000 > end_ms:
+                return rows, floor_s                    # сторінка не вміщає й однієї свічки
+            rows += [r for r in pg if int(r['t']) >= cut * 1000]
+            reached, end_ms = cut, cut * 1000 - 1
+        return rows, reached
+
+    now_ms = int(now * 1000)
+    live = prev.get('live') if (prev.get('live') or {}).get('t') == t_live else None
+    # А) жива свічка + нові закриті (від «зараз» униз до вже покритого)
+    rows, reached = fill(now_ms, hi if hi is not None else t_from)
+    if reached is not None:
+        got = vol_split_rows(rows, tf, sub, base)
+        lv = got.pop(t_live, None)
+        live = {'t': t_live, 'b': (lv or (0.0, 0.0))[0], 's': (lv or (0.0, 0.0))[1], 'asof': now_ms}
+        if hi is None or reached > hi:                  # старе покриття не дістали → нове
+            sp, lo = {}, reached
+        sp.update({t: v for t, v in got.items() if t < t_live})
+        hi = t_live
+        # Б) історія вглиб, поки є бюджет запитів
+        if lo > t_from and budget[0] > 0:
+            rows, reached = fill(lo * 1000 - 1, t_from)
+            if reached is not None:
+                sp.update({t: v for t, v in vol_split_rows(rows, tf, sub, base).items()
+                           if reached <= t < lo})
+                lo = reached
+    if lo is None:
+        return {'sub': sub, 'sp': {}, 'lo': None, 'hi': None, 'live': None, 'done': False}
+    return {'sub': sub, 'sp': sp, 'lo': lo, 'hi': hi, 'live': live, 'done': lo <= t_from}
+
+
+def vol_view(data, ohlc):
+    """ЧИСТА: розклад → на графік: `m` = [[t, покупці, продавці], …] лише для
+    свічок графіка; `live` — жива свічка на момент `asof` (далі її веде браузер
+    справжніми угодами); `fill` — історія ще дозаповнюється."""
+    if not data or data.get('lo') is None:
+        return None
+    sp = data.get('sp') or {}
+    m = []
+    for b in ohlc or []:
+        v = sp.get(b.get('time'))
+        if v and (v[0] > 0 or v[1] > 0):
+            m.append([b['time'], v[0], v[1]])
+    return {'sub': data.get('sub'), 'm': m, 'live': data.get('live'),
+            'fill': not data.get('done')}
+
+
+def _vol_fetch(md):
+    def fetch(base, end_ms):
+        r = md._session.get(BB_KLINE_URL, params={
+            'category': 'linear', 'symbol': fetch.sym, 'interval': str(int(base)),
+            'end': int(end_ms), 'limit': VOL_PAGE}, timeout=10)
+        if r.status_code != 200:
+            raise ValueError('біржа не віддала підсвічки (HTTP %s)' % r.status_code)
+        rows = (r.json().get('result') or {}).get('list') or []
+        return [{'t': int(x[0]), 'o': float(x[1]), 'p': float(x[4]), 'v': float(x[5])}
+                for x in rows]
+    return fetch
+
+
 def imb_of(klines, tf, now=None, sym=None, hist=None):
     """📐 IMB = «PRO Volumatic FVG» Pine-скрипту користувача (15.11, 1:1):
     той самий покроковий прогін (фільтр розміру від 1000-барного максимуму,
@@ -466,7 +619,8 @@ def sig_of(payload):
         (payload.get('pd') or {}).get('pct'), (payload.get('poc') or {}).get('poc'),
         ((payload.get('shl') or {}).get('high') or {}).get('price'),
         ((payload.get('shl') or {}).get('low') or {}).get('price'),
-        *[((payload.get('sbr_last') or {}).get(t) or {}).get('t') for t in SBR_TFS]))
+        *[((payload.get('sbr_last') or {}).get(t) or {}).get('t') for t in SBR_TFS],
+        len((payload.get('vsplit') or {}).get('m') or []) if payload.get('vsplit') else '-'))
 
 
 def due(kind, rec, now):
@@ -725,6 +879,14 @@ def _compute(sc, kind, sym, tf):
             _imb_sub_split(sym, tf, int(hk[-1]['t']))   # середня свічка для гепу на живому барі
         until = next_close(now, tf)
         return {'kl': hk}, (min(until, now + 120) if miss else until)
+    if kind == 'vol':
+        # 📊 Розклад обсягу свічок (покупці / продавці) за підсвічками Bybit.
+        f = _vol_fetch(md)
+        f.sym = sym
+        d = vol_step(_get(('vol', sym, tf)).get('data'), tf, now, f)
+        if d.get('lo') is None:
+            raise ValueError('немає підсвічок ' + tf.upper())
+        return d, (now + VOL_TTL if d.get('done') else now)
     if kind == 'ob':
         from detection.smc_structure import detect_smc_structure
         from detection.ob_detector import detect_order_blocks
@@ -1037,7 +1199,7 @@ def rows_for(symbols, sc=None):
 
 
 def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, poc_tf=None,
-                 hl_tf=None):
+                 hl_tf=None, vol=False):
     sc = sc or _scanner()
     sym = norm_symbol(sym)
     if not sc:
@@ -1052,7 +1214,8 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
     hl_tf = norm_tf(hl_tf, HL_TFS, OFF, allow_off=True)
     in_bot = _in_bot(sc, sym)
     _vp = info_vob_params(getattr(sc, '_settings', None))
-    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf, hl_tf, _vp['on'], _vp['pk'])
+    vol = bool(vol)
+    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf, hl_tf, _vp['on'], _vp['pk'], vol)
     now = time.time()
     with _lock:
         hit = _coin_cache.get(ck)
@@ -1060,7 +1223,7 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         # частини все одно «просимо», інакше кеш потоку їх забуде
         for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf if _vp['on'] else OFF),
                      ('shl', shl_tf(sc)), ('imb', tf),
-                     ('hl', hl_tf)):
+                     ('hl', hl_tf), ('vol', tf if vol else OFF)):
             if t != OFF and _bot_part(sc, k, sym, t) is None:
                 want((k, sym, t))
         for t in SBR_TFS:
@@ -1090,6 +1253,11 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
     if hl_tf != OFF:
         d, _e = part(sc, 'hl', sym, hl_tf)
         hl, hl_wait = list((d or {}).get('pts') or []), d is None
+    vsplit, vol_wait = None, False
+    if vol and ohlc:
+        d, _e = part(sc, 'vol', sym, tf)
+        vsplit = vol_view(d, ohlc)
+        vol_wait = vsplit is None and not _e
     if ohlc:
         reason = ''
     elif err:
@@ -1121,9 +1289,10 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         'sbr_last': sbr_last,
         'ob': ob, 'vob': vob, 'ob_wait': ob_wait, 'vob_wait': vob_wait,
         'pd': _pd(sc, sym), 'poc': poc, 'poc_state': _st, 'shl': shl, 'ts': now,
+        'vsplit': vsplit, 'vol_wait': vol_wait,
     }
     payload['sig'] = sig_of(payload)
-    if not ohlc or ob_wait or vob_wait or hl_wait:
+    if not ohlc or ob_wait or vob_wait or hl_wait or vol_wait:
         return payload                 # «рахується» не кешуємо
     with _lock:
         _coin_cache[ck] = (now, payload)
@@ -2013,7 +2182,8 @@ def register_info_portal(app):
         a = request.args
         p = coin_payload(a.get('symbol') or '', tf=a.get('tf'), ob_tf=a.get('ob_tf'),
                          vob_tf=a.get('vob_tf'), poc_days=a.get('poc_days'),
-                         poc_tf=a.get('poc_tf'), hl_tf=a.get('hl_tf'))
+                         poc_tf=a.get('poc_tf'), hl_tf=a.get('hl_tf'),
+                         vol=str(a.get('vol') or '') in ('1', 'true'))
         if p.get('ok') and a.get('sig') and a.get('sig') == p.get('sig'):
             return jsonify({'ok': True, 'same': True, 'sig': p['sig']})
         return jsonify(p)

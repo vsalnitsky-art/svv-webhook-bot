@@ -37,7 +37,7 @@ def test_compute_and_payload_use_the_infosite_params():
     assert "if vp['own']:" in IP                       # пам'ять сканера — лише за однакових параметрів
     assert "if vob_tf != OFF and vp['on']:" in IP      # вимкнено → VOB не рахується
     assert "d.get('pk') != vp['pk']" in IP             # чужий кеш не показуємо
-    assert "_vp['on'], _vp['pk'])" in IP               # і кеш відповіді теж
+    assert "_vp['on'], _vp['pk']" in IP                # і кеш відповіді теж
 
 
 def test_bot_detector_does_not_read_infosite_keys():

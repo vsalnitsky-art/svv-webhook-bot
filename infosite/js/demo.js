@@ -24,7 +24,9 @@
   }
   function coin(q){
     var sym=q.get("symbol")||"BTCUSDT",tf=q.get("tf")||"15m",o=candles(sym,tf),last=o[o.length-1].close,step={"15m":900,"30m":1800,"1h":3600,"4h":14400,"1d":86400}[tf]||900;
-    return{ok:true,symbol:sym,tf:tf,ohlc:o,sig:"demo-"+sym+tf,pd:{zone:"discount",pct:38,tf:"4H"},poc:{poc:last*.985,dist_pct:1.52,rel:"below",days:Number(q.get("poc_days"))||7,tf:q.get("poc_tf")||"1h"},
+    var vseed=hash(sym+tf+"v");function vr(){vseed=(Math.imul(vseed,1664525)+1013904223)>>>0;return vseed/4294967296}
+    var vm=o.slice(0,-1).map(function(b){var up=b.close>=b.open,sh=Math.max(.08,Math.min(.92,(up?.58:.42)+(vr()-.5)*.36));return[b.time,b.volume*sh,b.volume*(1-sh)]}),lb=o[o.length-1];
+    return{ok:true,symbol:sym,tf:tf,ohlc:o,vsplit:{sub:{"15m":2,"30m":3,"1h":6,"4h":15,"1d":60}[tf]||2,m:vm,live:{t:lb.time,b:lb.volume*.61,s:lb.volume*.39,asof:Date.now()},fill:false},sig:"demo-"+sym+tf,pd:{zone:"discount",pct:38,tf:"4H"},poc:{poc:last*.985,dist_pct:1.52,rel:"below",days:Number(q.get("poc_days"))||7,tf:q.get("poc_tf")||"1h"},
       vob:[{start:o[62].time,top:last*1.008,bottom:last*.994,side:"LONG",breaker:false,volume:1845230,hi_pct:64,lo_pct:36,tf:q.get("vob_tf")||"5m"},{start:o[139].time,top:last*1.023,bottom:last*1.014,side:"SHORT",breaker:false,volume:982400,hi_pct:71,lo_pct:29,tf:q.get("vob_tf")||"5m"}],
       ob:[{start:o[88].time,top:last*.997,bottom:last*.988,side:"LONG",fam:"swing",tag:"confirmed"},{start:o[170].time,top:last*1.017,bottom:last*1.009,side:"SHORT",fam:"int",tag:"fresh"}],
       imb:[{start:o[185].time,top:last*1.005,bottom:last*1.001,side:"LONG",vol:734200,sell_pct:38,buy_pct:62}],events:[{from:o[105].time,to:o[148].time,level:last*1.012,dir:"bear",tag:"CHoCH"},{from:o[156].time,to:o[204].time,level:last*.997,dir:"bull",tag:"BOS"}],

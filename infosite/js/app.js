@@ -1393,12 +1393,15 @@
     if (!(t > 0) || !(c > 0) || !(h > 0) || !(l > 0)) return null;
     return { time: t, open: o, high: h, low: l, close: c, confirm: !!k.confirm };
   }
-  function LiveKline(onBar) { this.onBar = onBar; this.ws = null; this.key = ""; this.retry = 0; this.ping = null; this.rt = null; this.last = 0; }
-  LiveKline.prototype.set = function (sym, tf) {
+  function LiveKline(onBar, onTrade) { this.onBar = onBar; this.onTrade = onTrade || null; this.ws = null; this.key = ""; this.tkey = ""; this.t0 = 0; this.retry = 0; this.ping = null; this.rt = null; this.last = 0; }
+  /* trades=true → у тому самому зʼєднанні ще й publicTrade.<SYM> (кожна угода
+     зі стороною тейкера) — для розкладу обсягу живої свічки. */
+  LiveKline.prototype.set = function (sym, tf, trades) {
     var iv = liveIv(tf), s = String(sym || "").toUpperCase();
     var key = (iv && /^[A-Z0-9]+USDT$/.test(s)) ? "kline." + iv + "." + s : "";
-    if (key === this.key) return;
-    this.key = key; this.retry = 0; this._close();
+    var tkey = (key && trades) ? "publicTrade." + s : "";
+    if (key === this.key && tkey === this.tkey) return;
+    this.key = key; this.tkey = tkey; this.retry = 0; this._close();
     if (key) this._open();
   };
   LiveKline.prototype._close = function () {
@@ -1412,16 +1415,21 @@
     this.ws = ws;
     ws.onopen = function () {
       if (self.ws !== ws) return;
-      self.retry = 0;
-      ws.send(JSON.stringify({ op: "subscribe", args: [key] }));
+      self.retry = 0; self.t0 = 0;
+      ws.send(JSON.stringify({ op: "subscribe", args: self.tkey ? [key, self.tkey] : [key] }));
       self.ping = setInterval(function () { try { ws.send('{"op":"ping"}'); } catch (e) {} }, 20000);
     };
     ws.onmessage = function (ev) {
       if (self.ws !== ws) return;
       var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
-      if (!m || m.topic !== key || !m.data) return;
+      if (!m || !m.topic || !m.data) return;
+      /* t0 — час БІРЖІ першого повідомлення після (пере)підключення: від нього
+         потік без розривів (годинник ПК тут не бере участі). */
+      if (!self.t0 && Number(m.ts) > 0) self.t0 = Number(m.ts);
+      if (self.tkey && m.topic === self.tkey) { if (self.onTrade) { try { self.onTrade(self.tkey, m.data, self.t0); } catch (e) { console.error("[live]", e); } } return; }
+      if (m.topic !== key) return;
       self.last = Date.now();
-      for (var i = 0; i < m.data.length; i++) { var b = liveBarOf(m.data[i]); if (b) { try { self.onBar(key, b); } catch (e) { console.error("[live]", e); } } }
+      for (var i = 0; i < m.data.length; i++) { var b = liveBarOf(m.data[i]); if (b) { var q = Number(m.data[i].volume); if (q >= 0) b.volume = q; try { self.onBar(key, b); } catch (e) { console.error("[live]", e); } } }
     };
     ws.onerror = function () {};
     ws.onclose = function () { if (self.ws === ws) { self.ws = null; clearInterval(self.ping); self.ping = null; self._later(); } };
@@ -1440,13 +1448,13 @@
     var b = IW.liveBar, o = c && c.ohlc;
     if (!b || !o || !o.length || !IW.live || !IW.live.ok() || b.key !== liveKeyOf(c.symbol, c.tf)) return {};
     var last = o[o.length - 1];
-    if (b.time === last.time) { last.open = b.open; last.high = b.high; last.low = b.low; last.close = b.close; return { same: true }; }
-    if (b.time > last.time) { o.push({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close }); return { ahead: true, bar: b }; }
+    if (b.time === last.time) { last.open = b.open; last.high = b.high; last.low = b.low; last.close = b.close; if (b.volume != null) last.volume = b.volume; return { same: true }; }
+    if (b.time > last.time) { o.push({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0 }); return { ahead: true, bar: b }; }
     return {};
   }
   function liveSet(c) {
-    if (!IW.live) IW.live = new LiveKline(onLiveBar);
-    IW.live.set(c && c.symbol, c && c.tf);
+    if (!IW.live) IW.live = new LiveKline(onLiveBar, onLiveTrades);
+    IW.live.set(c && c.symbol, c && c.tf, VOL.on);
   }
   var liveUiAt = 0;
   function onLiveBar(key, b) {
@@ -1456,11 +1464,235 @@
     if (b.time < last.time) return;
     b.key = key; IW.liveBar = b;
     var bar = { time: b.time, open: b.open, high: b.high, low: b.low, close: b.close };
-    if (b.time === last.time) { last.open = b.open; last.high = b.high; last.low = b.low; last.close = b.close; }
-    else o.push({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close });
+    if (b.time === last.time) { last.open = b.open; last.high = b.high; last.low = b.low; last.close = b.close; if (b.volume != null) last.volume = b.volume; }
+    else o.push({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume || 0 });
     try { IW.series.update(bar); } catch (e) { return; }
+    volLive();
     var now = Date.now();
     if (now - liveUiAt >= 1000) { liveUiAt = now; try { renderHead(); renderList(); } catch (e) {} }
+  }
+
+  /* 📊 16.11 ОБСЯГ: ПОКУПЦІ / ПРОДАВЦІ В КОЖНІЙ СВІЧЦІ.
+     Стовпчик = обсяг свічки (монети, як у TradingView); знизу — частка
+     агресивних ПОКУПЦІВ (зелена), зверху — ПРОДАВЦІВ (червона); бік, якого
+     було більше, — насичений. Джерела розкладу, за точністю:
+       ⚡ tape — справжні угоди Bybit (publicTrade, сторона тейкера), коли потік
+                 покрив свічку з її відкриття: точно;
+       ⚡≈ mix — свічка, посеред якої відкрили сторінку: оцінка сервера до
+                 моменту asof + справжні угоди після;
+       ≈ sub  — історія: підсвічки Bybit (зелена → покупці, червона → продавці),
+                 рахує сервер бота, спільний кеш на всіх.
+     Малює РІДНА серія графіка (custom series): прокрутка, масштаб, зміна
+     розміру й автошкала — тим самим проходом, що й свічки. */
+  var VOL_UP = "0,187,127", VOL_DN = "251,44,54", VOL_NA = "128,138,157", VOL_TOP = 0.82;
+  function volOn() { try { return JSON.parse(localStorage.getItem("vsv_chart_indicators") || "{}").volume !== false; } catch (e) { return true; } }
+  var VOL = { on: volOn(), chart: null, series: null, plain: false, key: "", srv: {}, sub: 0, fill: false, wait: false, base: null, tape: null, rows: [], idx: {}, hover: null, lg: null, tm: null };
+  function volTfSec(tf) { var t = String(tf || "").toLowerCase(), n = parseInt(t, 10) || 1, u = t.slice(-1); return n * (u === "d" ? 86400 : u === "h" ? 3600 : 60); }
+  /* Стрічка угод: t0 — час біржі, з якого потік БЕЗ розривів; bars[t] = {b, s,
+     full, p}. full — потік покрив свічку з відкриття. Для неповної свічки
+     угоди памʼятаються шматками по 5 с (p), щоб додати до оцінки сервера лише
+     те, що було ПІСЛЯ її asof. */
+  function volTapeNew(key, t0) { return { key: key, t0: Number(t0) || 0, bars: {}, last: 0 }; }
+  function volTapeAdd(tape, T, side, v, bs) {
+    T = Number(T); v = Number(v);
+    if (!tape || !(T > 0) || !(v > 0) || !(bs > 0)) return;
+    var t = Math.floor(T / 1000 / bs) * bs, r = tape.bars[t];
+    if (!r) r = tape.bars[t] = { b: 0, s: 0, full: tape.t0 > 0 && tape.t0 <= t * 1000, p: [] };
+    var buy = String(side) === "Buy";
+    if (buy) r.b += v; else r.s += v;
+    if (!r.full) {
+      var k = Math.floor(T / 5000) * 5, q = r.p.length ? r.p[r.p.length - 1] : null;
+      if (!q || q[0] !== k) { q = [k, 0, 0]; r.p.push(q); }
+      if (buy) q[1] += v; else q[2] += v;
+    }
+  }
+  /* Розрив потоку: точні ЗАКРИТІ свічки зберігаються, поточна — починає знову. */
+  function volTapeCarry(old, fresh, liveT) {
+    if (!old || !fresh) return fresh;
+    Object.keys(old.bars).forEach(function (t) { var r = old.bars[t]; if (r.full && Number(t) < liveT) fresh.bars[t] = { b: r.b, s: r.s, full: true, p: [] }; });
+    return fresh;
+  }
+  /* Розклад однієї свічки → {buy, sell, src} | null (даних ще немає). */
+  function volSplit(t, srv, base, tape) {
+    var r = tape && tape.bars[t];
+    if (r && r.full && r.b + r.s > 0) return { buy: r.b, sell: r.s, src: "tape" };
+    if (base && base.t === t) {
+      var b = Number(base.b) || 0, s = Number(base.s) || 0, mix = false;
+      if (r) for (var i = 0; i < r.p.length; i++) if (r.p[i][0] * 1000 >= base.asof) { b += r.p[i][1]; s += r.p[i][2]; mix = true; }
+      if (b + s > 0) return { buy: b, sell: s, src: mix ? "mix" : "sub" };
+    }
+    var v = srv && srv[t];
+    if (v && v[0] + v[1] > 0) return { buy: v[0], sell: v[1], src: "sub" };
+    if (r && r.b + r.s > 0) return { buy: r.b, sell: r.s, src: "part" };
+    return null;
+  }
+  /* Рядок серії: value — обсяг свічки; buy — ЧАСТКА покупців 0..1 (null — невідомо). */
+  function volRow(bar, srv, base, tape) {
+    var sp = volSplit(bar.time, srv, base, tape), sum = sp ? sp.buy + sp.sell : 0, tot = Number(bar.volume) || 0;
+    if (!(tot > 0)) tot = sum;
+    var share = sp ? sp.buy / sum : null;
+    return { time: bar.time, value: tot, buy: share, src: sp ? sp.src : "", color: "rgba(" + (share == null ? VOL_NA : share >= 0.5 ? VOL_UP : VOL_DN) + ",.55)" };
+  }
+  /* Ширина стовпчика = ширина тіла свічки бібліотеки (той самий розрахунок),
+     тож стовпчики стоять рівно під свічками на будь-якому масштабі. */
+  function volBarW(spacing, pr) {
+    if (spacing >= 2.5 && spacing <= 4) return Math.max(1, Math.floor(3 * pr));
+    var k = 1 - 0.2 * Math.atan(Math.max(4, spacing) - 4) / (Math.PI * 0.5);
+    var w = Math.max(Math.floor(pr), Math.min(Math.floor(spacing * k * pr), Math.floor(spacing * pr)));
+    if (w >= 2 && (Math.floor(pr) % 2) !== (w % 2)) w--;
+    return Math.max(1, w);
+  }
+  /* Геометрія одного стовпчика у пікселях полотна: покупці знизу, продавці зверху. */
+  function volBarGeom(y0, yTop, share) {
+    var h = Math.max(1, y0 - yTop);
+    if (share == null) return { h: h, buy: 0, sell: h, gap: 0 };
+    var hb = Math.round(h * Math.max(0, Math.min(1, share)));
+    if (share > 0 && hb < 1 && h >= 2) hb = 1;
+    if (share < 1 && hb > h - 1 && h >= 2) hb = h - 1;
+    var gap = (h >= 8 && hb > 1 && h - hb > 1) ? 1 : 0;
+    return { h: h, buy: hb, sell: h - hb - gap, gap: gap };
+  }
+  function VolRenderer() { this.d = null; }
+  VolRenderer.prototype.update = function (d) { this.d = d; };
+  VolRenderer.prototype.draw = function (target, toY) {
+    var d = this.d;
+    if (!d || !d.bars || !d.bars.length || !d.visibleRange) return;
+    target.useBitmapCoordinateSpace(function (sc) {
+      var ctx = sc.context, hr = sc.horizontalPixelRatio, vr = sc.verticalPixelRatio, y0c = toY(0);
+      if (y0c == null) return;
+      var y0 = Math.round(y0c * vr), w = volBarW(d.barSpacing, hr), half = Math.floor(w / 2);
+      var from = Math.max(0, d.visibleRange.from), to = Math.min(d.bars.length, d.visibleRange.to);
+      for (var i = from; i < to; i++) {
+        var b = d.bars[i], r = b.originalData, v = Number(r.value);
+        if (!(v > 0)) continue;
+        var yc = toY(v); if (yc == null) continue;
+        var g = volBarGeom(y0, Math.min(Math.round(yc * vr), y0 - 1), r.buy), x = Math.round(b.x * hr) - half;
+        if (r.buy == null) { ctx.fillStyle = "rgba(" + VOL_NA + ",.38)"; ctx.fillRect(x, y0 - g.h, w, g.h); continue; }
+        var up = r.buy >= 0.5;
+        if (g.sell > 0) { ctx.fillStyle = "rgba(" + VOL_DN + "," + (up ? ".30" : ".80") + ")"; ctx.fillRect(x, y0 - g.h, w, g.sell); }
+        if (g.buy > 0) { ctx.fillStyle = "rgba(" + VOL_UP + "," + (up ? ".80" : ".30") + ")"; ctx.fillRect(x, y0 - g.buy, w, g.buy); }
+      }
+    });
+  };
+  function VolPane() { this.r = new VolRenderer(); }
+  VolPane.prototype.priceValueBuilder = function (row) { return [0, Number(row.value) || 0]; };
+  VolPane.prototype.isWhitespace = function (row) { return row.value == null; };
+  VolPane.prototype.renderer = function () { return this.r; };
+  VolPane.prototype.update = function (data) { this.r.update(data); };
+  VolPane.prototype.defaultOptions = function () { return Object.assign({}, window.LightweightCharts.customSeriesDefaultOptions || {}); };
+
+  function volEnsure() {
+    if (!IW.chart) return;
+    if (VOL.chart !== IW.chart) {
+      VOL.chart = IW.chart; VOL.series = null; VOL.hover = null;
+      IW.chart.subscribeCrosshairMove(function (p) { VOL.hover = (p && p.time != null && p.point) ? p.time : null; volLegend(); });
+    }
+    if (VOL.on && !VOL.series) {
+      var opt = { priceScaleId: "volume", priceFormat: { type: "volume" }, lastValueVisible: false, priceLineVisible: false };
+      VOL.plain = !IW.chart.addCustomSeries;
+      VOL.series = VOL.plain ? IW.chart.addHistogramSeries(opt) : IW.chart.addCustomSeries(new VolPane(), opt);
+      IW.chart.priceScale("volume").applyOptions({ scaleMargins: { top: VOL_TOP, bottom: 0 }, visible: false });
+    } else if (!VOL.on && VOL.series) {
+      try { IW.chart.removeSeries(VOL.series); } catch (e) {}
+      VOL.series = null; VOL.rows = []; VOL.idx = {};
+    }
+    if (!VOL.on) volLegend();
+  }
+  function volRebuild(c) {
+    var o = (c && c.ohlc) || [], rows = [], idx = {};
+    for (var i = 0; i < o.length; i++) { var r = volRow(o[i], VOL.srv, VOL.base, VOL.tape); rows.push(r); idx[r.time] = r; }
+    VOL.rows = rows; VOL.idx = idx;
+    try { VOL.series.setData(rows); } catch (e) { console.error("[vol]", e); }
+  }
+  /* Нові дані сервера: розклад історії + оцінка живої свічки. */
+  function volApply(c) {
+    volEnsure();
+    if (!VOL.on || !VOL.series || !c) return;
+    var key = c.symbol + "|" + c.tf;
+    if (VOL.key !== key) { VOL.key = key; VOL.srv = {}; VOL.base = null; VOL.sub = 0; if (VOL.tape && VOL.tape.key !== volTapeKey(c)) VOL.tape = null; }
+    var vs = c.vsplit;
+    VOL.wait = !!c.vol_wait; VOL.fill = !!(vs && vs.fill);
+    if (vs) {
+      var m = {}, a = vs.m || [];
+      for (var i = 0; i < a.length; i++) m[a[i][0]] = [Number(a[i][1]) || 0, Number(a[i][2]) || 0];
+      VOL.srv = m; VOL.sub = Number(vs.sub) || 0;
+      var lv = vs.live, tp = VOL.tape, alive = !!tp && Date.now() - tp.last < 20000;
+      /* Оцінка живої свічки береться ОДИН раз (далі її уточнюють угоди); якщо
+         потоку немає — завжди найсвіжіша. Свічку, покриту потоком повністю,
+         оцінка не чіпає. */
+      if (lv && lv.t > 0 && !(tp && tp.bars[lv.t] && tp.bars[lv.t].full) && (!VOL.base || VOL.base.t !== lv.t || !alive))
+        VOL.base = { t: lv.t, b: Number(lv.b) || 0, s: Number(lv.s) || 0, asof: Number(lv.asof) || 0 };
+    }
+    volRebuild(c); volLegend();
+  }
+  function volTapeKey(c) { return "publicTrade." + String((c && c.symbol) || "").toUpperCase() + "|" + volTfSec(c && c.tf); }
+  function onLiveTrades(tkey, data, t0) {
+    var c = IW.coin;
+    if (!VOL.on || !c || !data || tkey !== "publicTrade." + String(c.symbol || "").toUpperCase()) return;
+    var bs = volTfSec(c.tf), id = volTapeKey(c);
+    if (!VOL.tape || VOL.tape.key !== id || VOL.tape.t0 !== t0) {
+      var old = (VOL.tape && VOL.tape.key === id) ? VOL.tape : null, o = c.ohlc || [];
+      VOL.tape = volTapeCarry(old, volTapeNew(id, t0), o.length ? o[o.length - 1].time : 0);
+      if (old) { VOL.base = null; IW.sig = ""; setTimeout(function () { try { loadCoin(false, true); } catch (e) {} }, 1500); }
+    }
+    for (var i = 0; i < data.length; i++) volTapeAdd(VOL.tape, data[i].T, data[i].S, data[i].v, bs);
+    VOL.tape.last = Date.now();
+    volLive();
+  }
+  /* Жива свічка: не частіше ніж раз на 400 мс (угод — сотні на секунду). */
+  function volLive() {
+    if (!VOL.on || !VOL.series || VOL.tm) return;
+    VOL.tm = setTimeout(function () { VOL.tm = null; try { volLiveNow(); } catch (e) { console.error("[vol]", e); } }, 400);
+  }
+  function volLiveNow() {
+    var c = IW.coin, o = c && c.ohlc;
+    if (!VOL.on || !VOL.series || !o || !o.length || VOL.key !== c.symbol + "|" + c.tf) return;
+    var last = o[o.length - 1], n = VOL.rows.length;
+    /* нова свічка → попередня дістає остаточний розклад (повна перебудова, 400 рядків) */
+    if (!n || VOL.rows[n - 1].time !== last.time) { volRebuild(c); volLegend(); return; }
+    var r = volRow(last, VOL.srv, VOL.base, VOL.tape);
+    VOL.rows[n - 1] = r; VOL.idx[r.time] = r;
+    try { VOL.series.update(r); } catch (e) { volRebuild(c); }
+    if (VOL.hover == null || VOL.hover === r.time) volLegend();
+  }
+  var VOL_SRC = {
+    tape: ["⚡ угоди", "Точно: кожна угода Bybit за цю свічку, сторона — хто бив по ринку (тейкер)."],
+    mix: ["⚡≈ угоди + оцінка", "Свічку відкрито до завантаження сторінки: початок — оцінка за підсвічками, далі — справжні угоди Bybit."],
+    part: ["⚡ частково", "Лише угоди, що пройшли після відкриття сторінки (оцінка сервера ще не надійшла)."],
+    sub: ["≈ підсвічки", "Оцінка за підсвічками Bybit всередині свічки: зелена підсвічка → покупці, червона → продавці."]
+  };
+  function volLegendHTML(r, sub, note) {
+    if (!r || !(r.value > 0)) return note ? '<span class="vl-k">Обсяг</span> <span class="vl-n">' + esc(note) + "</span>" : "";
+    var h = '<span class="vl-k">Обсяг</span> <b class="vl-v">' + esc(fmtVol(r.value, 3) || "0") + "</b>";
+    if (r.buy == null) return h + (note ? ' <span class="vl-n">' + esc(note) + "</span>" : "");
+    var bp = Math.round(r.buy * 100), bv = r.value * r.buy, sv = r.value - bv, d = bv - sv, src = VOL_SRC[r.src] || ["", ""];
+    var lbl = r.src === "sub" && sub ? src[0] + " " + sub + " хв" : src[0];
+    return h + ' <span class="vl-up' + (bp >= 50 ? " vl-win" : "") + '">▲ покупці ' + bp + "% · " + esc(fmtVol(bv, 3) || "0") + "</span>" +
+      ' <span class="vl-dn' + (bp < 50 ? " vl-win" : "") + '">▼ продавці ' + (100 - bp) + "% · " + esc(fmtVol(sv, 3) || "0") + "</span>" +
+      ' <span class="' + (d >= 0 ? "vl-up" : "vl-dn") + '">Δ ' + (d >= 0 ? "+" : "−") + esc(fmtVol(Math.abs(d), 3) || "0") + "</span>" +
+      (lbl ? ' <span class="vl-s" title="' + esc(src[1]) + '">' + esc(lbl) + "</span>" : "") + (note ? ' <span class="vl-n">' + esc(note) + "</span>" : "");
+  }
+  function volLegend() {
+    var box = document.getElementById("iw-box"); if (!box) return;
+    var el = VOL.lg;
+    if (!el || el.parentNode !== box) { el = VOL.lg = document.createElement("div"); el.className = "iw-vol-lg"; box.appendChild(el); }
+    if (!VOL.on || !VOL.series || !IW.chart) { el.style.display = "none"; return; }
+    var r = VOL.hover != null ? VOL.idx[VOL.hover] : null;
+    if (!r && VOL.hover == null) r = VOL.rows.length ? VOL.rows[VOL.rows.length - 1] : null;
+    var note = VOL.wait ? "⏳ рахується розклад покупці / продавці" : (r && r.buy == null && VOL.fill) ? "⏳ історія дозаповнюється" : "";
+    var html = volLegendHTML(r, VOL.sub, note);
+    if (!html) { el.style.display = "none"; return; }
+    var axis = 0; try { axis = IW.chart.timeScale().height(); } catch (e) {}
+    el.style.display = ""; el.style.top = Math.max(0, Math.round((box.clientHeight - axis) * VOL_TOP) - 19) + "px";
+    if (el._h !== html) { el.innerHTML = html; el._h = html; }
+  }
+  /* Перемикач «Обсяг» у меню індикаторів (chart-tools). */
+  function volToggle(on) {
+    var was = VOL.on; VOL.on = !!on;
+    if (!VOL.on) { VOL.tape = null; VOL.base = null; }   // потік угод зупиняється → у стрічці була б діра
+    volEnsure();
+    if (IW.coin) { liveSet(IW.coin); if (VOL.on) volApply(IW.coin); }
+    if (VOL.on && !was && IW.sel) { IW.sig = ""; try { loadCoin(false, true); } catch (e) {} }
   }
 
   function drawCoin(c, fit) {
@@ -1480,7 +1712,7 @@
     try { if (j >= 0) { for (var u = j; u < o.length; u++) IW.series.update(o[u]); } else IW.series.setData(o); } catch (e) { IW.series.setData(o); }
     if (lv0.ahead) { try { IW.series.update(lv0.bar); } catch (e) {} }
     IW.lastT = o.length ? o[o.length - 1].time : null;
-    liveSet(c);
+    liveSet(c); volApply(c);
     var st = structOf(c); IW.series.setMarkers(st.marks);
     var lv = [];
     if (c.poc && c.poc.poc) lv.push({ price: Number(c.poc.poc), title: "POC", color: "#f5f5f5" });
@@ -1514,12 +1746,12 @@
       IW.liveBar = null;
     }
     var want = iwKey();
-    var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf + "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf + "&poc_days=" + IW.poc_days + "&poc_tf=" + IW.poc_tf + "&hl_tf=" + IW.hl_tf + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
+    var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf + "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf + "&poc_days=" + IW.poc_days + "&poc_tf=" + IW.poc_tf + "&hl_tf=" + IW.hl_tf + (VOL.on ? "&vol=1" : "") + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
     api(q).then(function (c) {
       if (want !== iwKey() || c.same) return;
       IW.coin = c; IW.sig = c.sig || "";
       renderHead(); renderList(); drawCoin(c, force);
-      if (!c.ok || c.ob_wait || c.vob_wait || c.hl_wait) setTimeout(function () { if (want === iwKey()) loadCoin(false, true); }, 4000);
+      if (!c.ok || c.ob_wait || c.vob_wait || c.hl_wait || c.vol_wait || (c.vsplit && c.vsplit.fill)) setTimeout(function () { if (want === iwKey()) loadCoin(false, true); }, 4000);
     }).catch(function () { setNote("не вдалося завантажити графік"); })
       .then(function () { coinBusy = false; });
   }
@@ -2017,5 +2249,5 @@
   boot();
 
   // ХУК ДЛЯ CHART-PRO.JS (доступ до внутрішніх змінних)
-  window.VSV_HOOK = { get IW() { return IW; }, applyCandles: applyCandlePalette };
+  window.VSV_HOOK = { get IW() { return IW; }, applyCandles: applyCandlePalette, volume: volToggle };
 })();
