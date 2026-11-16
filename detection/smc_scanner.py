@@ -652,6 +652,15 @@ DEFAULT_SETTINGS = {
     'volumized_max_atr_mult': 3.5,
     'volumized_zone_count': 'Low',          # 'One' / 'Low' / 'Medium' / 'High'
     'volumized_combine_obs': True,
+    # 📦 Volumized OB · ІНФОСАЙТ — той самий детектор, ОКРЕМІ параметри лише
+    # для графіка кабінету (web/info_portal.info_vob_params). None = «як у
+    # блоці бота вище». На сигнали/▲▼/бокс бота НЕ впливає.
+    'info_vob_enabled': True,
+    'info_vob_swing_length': None,
+    'info_vob_ob_end_method': None,
+    'info_vob_max_atr_mult': None,
+    'info_vob_zone_count': None,
+    'info_vob_combine_obs': None,
     # === Типи сигналів (ALERTS) — незалежні тумблери ===
     #   choch_alerts_enabled — CHoCH/CHoCH+BOS (керується Alert mode). Дефолт ON.
     #   vob_alert_enabled    — 🟪 НОВИЙ тип «Volumized OB Alerts»: сигнал на КОЖЕН
@@ -1897,6 +1906,9 @@ class SMCScanner:
                        'volumized_swing_length', 'volumized_ob_end_method',
                        'volumized_max_atr_mult', 'volumized_zone_count',
                        'volumized_combine_obs',
+                       'info_vob_enabled', 'info_vob_swing_length',
+                       'info_vob_ob_end_method', 'info_vob_max_atr_mult',
+                       'info_vob_zone_count', 'info_vob_combine_obs',
                        # Типи сигналів (ALERTS)
                        'choch_alerts_enabled', 'vob_alert_enabled',
                        'vob_alert_max_age_bars', 'vob_one_per_ob']
@@ -2179,6 +2191,29 @@ class SMCScanner:
             
             self._settings['volumized_combine_obs'] = bool(
                 self._settings.get('volumized_combine_obs', True))
+
+            # === 📦 Volumized OB · інфосайт (None = як у блоці бота) ===
+            self._settings['info_vob_enabled'] = (
+                self._settings.get('info_vob_enabled') is not False)
+            _iv = self._settings.get('info_vob_swing_length')
+            if _iv is not None:
+                try:
+                    self._settings['info_vob_swing_length'] = max(3, int(_iv))
+                except (ValueError, TypeError):
+                    self._settings['info_vob_swing_length'] = None
+            if self._settings.get('info_vob_ob_end_method') not in (None, 'Wick', 'Close'):
+                self._settings['info_vob_ob_end_method'] = None
+            _iv = self._settings.get('info_vob_max_atr_mult')
+            if _iv is not None:
+                try:
+                    self._settings['info_vob_max_atr_mult'] = max(0.1, min(50.0, float(_iv)))
+                except (ValueError, TypeError):
+                    self._settings['info_vob_max_atr_mult'] = None
+            if self._settings.get('info_vob_zone_count') not in (None, 'One', 'Low', 'Medium', 'High'):
+                self._settings['info_vob_zone_count'] = None
+            _iv = self._settings.get('info_vob_combine_obs')
+            if _iv is not None:
+                self._settings['info_vob_combine_obs'] = bool(_iv)
 
             # === Forecast min-strength validation ===
             if str(self._settings.get('forecast_min_strength', 'strong')).lower() \

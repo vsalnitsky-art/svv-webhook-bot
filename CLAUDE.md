@@ -8790,3 +8790,24 @@ config,demo,ui}.js` · `js/vendor/lightweight-charts.js` (4.1.3, локальн�
   `_PAPER_CLOSED_KEYS` += peak_pnl_pct/was_manual. Ассети `app.js?v=223`,
   `style.css?v=215`.
 Тести: `test_hl_peak_paper.py` (6), `test_trades_mmd.py` (замок 🚨 переписано).
+
+## 📦 VOLUMIZED OB · ІНФОСАЙТ — окремі параметри · HH/HL яскравіші й дрібніші (16.11)
+Дослівно: «Додай поруч ідентичний алгоритм окремо для відображення саме на
+інфосайті» · «HH HL LL LH — яскравим кольором і трішки меншим шрифтом».
+- Ключі сканера `info_vob_enabled` (деф. УВІМК) · `info_vob_swing_length` ·
+  `info_vob_ob_end_method` · `info_vob_max_atr_mult` · `info_vob_zone_count` ·
+  `info_vob_combine_obs` (деф. **None = як у блоці бота** → міграція не
+  потрібна; білий список + валідація). Той самий `detect_volumized_obs`.
+- ЧИСТА `info_portal.info_vob_params(st)` → {on, swing, end, atr, zone,
+  combine, own, pk}. `own` (параметри ≠ ботовим) → пам'ять сканера не береться,
+  рахує фоновий потік; `pk` — підпис параметрів у даних частини й у ключі кешу
+  відповіді: кеш, порахований іншими параметрами, скидається й перераховується.
+  `on=False` → VOB у кабінеті не малюється і не рахується.
+- ⚠️ Сигнали, ▲/▼, бокс бота читають ЛИШЕ `volumized_*` (тест-замок AST).
+  TF VOB і далі обирає користувач у кабінеті.
+- UI бота: секція «📦 Volumized OB · інфосайт» одразу під «📦 Volumized OB
+  Trend» (`sm-ivob-*`, `updateInfoVobSettings`).
+- HH/HL/LH/LL малює примітив (`prim.setHl`, не маркери серії — у них шрифт
+  графіка): `HL_BULL` #00e676 / `HL_BEAR` #ff1744, жирний `HL_PX`=9px.
+  Ассети `app.js?v=224`.
+Тести: `test_info_vob.py` (5), `test_hl_peak_paper.py` (6).

@@ -90,15 +90,17 @@ def test_hl_wired_into_payload_and_page():
     lay = _block(APP, 'var lay = $("#iw-layers");', 'liqUi();')
     assert lay.index('show_imb') < lay.index('hlCtl()')                    # кнопка поруч з IMB
     fns = (_block(APP, 'function snapSec(', '\n  }\n') + '\n  }\n'
-           + _block(APP, 'function structOf(', 'function setShl('))
+           + _block(APP, 'var HL_BULL', 'function setShl('))
     out = _node(fns + """
       var c = {ohlc: [{time: 100}, {time: 200}, {time: 300}], events: [],
                hl: [{t: 50, type: 'HH', high: true, dir: 'bull'}, {t: 250, type: 'LL', high: false, dir: 'bear'},
                     {t: 300, type: 'HL', high: false, dir: 'bull'}]};
-      console.log(JSON.stringify(structOf(c).marks));""")
+      console.log(JSON.stringify(structOf(c).hl));""")
     assert [m['text'] for m in out] == ['LL', 'HL']                        # старіші за графік — ні
-    assert out[0]['time'] == 200 and out[0]['position'] == 'belowBar' and out[0]['color'] == '#ef4444'
-    assert out[1]['color'] == '#22c55e'
+    assert out[0]['t'] == 200 and out[0]['high'] is False and out[0]['color'] == '#ff1744'
+    assert out[1]['color'] == '#00e676'                                    # яскраві кольори
+    assert 'var HL_BULL = "#00e676", HL_BEAR = "#ff1744", HL_PX = 9' in APP  # і менший шрифт
+    assert 'ctx.font = font(800, HL_PX)' in APP and 'IW.prim.setHl(st.hl)' in APP
 
 
 def test_bot_closed_tables_have_peak():

@@ -2420,6 +2420,56 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </div>
                 <div id="sm-volumized-summary" style="font-size:0.72rem;color:#888;margin-top:6px"></div>
             </div>
+
+            <div class="sm-settings-section">
+                <h3>📦 Volumized OB · інфосайт</h3>
+                <div class="sm-controls">
+                    <!-- Той самий детектор, ОКРЕМІ параметри лише для графіка
+                         кабінету (web/info_portal.info_vob_params). На сигнали,
+                         ▲/▼ і бокс бота НЕ впливає. TF обирає користувач у
+                         кабінеті. -->
+                    <label class="sm-checkbox"
+                           title="Показувати Volumized OB на графіку інфосайту. Вимкнено — VOB у кабінеті не малюється і не рахується.">
+                        <input type="checkbox" id="sm-ivob-enabled" checked onchange="updateInfoVobSettings()">
+                        Enable
+                    </label>
+                    <div class="sm-control-item" title="TF для VOB кожен користувач обирає сам на панелі графіка кабінету.">
+                        <label>TF:</label>
+                        <span style="font-size:0.78rem;color:#7dd3fc">у кабінеті</span>
+                    </div>
+                    <div class="sm-control-item" title="Swing Length для VOB на інфосайті (мін. 3).">
+                        <label>Swing Length:</label>
+                        <input type="number" id="sm-ivob-swing" min="3" step="1" value="10"
+                               onchange="updateInfoVobSettings()" style="width:55px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
+                    </div>
+                    <div class="sm-control-item" title="Wick — зону знімає ґніт; Close — лише закриття.">
+                        <label>Zone Invalidation:</label>
+                        <select id="sm-ivob-end-method" onchange="updateInfoVobSettings()">
+                            <option value="Wick" selected>Wick</option>
+                            <option value="Close">Close</option>
+                        </select>
+                    </div>
+                    <div class="sm-control-item" title="Макс. розмір блоку в ATR(10).">
+                        <label>Max ATR Mult:</label>
+                        <input type="number" id="sm-ivob-atr-mult" min="0.1" max="50" step="0.1" value="3.5"
+                               onchange="updateInfoVobSettings()" style="width:60px;background:#1a1a1a;border:1px solid #333;color:#ddd;border-radius:3px;padding:2px 4px;font-size:0.78rem">
+                    </div>
+                    <div class="sm-control-item" title="Скільки блоків кожного боку показувати.">
+                        <label>Zone Count:</label>
+                        <select id="sm-ivob-zone-count" onchange="updateInfoVobSettings()">
+                            <option value="One">One</option>
+                            <option value="Low" selected>Low (3)</option>
+                            <option value="Medium">Medium (5)</option>
+                            <option value="High">High (10)</option>
+                        </select>
+                    </div>
+                    <label class="sm-checkbox" title="Зливати зони одного боку, що накладаються.">
+                        <input type="checkbox" id="sm-ivob-combine" checked onchange="updateInfoVobSettings()">
+                        Combine Zones
+                    </label>
+                </div>
+                <div style="font-size:0.72rem;color:#888;margin-top:6px">Лише графік інфосайту · на сигнали, ▲/▼ і бокс бота не впливає</div>
+            </div>
             
             <div class="sm-settings-section">
                 <h3>Filter by Price Position</h3>
@@ -8045,6 +8095,17 @@ async function loadSettings() {
             if (volZoneCount) volZoneCount.value = s.volumized_zone_count || 'Low';
             const volCombine = document.getElementById('sm-volumized-combine');
             if (volCombine) volCombine.checked = (s.volumized_combine_obs !== false);
+            // 📦 Volumized OB · інфосайт — не задано → значення блоку бота
+            const _iv = (k, d) => (s['info_vob_' + k] != null ? s['info_vob_' + k]
+                : (s['volumized_' + k] != null ? s['volumized_' + k] : d));
+            const _ivSet = (id, v, chk) => { const e = document.getElementById(id);
+                if (e) { if (chk) e.checked = !!v; else e.value = v; } };
+            _ivSet('sm-ivob-enabled', s.info_vob_enabled !== false, true);
+            _ivSet('sm-ivob-swing', _iv('swing_length', 10));
+            _ivSet('sm-ivob-end-method', _iv('ob_end_method', 'Wick'));
+            _ivSet('sm-ivob-atr-mult', _iv('max_atr_mult', 3.5));
+            _ivSet('sm-ivob-zone-count', _iv('zone_count', 'Low'));
+            _ivSet('sm-ivob-combine', _iv('combine_obs', true), true);
             updateHTFFieldVisibility();
             updateSettingsSummary();
         }
@@ -8661,6 +8722,30 @@ async function updateVolumizedSettings() {
         // immediately (otherwise user waits up to 60s for next scan tick).
         loadWatchlist();
     } catch (err) { alert('Volumized OB update error: ' + err); }
+}
+
+// 📦 Volumized OB · інфосайт — окремі параметри графіка кабінету.
+async function updateInfoVobSettings() {
+    const g = id => document.getElementById(id);
+    let swingLen = parseInt(g('sm-ivob-swing').value);
+    let atrMult = parseFloat(g('sm-ivob-atr-mult').value);
+    if (!Number.isFinite(swingLen) || swingLen < 3) swingLen = 10;
+    if (!Number.isFinite(atrMult) || atrMult <= 0) atrMult = 3.5;
+    try {
+        const r = await fetch('/api/smc/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                info_vob_enabled: g('sm-ivob-enabled').checked,
+                info_vob_swing_length: swingLen,
+                info_vob_ob_end_method: g('sm-ivob-end-method').value || 'Wick',
+                info_vob_max_atr_mult: atrMult,
+                info_vob_zone_count: g('sm-ivob-zone-count').value || 'Low',
+                info_vob_combine_obs: g('sm-ivob-combine').checked,
+            }),
+        });
+        if (!r.ok) alert('Volumized OB (інфосайт): не збережено · HTTP ' + r.status);
+    } catch (err) { alert('Volumized OB (інфосайт) update error: ' + err); }
 }
 
 async function updateAlertMode() {

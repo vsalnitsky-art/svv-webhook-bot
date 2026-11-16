@@ -540,11 +540,51 @@ def _bot_part(sc, kind, sym, tf):
     if kind == 'vob':
         if not st.get('use_volumized_ob', True) or tf != str(st.get('volumized_timeframe', '')).lower():
             return None
+        vp = info_vob_params(st)
+        if vp['own']:                 # свої параметри інфосайту → рахує фоновий потік
+            return None
         try:
-            return {'vz': sc._volumized_zones(sym)}
+            return {'vz': sc._volumized_zones(sym), 'pk': vp['pk']}
         except Exception:
             return None
     return None
+
+
+# 📦 Volumized OB — ОКРЕМІ параметри для графіка інфосайту (блок
+# «📦 Volumized OB · інфосайт» у налаштуваннях бота). Ключ не задано → береться
+# значення блоку бота «📦 Volumized OB Trend» (стара поведінка без міграції).
+INFO_VOB_KEYS = (('swing', 'swing_length', 10), ('end', 'ob_end_method', 'Wick'),
+                 ('atr', 'max_atr_mult', 3.5), ('zone', 'zone_count', 'Low'),
+                 ('combine', 'combine_obs', True))
+
+
+def info_vob_params(st):
+    """ЧИСТА: {on, swing, end, atr, zone, combine, own, pk}. `own` — параметри
+    інфосайту відрізняються від ботових (пам'ять сканера тоді не годиться);
+    `pk` — підпис параметрів (кеш, порахований іншими, не показуємо)."""
+    st = st or {}
+    out, own = {}, False
+    for k, name, d in INFO_VOB_KEYS:
+        bot = st.get('volumized_' + name, d)
+        v = st.get('info_vob_' + name)
+        if v is None:
+            v = bot
+        out[k] = v
+        own = own or v != bot
+    try:
+        out['swing'] = max(3, int(out['swing']))
+    except (TypeError, ValueError):
+        out['swing'] = 10
+    try:
+        out['atr'] = max(0.1, min(50.0, float(out['atr'])))
+    except (TypeError, ValueError):
+        out['atr'] = 3.5
+    out['combine'] = bool(out['combine'])
+    out['on'] = st.get('info_vob_enabled') is not False
+    out['own'] = own
+    out['pk'] = '%s|%s|%s|%s|%s' % (out['swing'], out['end'], out['atr'], out['zone'],
+                                    int(out['combine']))
+    return out
 
 
 def _engine_sbr_last(sym, tf):
@@ -703,18 +743,17 @@ def _compute(sc, kind, sym, tf):
         from detection.volumized_ob import detect_volumized_obs
         vk = md.fetch_klines(sym, limit=getattr(sc, 'VOB_KLINES_LIMIT', 3000), interval=tf)
         vz = []
+        vp = info_vob_params(st)
         if vk and len(vk) > 20:
             r = detect_volumized_obs(
-                vk, swing_length=int(st.get('volumized_swing_length', 10)),
-                ob_end_method=st.get('volumized_ob_end_method', 'Wick'),
-                max_atr_mult=float(st.get('volumized_max_atr_mult', 3.5)),
-                zone_count=st.get('volumized_zone_count', 'Low'),
-                combine_obs=bool(st.get('volumized_combine_obs', True)))
+                vk, swing_length=vp['swing'], ob_end_method=vp['end'],
+                max_atr_mult=vp['atr'], zone_count=vp['zone'],
+                combine_obs=vp['combine'])
             obs = list(r.get('bullish_obs') or []) + list(r.get('bearish_obs') or [])
             obs.sort(key=lambda o: o.get('formation_time', o.get('start_time', 0)) or 0,
                      reverse=True)
             vz = [z for z in (sc._format_vob(o, tf) for o in obs) if z]
-        return {'vz': vz}, min(next_close(now, tf), now + VOB_MAX_TTL)
+        return {'vz': vz, 'pk': vp['pk']}, min(next_close(now, tf), now + VOB_MAX_TTL)
     if kind == 'hl':
         # 📈 HH/HL/LH/LL — свінг-півоти на ЗАКРИТИХ барах свого TF (як OB).
         from detection.smc_structure import detect_smc_structure
@@ -1012,13 +1051,15 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
     poc_days, poc_tf = poc_norm(poc_days, poc_tf)
     hl_tf = norm_tf(hl_tf, HL_TFS, OFF, allow_off=True)
     in_bot = _in_bot(sc, sym)
-    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf, hl_tf)
+    _vp = info_vob_params(getattr(sc, '_settings', None))
+    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf, hl_tf, _vp['on'], _vp['pk'])
     now = time.time()
     with _lock:
         hit = _coin_cache.get(ck)
     if hit and now - hit[0] < COIN_TTL:
         # частини все одно «просимо», інакше кеш потоку їх забуде
-        for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf), ('shl', shl_tf(sc)), ('imb', tf),
+        for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf if _vp['on'] else OFF),
+                     ('shl', shl_tf(sc)), ('imb', tf),
                      ('hl', hl_tf)):
             if t != OFF and _bot_part(sc, k, sym, t) is None:
                 want((k, sym, t))
@@ -1035,8 +1076,15 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         d, _e = part(sc, 'ob', sym, ob_tf)
         ob, ob_wait = ob_boxes((d or {}).get('zones')), d is None
     vob, vob_wait = [], False
-    if vob_tf != OFF:
+    vp = info_vob_params(getattr(sc, '_settings', None))
+    if vob_tf != OFF and vp['on']:
         d, _e = part(sc, 'vob', sym, vob_tf)
+        if d is not None and d.get('pk') != vp['pk']:
+            # пораховано ІНШИМИ параметрами (їх щойно змінили) → перерахунок
+            with _lock:
+                _comp.pop(('vob', sym, vob_tf), None)
+            want(('vob', sym, vob_tf))
+            d = None
         vob, vob_wait = vob_fresh(vob_boxes((d or {}).get('vz')), ohlc), d is None
     hl, hl_wait = [], False
     if hl_tf != OFF:

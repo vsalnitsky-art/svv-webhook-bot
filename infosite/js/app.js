@@ -794,6 +794,7 @@
   BoxPrimitive.prototype.attached = function (p) { this._chart = p.chart; this._series = p.series; this._req = p.requestUpdate; };
   BoxPrimitive.prototype.detached = function () { this._chart = null; this._series = null; this._req = null; };
   BoxPrimitive.prototype.set = function (boxes, lines, sigs, levels) { this._b = boxes || []; this._l = lines || []; this._s = sigs || []; this._lv = levels || []; if (this._req) this._req(); };
+  BoxPrimitive.prototype.setHl = function (pts) { this._hl = pts || []; if (this._req) this._req(); };
   BoxPrimitive.prototype.setLiq = function (liq) { this._liq = liq && liq.rows && liq.rows.length ? liq : null; if (this._req) this._req(); };
   BoxPrimitive.prototype.hitAt = function (x, y) {
     for (var i = this._hits.length - 1; i >= 0; i--) { var h = this._hits[i]; if (x >= h.x0 - 3 && x <= h.x1 + 3 && y >= h.y0 - 3 && y <= h.y1 + 3) return h.sig; }
@@ -878,6 +879,13 @@
         var LW = self._liq ? liqWidth(W, hr) : 0, XR = W - LW;
         var liqTaken = LW ? _liqDraw(ctx, self._liq, sr, XR, W, H, hr, vr, font, dark, self._lv) : [];
         var sLbl = [];
+        (self._hl || []).forEach(function (p) {
+          var x = ts.timeToCoordinate(p.t), y = sr.priceToCoordinate(p.price);
+          if (x == null || y == null || x * hr > XR) return;
+          ctx.font = font(800, HL_PX); ctx.textAlign = "center"; ctx.textBaseline = p.high ? "bottom" : "top";
+          ctx.fillStyle = p.color; ctx.fillText(p.text, x * hr, (y + (p.high ? -5 : 5)) * vr);
+        });
+        ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
         self._l.forEach(function (l) {
           var x1 = ts.timeToCoordinate(l.t1), x2 = ts.timeToCoordinate(l.t2), y = sr.priceToCoordinate(l.price);
           if (x1 == null || x2 == null || y == null) return;
@@ -1289,24 +1297,23 @@
 
   document.addEventListener("click", function (e) { if (e.target.closest && e.target.closest("#iw-sig .x")) sigCard(null); });
 
+  var HL_BULL = "#00e676", HL_BEAR = "#ff1744", HL_PX = 9;
   function structOf(c) {
-    var o = c.ohlc || [], lines = [], marks = []; if (!o.length) return { lines: lines, marks: marks };
+    var o = c.ohlc || [], lines = [], marks = [], hl = []; if (!o.length) return { lines: lines, marks: marks, hl: hl };
     var first = o[0].time;
     (c.events || []).forEach(function (e) {
       if (!e.to || e.to < first) return;
       var bull = e.dir === "bull", col = bull ? "#22c55e" : "#ef4444", t2 = snapSec(e.to, o);
       lines.push({ t1: snapSec(e.from, o), t2: t2, price: e.level, color: col, dashed: e.tag !== "BOS", text: e.tag, up: bull });
     });
-    // 📈 HH/HL/LH/LL: мітка над (high) / під (low) свічкою півота, колір —
-    // напрямок структури. Півот іншого TF прив'язується до свічки графіка.
+    // 📈 HH/HL/LH/LL: мітка над (high) / під (low) свічкою півота, яскравий
+    // колір напрямку структури; малює примітив (свій, менший шрифт HL_PX). Півот іншого TF прив'язується до свічки графіка.
     (c.hl || []).forEach(function (h) {
       if (!h.t || h.t < first) return;
       var bull = h.dir === "bull";
-      marks.push({ time: snapSec(h.t, o), position: h.high ? "aboveBar" : "belowBar", color: bull ? "#22c55e" : "#ef4444",
-                   shape: "circle", size: 0.1, text: h.type });
+      hl.push({ t: snapSec(h.t, o), price: h.price, high: !!h.high, color: bull ? HL_BULL : HL_BEAR, text: h.type });
     });
-    marks.sort(function (a, b) { return a.time - b.time; });
-    return { lines: lines, marks: marks };
+    return { lines: lines, marks: marks, hl: hl };
   }
 
   function setShl(shl) {
@@ -1478,7 +1485,7 @@
     var lv = [];
     if (c.poc && c.poc.poc) lv.push({ price: Number(c.poc.poc), title: "POC", color: "#f5f5f5" });
     if (c.shl && IW.show_shl) ["high", "low"].forEach(function (k) { var v = c.shl[k]; if (v && v.price > 0) lv.push({ price: Number(v.price), title: (v.label || "") + " " + (c.shl.tf || ""), color: k === "high" ? "#f87171" : "#4ade80" }); });
-    IW.prim.set(boxesOf(c), st.lines, sbrOf(c), lv); setPoc(c.poc); setShl(c.shl);
+    IW.prim.setHl(st.hl); IW.prim.set(boxesOf(c), st.lines, sbrOf(c), lv); setPoc(c.poc); setShl(c.shl);
     if (fit || IW.chartKey !== key) { setAutoScale(true); IW.chart.timeScale().fitContent(); IW.chartKey = key; }
     /* Єдиний вигляд завантаження на графіку: будь-який текстовий варіант
        (зокрема reason із бекенду на кшталт «завантаження барів 1H»)
@@ -1502,7 +1509,7 @@
     coinBusy = true;
     if (force) {
       setLoading();
-      if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.set([], [], []); setPoc(null); setShl(null); IW.lastT = null; }
+      if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.setHl([]); IW.prim.set([], [], []); setPoc(null); setShl(null); IW.lastT = null; }
       sigCard(null); if (LQ && LQ.on && LQ.sym !== sym) liqOff();
       IW.liveBar = null;
     }
