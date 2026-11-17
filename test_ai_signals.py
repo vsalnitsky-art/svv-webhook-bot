@@ -124,7 +124,12 @@ def test_entry_reads_flow_and_vetoes_counter_combo():
           _an('absorb', hint='up', price=90.1, ago=600, o1=0.3)]
     _check(A.entry_score('LONG', _REC, _VW_UP, rv, NOW)['score'] >= A.COMBO_ENTRY_SCORE,
            'підтверджений 🔥→🧽 у бік розряду + пробій → сильний вхід')
-    _check(e['started'] and e['ready'] and e['parts']['flow'] > 0, f'розряд вгору + ⚡ за: {e}')
+    _check(e['started'] and e['parts']['flow'] > 0, f'розряд вгору + ⚡ за: {e}')
+    _check(e['ready'] and A.entry_decide(e) and e['scenario']['key'] == 'E2',
+           f'17.11: вхід — за готовим сценарієм (💥 старт розряду пройдено): {e["scenario"]}')
+    lone = A.entry_score('LONG', _REC, _VW_UP, [], NOW)
+    _check(not lone['ready'] and not A.entry_decide(lone) and lone['score'] >= 50,
+           f'високий бал без комплексу реакцій — НЕ вхід: {lone["scenario_text"]}')
     combo = [_an('climax', bar_dir='up', pre_chg=3.0, ago=3000),
              _an('absorb', hint='dn', price=100.1, ago=600, o1=-0.3)]
     v = A.entry_score('LONG', _REC, _VW_UP, combo, NOW)
@@ -152,6 +157,69 @@ def test_exit_combo_ready_and_continuation_holds():
     _check(h2['score'] < h1['score'], 'продовження за угодою знижує бал виходу')
 
 
+def test_exit_is_governed_by_anomalies_1711():
+    """Вихід — за ВЕРДИКТОМ аномалій, а не за порогом балу (вимога 17.11)."""
+    up = {'box_hi': 100.0, 'box_lo': 90.0, 'price': 99.0}
+    dn = {'box_hi': 100.0, 'box_lo': 90.0, 'price': 89.0, 'beyond': 'SHORT'}
+    # ціна проти + ціль пройдена, але аномалії мовчать → чекаємо, не виходимо
+    w = A.exit_score('LONG', dn, [], NOW, exh={'pct': 100}, pnl=0.5, peak=2.0)
+    _check(w['verdict'] == 'wait' and not w['ready'] and not A.exit_decide(w),
+           f'без аномалій вихід ШІ не спрацьовує: {w}')
+    # аномалії проти на рівні (підтверджені) + ціна проти → close
+    ab = [_an('absorb', hint='dn', price=100.1, o1=-0.3)]
+    c = A.exit_score('LONG', dn, ab, NOW)
+    _check(c['verdict'] == 'close' and A.exit_decide(c, 'confirmed') and not A.exit_decide(c, 'all'),
+           f'аномалії + ціна → вихід (режим confirmed), але не «всі»: {c}')
+    # аномалії + ціна + прибуток → all
+    a = A.exit_score('LONG', dn, ab, NOW, exh={'pct': 100}, pnl=0.5, peak=2.0)
+    _check(a['verdict'] == 'all' and a['score'] >= A.ALL_EXIT_SCORE and A.exit_decide(a, 'all'),
+           f'усі показники за вихід: {a}')
+    _check(all(a['groups'].values()) and '✓ аномалії · ✓ ціна · ✓ прибуток' == A.exit_checklist_text(a),
+           A.exit_checklist_text(a))
+    # аномалії самі → watch
+    o = A.exit_score('LONG', up, ab, NOW)
+    _check(o['verdict'] == 'watch' and not A.exit_decide(o), f'аномалії без підтвердження: {o}')
+    # свіже продовження за угодою тримає
+    h = A.exit_score('LONG', dn, ab + [_an('side', hint='up', o1=0.3, ago=200),
+                                       _an('spike', bar_dir='up', o1=0.3, ago=100)], NOW)
+    _check(h['verdict'] == 'hold' and not h['ready'], f'⚡/📈 за угодою — тримаємо: {h}')
+    # CHoCH проти угоди ПІСЛЯ входу — свідчення ціни; ДО входу — ні
+    ch = {'dir': 'dn', 't': NOW - 300}
+    x1 = A.exit_score('LONG', up, ab, NOW, choch=ch, opened_at=NOW - 3600)
+    x0 = A.exit_score('LONG', up, ab, NOW, choch=ch, opened_at=NOW - 100)
+    _check(x1['parts']['choch'] == 1.0 and x1['verdict'] in ('close', 'scenario') and x1['ready'],
+           f'CHoCH після входу: {x1}')
+    _check(x0['parts']['choch'] == 0.0, 'CHoCH до входу — не подія')
+    # аномалії від входу: 🧽 3 год тому (до 6 год) враховується при look
+    old = [_an('absorb', hint='dn', price=100.1, o1=-0.3, ago=3 * 3600)]
+    _check(A.exit_score('LONG', dn, old, NOW)['verdict'] == 'wait', 'вікно 2 год його не бачить')
+    _check(A.exit_score('LONG', dn, old, NOW, look=4 * 3600)['verdict'] == 'close',
+           'вихід дивиться від входу')
+    _check(not A.exit_decide({'ready': True, 'verdict': 'close'}, 'all')
+           and A.exit_decide({'ready': True, 'verdict': 'combo'}, 'all'), 'режими')
+    _check('function aiExitChipHTML' in _HTML and 'aiExitChipHTML(p)' in _HTML, 'значок 🤖 у 🚨')
+
+
+def test_fresh_trade_is_not_closed_by_its_own_entry_reasons_1711():
+    """Угода, що щойно відкрилась, не може «вже закриватись»: аномалії до входу
+    і сплеск свічки входу — це причини ВХОДУ, а не виходу (скарга 17.11)."""
+    oa = NOW - 600                                   # відкрито 10 хв тому
+    entry_bar = {'box_hi': 100.0, 'box_lo': 90.0, 'price': 101.0, 'beyond': 'LONG',
+                 'climax': 'LONG', 't': NOW - 1200}   # свічка входу — до відкриття
+    pre = [_an('climax', bar_dir='up', pre_chg=3.0, ago=3000),
+           _an('absorb', hint='dn', price=100.1, ago=1800, o1=-0.3)]
+    e = A.exit_score('LONG', entry_bar, pre, NOW, exh={'pct': 100}, pnl=1.0, peak=1.0, opened_at=oa)
+    _check(not e['ready'] and e['parts']['climax'] == 0.0 and e['parts']['flow'] == 0.0,
+           f'щойно відкрита угода не закривається через причини входу: {e}')
+    nb = dict(entry_bar, t=NOW - 60)                 # нова свічка вже після входу
+    _check(A.exit_score('LONG', nb, [], NOW, opened_at=oa)['parts']['climax'] == 1.0,
+           'сплеск НОВОЇ свічки після входу — свідчення')
+    new = [_an('absorb', hint='dn', price=100.1, ago=120, o1=-0.3)]
+    x = A.exit_score('LONG', {'box_hi': 100.0, 'box_lo': 90.0, 'price': 89.0, 'beyond': 'SHORT'},
+                     pre + new, NOW, opened_at=oa)
+    _check(x['ready'] and x['verdict'] in ('close', 'all'), f'нова аномалія після входу — вихід: {x}')
+
+
 # ── 3. Калібровка з досліджень ───────────────────────────────────────────
 def test_calibration_from_anomaly_research():
     st = [{'kind': 'absorb', 'tf': '1h', 'hint_n': 40, 'hint_pct': 70.0, 'decided': 40, 'reversal_pct': 70.0},
@@ -175,7 +243,7 @@ class _Sc:
         self._ob_zones, self._cache = {}, {}
 
     def get_settings(self):
-        return {'spring_enabled': True, 'ai_signal_enabled': True, 'ai_entry_min': 40, 'ai_min_charge': 60}
+        return {'spring_enabled': True, 'ai_signal_enabled': True, 'ai_min_charge': 60}
 
     def scan_universe(self):
         return ['XUSDT']
@@ -200,9 +268,25 @@ class _Tm:
         return 'queued'
 
 
+class _Db:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def get_vol_anomalies(self, **kw):
+        return [dict(r) for r in self.rows]
+
+    def get_setting(self, k, d=None):
+        return d
+
+    def set_setting(self, k, v):
+        pass
+
+
 def _engine(ok=True):
     sc, tm = _Sc(ok), _Tm()
-    e = A.AiEngine(db=None, scanner=sc, tm=tm, clock=lambda: NOW)
+    db = _Db([dict(_an('side', hint='up', o1=0.3), symbol='XUSDT')])
+    e = A.AiEngine(db=db, scanner=sc, tm=tm, clock=lambda: NOW)
+    e._refresh_cal = lambda now: None
     e._fetch_live = lambda S, now: (dict(_REC), dict(_VW_UP))
     return e, sc, tm
 
@@ -258,7 +342,7 @@ def test_tm_ai_exit_reason():
     for a in combo:                       # аномалії «зараз»
         a['ts'] = a['ts'] - NOW + __import__('time').time()
     stub = types.SimpleNamespace(
-        _settings={'ai_exit_min': 30}, AI_EXIT_TTL=20.0, scanner=None,
+        _settings={'ai_exit_mode': 'all'}, AI_EXIT_TTL=20.0, scanner=None,
         _exit_key=TM._exit_key,
         _spring_fire_view=lambda s, fetch=False: {'box_hi': 100.0, 'box_lo': 90.0, 'price': 99.0},
         _trade_anomalies=lambda s, a, b: combo,
@@ -266,22 +350,29 @@ def test_tm_ai_exit_reason():
     pos = {'side': 'LONG', 'entry_price': 95.0}
     hit = TM._ai_exit_reason(stub, 'XUSDT', pos, 99.0, False)
     _check(hit and hit[0] == 'ai_exit', f'вихід ШІ: {hit}')
-    _check(pos['ai_exit']['ready'] and pos['ai_exit']['score'] >= 30, f'знімок на позиції: {pos["ai_exit"]}')
+    _check(pos['ai_exit']['ready'] and pos['ai_exit']['verdict'] == 'scenario'
+           and pos['ai_exit']['scenario']['key'] == 'X1'
+           and pos['ai_exit']['checklist'], f'знімок на позиції: {pos["ai_exit"]}')
+    _check('бал ≥' not in hit[1] and '✓ аномалії' in hit[1], f'причина — вердикт, а не поріг: {hit[1]}')
     _check(TM._ai_exit_reason(stub, 'XUSDT', pos, 99.0, False) is None, 'власний тротл 20с')
     _check("'ai_exit': '🤖 Вихід ШІ" in _TM, 'підпис причини')
 
 
 # ── 6. Налаштування / UI / мітки ─────────────────────────────────────────
 def test_settings_and_ui():
-    for k in ('ai_signal_enabled', 'ai_entry_min', 'ai_min_charge'):
+    _check('ai_entry_min' not in _SC and 'sm-ai-entry-min' not in _HTML,
+           '17.11: порогу «бал ≥» для входу більше немає — вхід за сценарієм')
+    for k in ('ai_signal_enabled', 'ai_min_charge'):
         _check(f"'{k}'" in _SC, f'ключ сканера {k}')
-    for k in ('use_ai_exit', 'ai_exit_min'):
+    for k in ('use_ai_exit', 'ai_exit_mode'):
         _check(f"'{k}'" in _TM, f'ключ TM {k}')
-    for i in ('sm-ai-signal', 'sm-ai-entry-min', 'sm-ai-min-charge', 'tm-use-ai-exit',
-              'tm-ai-exit-min', 'ai-tbody', 'ai-cal'):
+    for i in ('sm-ai-signal', 'sm-ai-min-charge', 'tm-use-ai-exit', 'ai-rules-body',
+              'tm-ai-exit-mode', 'ai-tbody', 'ai-cal'):
         _check(f'id="{i}"' in _HTML, f'UI {i}')
     _check('function updateAiSignal' in _HTML and 'function aiLoad' in _HTML, 'JS ШІ')
-    _check("use_ai_exit: " in _HTML and "ai_exit_min: _numOr('tm-ai-exit-min'" in _HTML, 'збереження виходу ШІ')
+    _check("use_ai_exit: " in _HTML and "ai_exit_mode: " in _HTML, 'збереження виходу ШІ')
+    _check('ai_exit_min' not in _TM and 'tm-ai-exit-min' not in _HTML,
+           '17.11: порогу «бал ≥» для виходу більше немає')
     _check("@app.route('/api/ai/state')" in _APP and "@app.route('/api/ai/episodes-export')" in _APP, 'API ШІ')
     _check("'ai':" in _SL and 'ai_exit: "🤖 Вихід ШІ"' in _JS, 'мітки ШІ (бот + інфосайт)')
 

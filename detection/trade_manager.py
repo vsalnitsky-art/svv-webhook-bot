@@ -700,11 +700,12 @@ DEFAULT_SETTINGS = {
     'exh_exit_min': 75,
     'exh_exit_atr': 0.5,
     'exh_exit_min_profit': 0.3,
-    # 🤖 ВИХІД З УГОДИ ШІ (вимога 17.11, деф. OFF): «почались зворотні процеси»
-    # — бал `ai_signals.exit_score` ≥ ai_exit_min і ≥2 незалежні свідчення
-    # (розворот ціни · потік обсягу проти · кульмінація · ціль Пружини · віддача піку).
+    # 🤖 ВИХІД З УГОДИ ШІ (вимога 17.11, деф. OFF): рішення — за ВЕРДИКТОМ
+    # ⚠ аномалій обсягу (`ai_signals.exit_decide`), а не за порогом балу:
+    # аномалії кажуть «закривати» + підтвердження ціною / прибутком.
+    # `ai_exit_mode`: 'confirmed' (деф.) | 'all' (лише коли ВСІ групи за вихід).
     'use_ai_exit': False,
-    'ai_exit_min': 70,
+    'ai_exit_mode': 'confirmed',
     'sbr_exit_1h': True,
     'sbr_exit_4h': True,
     # 🔔⏳ ТРЕЙЛ замість миттєвого виходу (вимога 31.10, деф. OFF): протилежний
@@ -1486,13 +1487,14 @@ class TradeManager:
                 self._settings['sbr_trail_charge_min'] = 40
             for _k, _d, _lo, _hi in (('exh_exit_min', 75, 30.0, 100.0),
                                      ('exh_exit_atr', 0.5, 0.05, 5.0),
-                                     ('exh_exit_min_profit', 0.3, 0.0, 10.0),
-                                     ('ai_exit_min', 70, 30.0, 100.0)):
+                                     ('exh_exit_min_profit', 0.3, 0.0, 10.0)):
                 try:
                     self._settings[_k] = max(_lo, min(_hi, float(self._settings.get(_k, _d))))
                 except (TypeError, ValueError):
                     self._settings[_k] = _d
 
+            if self._settings.get('ai_exit_mode') not in ('confirmed', 'all'):
+                self._settings['ai_exit_mode'] = 'confirmed'
             # opposite_ob_exit_timeframe — validated string, default '15m'
             ALLOWED_EXIT_TFS = ('5m', '15m', '30m', '1h', '4h')
             if self._settings.get('opposite_ob_exit_timeframe') not in ALLOWED_EXIT_TFS:
@@ -4608,7 +4610,16 @@ class TradeManager:
         tk[k] = now
         from detection import ai_signals
         vw = self._spring_fire_view(symbol, fetch=False) or {}
-        anoms = self._trade_anomalies(symbol, now - ai_signals.ANOM_LOOK_SEC, now)
+        # ⚠ аномалії ВІД ВХОДУ (не давніші за EXIT_LOOK_MAX, не коротше 2 год):
+        # вихід судить усю поведінку обсягу за час угоди, а не лише останні 2 год.
+        try:
+            opened = float(pos.get('opened_at') or 0) or None
+        except (TypeError, ValueError):
+            opened = None
+        t0 = now - ai_signals.ANOM_LOOK_SEC
+        if opened:
+            t0 = max(now - ai_signals.EXIT_LOOK_MAX, min(t0, opened))
+        anoms = self._trade_anomalies(symbol, t0, now)
         exh = self.trade_exh_for(pos, vw) or {}
         pnl = None
         try:
@@ -4628,15 +4639,29 @@ class TradeManager:
         except Exception:
             mult = {}
         lv, ch = ai_signals.scanner_context(getattr(self, 'scanner', None), symbol)
-        r = ai_signals.exit_score(pos.get('side'), vw, anoms, now, exh, pnl, peak, mult, lv, ch)
+        try:
+            r = ai_signals.exit_score(pos.get('side'), vw, anoms, now, exh, pnl, peak, mult,
+                                      lv, ch, opened_at=opened, look=now - t0)
+        except TypeError:                     # старіший ai_signals без opened_at/look
+            r = ai_signals.exit_score(pos.get('side'), vw, anoms, now, exh, pnl, peak, mult, lv, ch)
         pos['ai_exit'] = {'score': r['score'], 'parts': r['parts'], 'ready': r['ready'],
                           'hold': r.get('hold'), 'notes': (r.get('flow_notes') or [])[:6],
-                          'ts': int(now)}
-        thr = float(s.get('ai_exit_min', 70) or 70)
-        if not (r['ready'] and r['score'] >= thr):
+                          'verdict': r.get('verdict'), 'verdict_ua': r.get('verdict_ua'),
+                          'groups': r.get('groups'), 'checklist': r.get('checklist'),
+                          'scenario': r.get('scenario'), 'scenarios': r.get('scenarios'),
+                          'anoms': len(anoms), 'ts': int(now)}
+        mode = s.get('ai_exit_mode') if s.get('ai_exit_mode') in ('confirmed', 'all') else 'confirmed'
+        pos['ai_exit']['mode'] = mode
+        _dec = getattr(ai_signals, 'exit_decide', None)
+        if not (_dec(r, mode) if _dec else r['ready']):
             return None
-        return ('ai_exit', f"🤖 Вихід ШІ: бал {r['score']} ≥ {thr:g} · "
-                           f"{ai_signals.parts_text(r['parts'])}"
+        _ck = getattr(ai_signals, 'exit_checklist_text', None)
+        _sct = r.get('scenario_text') if r.get('verdict') == 'scenario' else ''
+        return ('ai_exit', f"🤖 Вихід ШІ: {r.get('verdict_ua') or ''}"
+                           + (f" · 🧩 {_sct}" if _sct else '')
+                           + f" · довідково бал {r['score']}"
+                           + (f" · {_ck(r)}" if _ck else '')
+                           + f" · {ai_signals.parts_text(r['parts'])}"
                            + (f" · потік: {', '.join(r['flow_notes'][:4])}" if r['flow_notes'] else ''))
 
     def _signal_exit_close(self, symbol: str, pos: Dict, current_price: float,
@@ -6674,7 +6699,7 @@ class TradeManager:
             'settings': {k: self._settings.get(k) for k in (
                 'use_spring_fired_exit', 'spring_fired_exit_dir', 'use_exh_exit',
                 'exh_exit_min', 'exh_exit_atr', 'exh_exit_min_profit',
-                'use_sbr_exit', 'sbr_exit_trail', 'use_ai_exit', 'ai_exit_min')},
+                'use_sbr_exit', 'sbr_exit_trail', 'use_ai_exit', 'ai_exit_mode')},
         }
         in_trade = [a for a in an if float(a.get('ts') or 0) >= float(oa or 0)]
         self.db.archive_research({

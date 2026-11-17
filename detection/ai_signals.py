@@ -26,7 +26,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 
 # ── налаштування (ключі СКАНЕРА — там, де всі сигнали) ──
-DEFAULTS = {'ai_signal_enabled': False, 'ai_entry_min': 70, 'ai_min_charge': 65}
+DEFAULTS = {'ai_signal_enabled': False, 'ai_min_charge': 65}
 TICK_SEC = 30               # такт рушія
 LIVE_TTL = 60               # 1h-бари монети в заряді — не частіше раз на хвилину
 WORKERS = 4
@@ -46,7 +46,8 @@ CAL_DAYS = 30
 DB_STATE = 'ai_engine_state_v1'
 
 W_ENTRY = {'lean': 0.25, 'break': 0.30, 'impulse': 0.25, 'flow': 0.20}
-W_EXIT = {'against': 0.30, 'flow': 0.20, 'climax': 0.20, 'target': 0.15, 'fade': 0.15}
+W_EXIT = {'against': 0.25, 'choch': 0.10, 'flow': 0.20, 'climax': 0.20,
+          'target': 0.125, 'fade': 0.125}
 FLOW_W = {'side': 1.0, 'absorb': 0.8}      # аномалії з напрямком
 FLOW_VETO = -0.6
 EXIT_MIN_PARTS = 2          # вихід — щонайменше два НЕЗАЛЕЖНІ свідчення
@@ -54,9 +55,30 @@ HOLD_PENALTY = 15           # продовження в бік угоди зни
 COMBO_EXIT_SCORE = 90       # підтверджений 🔥→🧽 проти угоди
 COMBO_WAIT_SCORE = 60       # 🔥→🧽 є, підтвердження ще немає
 COMBO_ENTRY_SCORE = 85      # підтверджений 🔥→🧽 у бік розряду
+# 🤖 Вихід під контролем ⚠ аномалій обсягу (вимога 17.11): без свідчення
+# аномалій бот НЕ виходить; коли «кажуть закривати» ВСІ групи — максимум.
+ANOM_GATE = 0.3             # мін. сила «аномалії кажуть закривати»
+ALL_EXIT_SCORE = 95         # аномалії + ціна + прибуток — усі за вихід
+SCENARIO_EXIT_SCORE = 92    # 🧩 сценарій виходу завершено (комплекс реакцій)
+EXIT_LOOK_MAX = 24 * 3600   # аномалії від входу (сценарії виходу), не давніші за добу
+HOLD_BLOCK = 0.6            # продовження за угодою ≥ цього — тримаємо
+ANOM_PARTS = ('flow', 'climax')
+PRICE_PARTS = ('against', 'choch')
+PROFIT_PARTS = ('target', 'fade')
+EXIT_VERDICT_UA = {'scenario': '🧩 сценарій виходу завершено',
+                   'all': '✅ усі показники за вихід', 'combo': '🔥→🧽 підтверджений розворот',
+                   'close': '⚠ аномалії + підтвердження — вихід',
+                   'hold': '⚡ продовження за угодою — тримаємо',
+                   'watch': '👁 аномалії є, підтвердження ще немає',
+                   'wait': '⏳ ціна / прибуток кажуть «вийти», аномалії — ні',
+                   'none': '— сигналів виходу немає'}
+EXIT_CHECK_UA = {'flow': '📖 аномалії проти угоди', 'climax': '🔥 виснаження / кульмінація за угодою',
+                 'against': '↩ ціна проти (коробка / вистріл)', 'choch': '🔀 CHoCH проти угоди',
+                 'target': '🎯 ціль Пружини пройдена', 'fade': '📉 віддача від піку',
+                 'hold': '⚡ продовження за угодою'}
 PART_UA = {'lean': 'натяг', 'break': 'пробій коробки', 'impulse': 'імпульс',
            'flow': 'потік обсягу', 'against': 'розворот ціни', 'climax': 'кульмінація',
-           'target': 'ціль Пружини', 'fade': 'віддача від піку'}
+           'target': 'ціль Пружини', 'fade': 'віддача від піку', 'choch': 'CHoCH проти'}
 
 
 def _c(x, lo=0.0, hi=1.0):
@@ -242,7 +264,10 @@ def read_anomalies(anoms: List[Dict], now: float, levels=None, choch: Optional[D
         w *= 1.0 if conf else (0.2 if conf is False else 0.6)
         if now - t > 3600:
             w *= 0.7
-        items.append(dict(c, t=t, kind=k, tf=tf, w=round(min(1.0, w), 3), conf=conf))
+        if now - t > 4 * 3600:
+            w *= 0.7                          # вихід дивиться від входу — старі слабшають
+        items.append(dict(c, t=t, kind=k, tf=tf, w=round(min(1.0, w), 3), conf=conf,
+                          price=_f(a.get('price')), o1=o1, o4=_f(a.get('o4'))))
     # сценарій 🔥 (після руху) → 🧽 у бік розвороту на 1–3 свічках
     for i, x in enumerate(items):
         if x['kind'] != 'climax' or x['role'] != 'reversal':
@@ -325,9 +350,25 @@ def _fired_side(rec, vw):
     return f.get('side') if isinstance(f, dict) else None
 
 
+def _scen():
+    import sys
+    m = sys.modules.get('detection.anomaly_scenarios')
+    if m is None:
+        try:
+            from detection import anomaly_scenarios as m
+        except Exception:
+            import importlib.util, os
+            p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'anomaly_scenarios.py')
+            sp = importlib.util.spec_from_file_location('detection.anomaly_scenarios', p)
+            m = importlib.util.module_from_spec(sp)
+            sys.modules['detection.anomaly_scenarios'] = m
+            sp.loader.exec_module(m)
+    return m
+
+
 def entry_score(side: str, rec: Optional[Dict], vw: Optional[Dict], anoms: List[Dict],
                 now: float, mult: Optional[Dict] = None, levels=None,
-                choch: Optional[Dict] = None) -> Dict:
+                choch: Optional[Dict] = None, charged: Optional[bool] = None) -> Dict:
     """Бал «розряд почався в бік `side`» 0…100.
     • натяг — частка натягу Пружини в цей бік (prob_long);
     • пробій — ціна живого бару біля / за межею коробки в цей бік;
@@ -381,22 +422,57 @@ def entry_score(side: str, rec: Optional[Dict], vw: Optional[Dict], anoms: List[
     if me['combo_conf'] and started and not veto:
         # 🔥→🧽 розворот У бік угоди, підтверджений, і розряд почався
         score = max(score, COMBO_ENTRY_SCORE)
+    # 🧩 КОМПЛЕКС РЕАКЦІЙ (17.11): весь процес до точки входу — сценарії за
+    # аномаліями до 12 год (не одна позначка). Рішення про вхід — ЛИШЕ за
+    # готовим сценарієм (`entry_decide`), бал — довідка.
+    sm = _scen()
+    if charged is None:
+        charged = (rec.get('state') == 'charged')
+    rs = read_anomalies(anoms, now, levels_of(vw, levels), choch, _cal_part(mult, 'entry'),
+                        look=sm.SCEN_LOOK_SEC, tol_pct=_tol_of(vw))
+    ctx = {'price': _f(vw.get('price')), 'beyond': vw.get('beyond'), 'fired': fs,
+           'charged': bool(charged), 'bar_t': _f(vw.get('t')),
+           'box_hi': _f(vw.get('box_hi')), 'box_lo': _f(vw.get('box_lo'))}
+    scens = sm.match_entry(rs['items'], sd, ctx, choch, now)
+    top = sm.best(scens)
+    ready = bool(top and top.get('ready') and not veto)
     return {'side': sd, 'score': score, 'parts': parts, 'flow_raw': round(fl, 3),
             'flow_notes': notes, 'started': started, 'veto': veto,
             'combo': me['combo'],
-            'ready': bool(started and not veto), 'pos': None if pos is None else round(pos, 2)}
+            'ready': ready, 'pos': None if pos is None else round(pos, 2),
+            'scenario': sm.view(top), 'scenario_text': sm.stages_text(top),
+            'scenarios': [sm.view(x) for x in scens]}
+
+
+def entry_decide(r: Dict) -> bool:
+    """🤖 Вхід — лише коли КОМПЛЕКС реакцій склався в готовий сценарій
+    (свіжа точка входу, без зламу) і немає вето. Порогу балу немає."""
+    sc = (r or {}).get('scenario') or {}
+    return bool(r and not r.get('veto') and sc.get('ready') and not sc.get('broken'))
 
 
 def exit_score(side: str, vw: Optional[Dict], anoms: List[Dict], now: float,
                exh: Optional[Dict] = None, pnl: Optional[float] = None,
                peak: Optional[float] = None, mult: Optional[Dict] = None,
-               levels=None, choch: Optional[Dict] = None) -> Dict:
-    """Бал «почались зворотні процеси» для угоди в бік `side` 0…100.
-    • розворот — ціна пробиває коробку / вистрілила ПРОТИ угоди, або йде до
-      протилежної межі; • потік — ⚠ аномалії проти угоди; • кульмінація —
-      сплеск живого бару В БІК угоди (енергію витрачено); • ціль — пройдено
-      ≥70% шляху до цілі Пружини; • віддача — угода віддала частину піку.
-    `ready` — щонайменше EXIT_MIN_PARTS свідчень сильніші за 0.3."""
+               levels=None, choch: Optional[Dict] = None,
+               opened_at: Optional[float] = None, look: Optional[float] = None) -> Dict:
+    """Бал «почались зворотні процеси» для угоди в бік `side` 0…100 — ПІД
+    КОНТРОЛЕМ ⚠ АНОМАЛІЙ ОБСЯГУ (вимога 17.11). Три групи свідчень:
+    • 📖 аномалії (`flow` — 🧽/⚡-зсув/🔥→🧽 і тиск ПРОТИ угоди; `climax` —
+      🔥 виснаження руху за угодою або сплеск живого бару за угодою);
+    • ціна (`against` — коробка пробита / пружина вистрілила проти, або ціна йде
+      до протилежної межі; `choch` — CHoCH проти угоди ПІСЛЯ входу);
+    • прибуток (`target` — ≥70% шляху до цілі Пружини; `fade` — віддача піку).
+    `hold` — ⚡/📈 продовження ЗА угодою (свіжі 2 год) — тримаємо.
+    Рішення (`verdict`): вихід лише коли аномалії кажуть «закривати»
+    (≥ ANOM_GATE) І є підтвердження з ціни або прибутку, а продовження не
+    тримає; ВСІ три групи за вихід → `all` (бал ≥ ALL_EXIT_SCORE);
+    підтверджений 🔥→🧽 проти угоди → `combo` (вихід). Без аномалій ціна й
+    прибуток лише `wait` — для них є інші правила виходу (SL, трейли).
+    ⚠️ ЛИШЕ НОВЕ ПІСЛЯ ВХОДУ (`opened_at`): аномалії до входу і сплеск свічки,
+    на якій угоду відкрито, — це те, ЧОМУ увійшли, а не причина виходити
+    (інакше щойно відкрита угода тут же «мала б закриватись»). Вихід можливий
+    не раніше, ніж зʼявиться нова аномалія — закриття наступної 15m/1h свічки."""
     sd = str(side).upper()
     op = _opp(sd)
     vw = vw or {}
@@ -408,20 +484,43 @@ def exit_score(side: str, vw: Optional[Dict], anoms: List[Dict], now: float,
         against = _c(po) * 0.6 if po is not None and po > 0 else 0.0
     xm = _cal_part(mult, 'exit')
     d = 'up' if sd == 'LONG' else 'dn'
-    rd = read_anomalies(anoms, now, levels_of(vw, levels), choch, xm, tol_pct=_tol_of(vw))
-    me, ot = rd[d], rd['dn' if d == 'up' else 'up']
-    # потік ПРОТИ угоди: 🧽 / ⚡-зсув / 🔥→🧽 у протилежний бік + тиск проти
-    fl = _c(ot['rev'] + 0.5 * ot['cont'] + 0.5 * ot['start'])
+    od = 'dn' if d == 'up' else 'up'
+    lk = max(ANOM_LOOK_SEC, float(look or ANOM_LOOK_SEC))
+    oa = _f(opened_at)
+    after = [a for a in (anoms or []) if oa is None or (_f(a.get('ts')) or 0) >= oa]
+    rd = read_anomalies(after, now, levels_of(vw, levels), choch, xm, look=lk,
+                        tol_pct=_tol_of(vw))
+    me, ot = rd[d], rd[od]
+    sm = _scen()
+    xs = sm.match_exit(rd['items'], sd, {'price': _f(vw.get('price')), 'beyond': vw.get('beyond'),
+                                         'box_hi': _f(vw.get('box_hi')),
+                                         'box_lo': _f(vw.get('box_lo'))},
+                       choch, now, opened_at=oa)
+    xdone = [x for x in xs if x.get('complete')]
+    xtop = max(xdone, key=lambda x: x['total']) if xdone else sm.best(xs)
+    # продовження за угодою — СВІЖЕ (2 год, зокрема й до входу): воно тримає
+    rr = read_anomalies(anoms, now, levels_of(vw, levels), choch, xm,
+                        look=ANOM_LOOK_SEC, tol_pct=_tol_of(vw))
+    mr = rr[d]
+    fl = _c(max(ot['rev'], ot['combo']) + 0.5 * ot['cont'] + 0.5 * ot['start'])
     notes = [f'проти: {n}' for n in ot['notes']]
-    # кульмінація: сплеск живого бару В БІК угоди або 🔥 після тривалого руху
-    # у бік угоди (виснаження), вага — частка розворотів після 🔥 з досліджень
-    climax = max(1.0 if vw.get('climax') == sd else 0.0, me['exhaust'])
+    # сплеск живого бару за угодою — лише на свічці, що ВІДКРИЛАСЬ після входу
+    bt = _f(vw.get('t'))
+    live_cl = vw.get('climax') == sd and (oa is None or (bt is not None and bt >= oa))
+    climax = max(1.0 if live_cl else 0.0, me['exhaust'])
     if me['exhaust']:
         notes.append('🔥 виснаження руху за угодою')
-    # продовження В бік угоди (⚡/📈 за угодою, підтверджене) — тримаємо
-    hold = _c(me['cont'] + 0.5 * me['start'])
+    if live_cl:
+        notes.append('💥 сплеск живого бару за угодою')
+    hold = _c(mr['cont'] + 0.5 * mr['start'])
     if hold:
-        notes.append('за угодою: ' + ', '.join(me['notes'][:2]))
+        notes.append('за угодою: ' + ', '.join(mr['notes'][:2]))
+    ch = 0.0
+    if choch and choch.get('dir') == od:
+        t = _f(choch.get('t')) or 0.0
+        if (opened_at is None and now - t <= lk) or (opened_at is not None and t >= float(opened_at)):
+            ch = 1.0
+            notes.append('🔀 CHoCH проти угоди')
     target = 0.0
     try:
         if exh and exh.get('pct') is not None:
@@ -435,22 +534,80 @@ def exit_score(side: str, vw: Optional[Dict], anoms: List[Dict], now: float,
             fade = _c((share - 0.3) / 0.4)
     except (TypeError, ValueError, ZeroDivisionError):
         fade = 0.0
-    parts = {'against': round(against, 3), 'flow': round(max(0.0, fl), 3),
-             'climax': climax, 'target': round(target, 3), 'fade': round(fade, 3)}
+    parts = {'against': round(against, 3), 'choch': ch, 'flow': round(max(0.0, fl), 3),
+             'climax': round(climax, 3), 'target': round(target, 3), 'fade': round(fade, 3)}
     score = round(max(0.0, 100.0 * sum(W_EXIT[k] * parts[k] for k in W_EXIT)
                       - HOLD_PENALTY * hold), 1)
     strong = [k for k, v in parts.items() if v > 0.3]
+    anom = max(parts[k] for k in ANOM_PARTS)
+    anom_ok = anom >= ANOM_GATE
+    price_ok = any(parts[k] > 0.3 for k in PRICE_PARTS)
+    profit_ok = any(parts[k] > 0.3 for k in PROFIT_PARTS)
     combo = ot['combo'] >= 0.8
-    ready = len(strong) >= EXIT_MIN_PARTS and hold < 0.6
-    if ot['combo_conf']:
+    held = hold >= HOLD_BLOCK
+    if xdone:
+        # 🧩 Сценарій виходу завершено — КОМПЛЕКС реакцій проти угоди склався.
+        verdict, ready = 'scenario', True
+        score = max(score, SCENARIO_EXIT_SCORE)
+    elif ot['combo_conf']:
         # 🔥→🧽 проти угоди, ПІДТВЕРДЖЕНИЙ свічкою / CHoCH — найсильніший
         # сценарій розвороту: виходимо, продовження вже не тримає.
-        score, ready = max(score, COMBO_EXIT_SCORE), True
-    elif combo:
-        score = max(score, COMBO_WAIT_SCORE)   # сценарій є, чекаємо підтвердження
+        verdict, ready = 'combo', True
+        score = max(score, COMBO_EXIT_SCORE)
+    elif anom_ok and price_ok and profit_ok and hold < ANOM_GATE:
+        verdict, ready = 'all', True
+        score = max(score, ALL_EXIT_SCORE)
+    elif held:
+        verdict, ready = 'hold', False
+    elif anom_ok and (price_ok or profit_ok):
+        verdict, ready = 'close', True
+    elif anom_ok:
+        verdict, ready = 'watch', False
+        if combo:
+            score = max(score, COMBO_WAIT_SCORE)   # сценарій є, чекаємо підтвердження
+    elif price_ok or profit_ok:
+        verdict, ready = 'wait', False
+    else:
+        verdict, ready = 'none', False
+    checklist = [{'k': k, 'label': EXIT_CHECK_UA[k], 'v': parts[k],
+                  'say': 'close' if parts[k] > 0.3 else ''} for k in
+                 ('flow', 'climax', 'against', 'choch', 'target', 'fade')]
+    checklist.append({'k': 'hold', 'label': EXIT_CHECK_UA['hold'], 'v': round(hold, 3),
+                      'say': 'hold' if hold >= ANOM_GATE else ''})
     return {'side': sd, 'score': score, 'parts': parts, 'flow_notes': notes,
             'strong': strong, 'hold': round(hold, 3), 'combo': combo,
-            'combo_conf': ot['combo_conf'], 'ready': ready}
+            'combo_conf': ot['combo_conf'], 'ready': ready, 'verdict': verdict,
+            'verdict_ua': EXIT_VERDICT_UA[verdict], 'anom': round(anom, 3),
+            'groups': {'anom': anom_ok, 'price': price_ok, 'profit': profit_ok},
+            'checklist': checklist, 'scenario': sm.view(xtop),
+            'scenario_text': sm.stages_text(xtop),
+            'scenarios': [sm.view(x) for x in xs]}
+
+
+AI_EXIT_MODES = ('confirmed', 'all')
+AI_EXIT_MODE_UA = {'confirmed': 'аномалії + підтвердження',
+                   'all': 'лише коли всі показники за вихід'}
+
+
+def exit_decide(r: Dict, mode: str = 'confirmed') -> bool:
+    """🤖 Рішення «закривати» — за ВЕРДИКТОМ аномалій, а не за порогом балу
+    (вимога 17.11: «не просто з порогом бал ≥ 70»). Бал — лише довідка.
+    • 'confirmed' (деф.): аномалії кажуть закривати + підтвердження ціною або
+      прибутком (`close`), усі групи разом (`all`) або підтверджений 🔥→🧽;
+    • 'all': лише коли ВСІ групи за вихід (`all`) або підтверджений 🔥→🧽."""
+    v = (r or {}).get('verdict')
+    if not (r or {}).get('ready'):
+        return False
+    if mode == 'all':
+        return v in ('scenario', 'all', 'combo')
+    return v in ('scenario', 'all', 'combo', 'close')
+
+
+def exit_checklist_text(r: Dict) -> str:
+    """«✓ аномалії · ✓ ціна · ✗ прибуток» — для рядка 🧾 Логу."""
+    g = (r or {}).get('groups') or {}
+    return ' · '.join(f"{'✓' if g.get(k) else '✗'} {nm}" for k, nm in
+                      (('anom', 'аномалії'), ('price', 'ціна'), ('profit', 'прибуток')))
 
 
 def parts_text(parts: Dict) -> str:
@@ -739,7 +896,8 @@ class AiEngine:
         cand = self.candidates(min_charge)
         anoms: Dict[str, List[Dict]] = {}
         try:
-            for a in (self.db.get_vol_anomalies(since=now - ANOM_LOOK_SEC, limit=5000)
+            look = max(ANOM_LOOK_SEC, getattr(_scen(), 'SCEN_LOOK_SEC', ANOM_LOOK_SEC))
+            for a in (self.db.get_vol_anomalies(since=now - look, limit=20000)
                       if self.db else []) or []:
                 anoms.setdefault(a.get('symbol'), []).append(a)
         except Exception:
@@ -764,8 +922,8 @@ class AiEngine:
             charged = rec.get('state') == 'charged' or float(rec.get('charge') or 0) >= min_charge
             al = anoms.get(S) or []
             lv, ch = scanner_context(self._scn(), S)
-            el = entry_score('LONG', rec, vw, al, now, self._cal, lv, ch)
-            es = entry_score('SHORT', rec, vw, al, now, self._cal, lv, ch)
+            el = entry_score('LONG', rec, vw, al, now, self._cal, lv, ch, charged)
+            es = entry_score('SHORT', rec, vw, al, now, self._cal, lv, ch, charged)
             ep = self._eps.get(S)
             if ep is None and charged:
                 ep = self._eps[S] = episode_new(S, now, rec, vw, src)
@@ -773,15 +931,28 @@ class AiEngine:
             if ep is not None:
                 episode_step(ep, now, rec, vw, el, es, charged)
                 self._dirty = True
-            best = el if el['score'] >= es['score'] else es
+            # головний бік: готовий сценарій → більший прогрес сценарію → бал
+            def _rk(x):
+                sc = x.get('scenario') or {}
+                return (1 if entry_decide(x) else 0, (sc.get('done') or 0) / max(1, sc.get('total') or 1),
+                        x['score'])
+            best = el if _rk(el) >= _rk(es) else es
             view[S] = {'symbol': S, 'src': src, 'charge': rec.get('charge'),
                        'state': rec.get('state'), 'lean': rec.get('lean'),
                        'prob_long': rec.get('prob_long'), 'long': el, 'short': es,
                        'best': best['side'], 'episode_age': (int(now - ep['started_at'])
                                                              if ep else None),
                        'signal': (ep or {}).get('signal')}
-            if (s.get('ai_signal_enabled') and ep is not None and best['ready']
-                    and best['score'] >= float(s.get('ai_entry_min') or 70)):
+            if ep is not None:
+                for x in (el, es):
+                    sc = x.get('scenario') or {}
+                    if entry_decide(x):
+                        k = f"scen_{x['side']}_{sc.get('key')}"
+                        if k not in ep:
+                            ep[k] = int(now)
+                            _ev(ep, now, 'scenario', side=x['side'], key=sc.get('key'),
+                                name=sc.get('name'), score=x.get('score'))
+            if s.get('ai_signal_enabled') and ep is not None and entry_decide(best):
                 self._try_signal(S, best, rec, vw, ep, now)
             if ep is not None:
                 why = episode_done(ep, now, charged)
@@ -816,10 +987,11 @@ class AiEngine:
             return
         ep['tries'][side] = [tr[0] + 1, int(now)]
         px = _px(vw, rec)
-        head = (f"🤖 Сигнал ШІ {side} · бал {sc_res['score']} · розряд Пружини "
-                f"(заряд {rec.get('charge')}) · {parts_text(sc_res['parts'])}")
+        head = (f"🤖 Сигнал ШІ {side} · 🧩 {sc_res.get('scenario_text') or ''} · "
+                f"заряд Пружини {rec.get('charge')} · довідково бал {sc_res['score']}")
         log_activity(S, 'signal', f'{head} · {detail}', side=side, source='AI',
-                     extra={'ai_score': sc_res['score'], 'ai_parts': sc_res['parts']})
+                     extra={'ai_score': sc_res['score'], 'ai_parts': sc_res['parts'],
+                            'ai_scenario': (sc_res.get('scenario') or {}).get('key')})
         if not ok:
             log_activity(S, 'rejected', reason, side=side, source='AI')
             _ev(ep, now, 'signal_rejected', side=side, score=sc_res['score'], reason=reason)
@@ -832,7 +1004,9 @@ class AiEngine:
             except Exception as e:
                 self._stat['last_err'] = f'on_signal {S}: {e}'[:200]
         ep['signal'] = {'t': int(now), 'side': side, 'px': px, 'score': sc_res['score'],
-                        'parts': sc_res['parts'], 'result': str(res)[:80] if res else None}
+                        'parts': sc_res['parts'], 'result': str(res)[:80] if res else None,
+                        'scenario': (sc_res.get('scenario') or {}).get('key'),
+                        'scenario_name': (sc_res.get('scenario') or {}).get('name')}
         _ev(ep, now, 'signal', side=side, px=px, score=sc_res['score'])
         self._stat['signals'] += 1
 
@@ -879,7 +1053,8 @@ class AiEngine:
         return {'ok': True, 'settings': self.settings(), 'stat': dict(self._stat),
                 'calibration': self.calibration(), 'coins': view,
                 'episodes_open': len(self._eps), 'server_now': self._clock(),
-                'weights': {'entry': W_ENTRY, 'exit': W_EXIT}}
+                'weights': {'entry': W_ENTRY, 'exit': W_EXIT},
+                'catalog': getattr(_scen(), 'CATALOG', None)}
 
     def _loop(self):
         time.sleep(45)

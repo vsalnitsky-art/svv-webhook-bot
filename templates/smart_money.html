@@ -2569,11 +2569,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                          розряду з живого 1h-бару + потоку ⚠ аномалій, ваги — з досліджень. -->
                     <span id="sm-ai-group" style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;
                                 padding:3px 8px;border:1px solid #3b3366;border-radius:6px">
-                    <label class="sm-checkbox" title="🤖 Сигнали ШІ: бот стежить за монетами, ЗАРЯДЖЕНИМИ в 🌀 Пружині (WATCHLIST) і в 🔭 скані біржі, і ловить МОМЕНТ РОЗРЯДУ: бал 0-100 = натяг пружини в бік (25%) + пробій 24-год коробки живим 1h-баром (30%) + імпульс бару — діапазон і обʼєм проти норми вистрілу (25%) + потік ⚠ аномалій обсягу за 2 год (20%). Ваги аномалій калібруються з власних досліджень «⚠ Аномалії обсягу» (частка, коли ціна справді пішла в бік підказки). Вето: ціна пробила коробку в протилежний бік або сильний зустрічний потік. Бал ≥ порогу і розряд почався → сигнал іде через УСІ увімкнені ворота (як будь-який інший) у звичайну обробку (черга / угода). Один сигнал на епізод заряду. ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="🤖 Сигнали ШІ: бот стежить за монетами, ЗАРЯДЖЕНИМИ в 🌀 Пружині (WATCHLIST) і в 🔭 скані біржі, і аналізує ВЕСЬ ПРОЦЕС перед входом — КОМПЛЕКС реакцій ⚠ аномалій обсягу (до 12 год), а не одну позначку. Сценарії входу: 🔁 Розворот після виснаження (🔥/🧽 зупинка зустрічного руху → друга реакція в бік входу → підтвердження свічкою / CHoCH → ціна тримається); 💥 Старт розряду Пружини (заряд → імпульс → продовження → пробій ніхто не поглинає); ↗ Продовження після відкату (рух → відкат без зустрічного тиску → нова реакція на рівні). Сигнал іде ЛИШЕ коли сценарій пройдено повністю і точка входу свіжа (≤2 свічки) — через усі ваші ворота. Порогу балу немає. Етапи кожного сценарію — у таблиці ШІ панелі ⚠ Аномалії. ВИМК (дефолт).">
                         <input type="checkbox" id="sm-ai-signal" onchange="updateAiSignal()">
                         🤖 Сигнали ШІ
                     </label>
-                    <label title="Мінімальний бал розряду (0-100), з якого йде сигнал">бал ≥ <input type="number" id="sm-ai-entry-min" min="30" max="100" step="5" style="width:48px" onchange="updateAiSignal()"></label>
                     <label title="Мінімальний ЗАРЯД пружини (0-100), з якого монета береться під нагляд ШІ">заряд ≥ <input type="number" id="sm-ai-min-charge" min="0" max="100" step="5" style="width:48px" onchange="updateAiSignal()"></label>
                     </span>
                     <label class="sm-checkbox" title="🔒 Один VOB-сигнал на один 1H-OB (Require OB Match TF). Перший 5хв-VOB, що пройшов усі увімкнені фільтри (OB/Forecast/Decision), дає ОДИН сигнал; решта 5хв-VOB на цьому ж 1H-OB тихо ігноруються, поки не з'явиться НОВИЙ 1H-OB (будь-який напрямок). Тобто 1 сигнал = 1×(1H OB) + 1×(5хв VOB).">
@@ -4978,10 +4977,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <span style="margin-left:auto"><a class="vanom-btn" href="#" onclick="aiExport();return false" title="Закриті епізоди заряду: старт, розряд, вистріл, сигнал ШІ і що було після (CSV)">⬇ Епізоди ШІ CSV</a></span>
             </div>
             <div id="ai-cal" style="font-size:0.66rem;color:#8b93a7;margin-bottom:6px"></div>
+            <details id="ai-rules" style="font-size:0.68rem;color:#cbd5e1;margin-bottom:6px;border:1px solid #2b3444;border-radius:6px;padding:4px 8px">
+                <summary style="cursor:pointer;color:#c4b5fd;font-weight:700">📘 Правила ШІ — які послідовності реакцій ведуть до входу, а які — до виходу</summary>
+                <div id="ai-rules-body" style="margin-top:6px">—</div>
+            </details>
             <div style="overflow-x:auto;max-height:300px;overflow-y:auto"><table class="tm-table" id="ai-table" style="width:100%">
                 <thead><tr><th>Монета</th><th title="🌀 WATCHLIST / 🔭 скан біржі">Джерело</th><th title="Заряд пружини 0-100">Заряд</th>
-                    <th title="Бал розряду LONG 0-100 (складові — у підказці)">🟢 LONG</th><th title="Бал розряду SHORT 0-100">🔴 SHORT</th>
-                    <th title="Чи почався розряд у кращий бік і чи немає вето">Розряд</th><th title="Скільки триває епізод заряду">Епізод</th><th title="Сигнал ШІ в цьому епізоді">Сигнал</th></tr></thead>
+                    <th title="🧩 Сценарій входу LONG: етапи комплексу реакцій (✓ пройдено / · ще ні); у підказці — кожен етап, злам і довідковий бал">🟢 LONG · сценарій</th><th title="🧩 Сценарій входу SHORT">🔴 SHORT · сценарій</th>
+                    <th title="Рішення ШІ: ✅ точка входу (сценарій пройдено повністю і свіжий) · ⏳ формується · ⌛ запізно · ✗ злам">Рішення</th><th title="Скільки триває епізод заряду">Епізод</th><th title="Сигнал ШІ в цьому епізоді">Сигнал</th></tr></thead>
                 <tbody id="ai-tbody"><tr><td colspan="8" style="color:#8b93a7">—</td></tr></tbody>
             </table></div>
         </div>
@@ -5424,14 +5427,19 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label style="margin-left:10px" title="Мінімальний прибуток від входу: і умова озброєння, і найгірший стоп (покриває комісії)">мін. прибуток <input type="number" id="tm-exh-exit-profit" min="0" max="10" step="0.05" style="width:52px" onchange="saveTMSettings()"> %</label>
                         </div>
 
-                        <!-- 🤖 ВИХІД З УГОДИ ШІ (16.11): бал «зворотних процесів». -->
+                        <!-- 🤖 ВИХІД З УГОДИ ШІ (17.11): рішення — за ВЕРДИКТОМ ⚠ аномалій обсягу. -->
                         <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
                             <label>
                                 <input type="checkbox" id="tm-use-ai-exit" onchange="saveTMSettings()">
                                 🤖 Вихід з угоди ШІ
-                                <span class="tm-help" title="САМОСТІЙНЕ правило: бот рахує бал «зворотних процесів» 0-100 — живий 1h-бар іде ПРОТИ угоди (30%) · зустрічний потік ⚠ аномалій обсягу (20%) · кульмінація в бік угоди: сплеск живого бару або 🔥 аномалія з ваговим коефіцієнтом «після 🔥 рух розвернувся» з досліджень (20%) · угода пройшла шлях до цілі Пружини (15%) · віддано частину піку (15%). Закриваємо, коли бал ≥ порогу І щонайменше ДВА незалежні свідчення сильні — одне свідчення угоду не закриває. Ваги калібруються з досліджень «⚠ Аномалії обсягу». Перевірка раз на ~20с на книгу, без нових запитів до біржі. 📌 Manual не чіпає. Поза АБО/AND. ВИМК (дефолт).">?</span>
+                                <span class="tm-help" title="САМОСТІЙНЕ правило під контролем ⚠ АНОМАЛІЙ ОБСЯГУ. Бот читає поведінку обсягу ВІД ВХОДУ (не давніше 6 год) за правилами «Аномалій» і зводить три групи свідчень: 📖 АНОМАЛІЇ — 🧽 поглинання / ⚡ зміна ініціативи / 🔥→🧽 проти угоди, 🔥 виснаження руху за угодою, сплеск живого бару за угодою; ЦІНА — живий 1h-бар пробиває коробку / пружина вистрілила ПРОТИ угоди, CHoCH проти угоди після входу; ПРИБУТОК — пройдено ≥70% шляху до цілі Пружини, віддано частину піку. Свіже ⚡/📈 продовження ЗА угодою — тримає. Без свідчення аномалій бот НЕ виходить (ціна чи прибуток самі — лише «⏳ чекаємо»: для них є SL і трейли). Підтверджений 🔥→🧽 проти угоди — вихід одразу. Ваги — з досліджень «⚠ Аномалії обсягу». Стан і чек-лист — значок 🤖 у колонці 🚨. Перевірка раз на ~20с на книгу, без нових запитів до біржі. 📌 Manual не чіпає. ВИМК (дефолт).">?</span>
                             </label>
-                            <label style="margin-left:10px" title="Поріг балу зворотних процесів (30-100)">бал ≥ <input type="number" id="tm-ai-exit-min" min="30" max="100" step="5" style="width:52px" onchange="saveTMSettings()"></label>
+                            <label style="margin-left:10px" title="Коли закривати. «Аномалії + підтвердження» — аномалії кажуть «закривати» і їх підтверджує ціна АБО прибуток. «Лише коли всі показники за вихід» — аномалії, ціна І прибуток разом (суворіше, рідше). Підтверджений 🔥→🧽 проти угоди закриває в обох режимах.">закривати:
+                                <select id="tm-ai-exit-mode" onchange="saveTMSettings()">
+                                    <option value="confirmed">аномалії + підтвердження</option>
+                                    <option value="all">лише коли всі показники за вихід</option>
+                                </select>
+                            </label>
                         </div>
 
                         <!-- 🧮 ОКРЕМЕ правило — СВІДОМО стоїть ПІСЛЯ «Комбінувати»,
@@ -6835,6 +6843,45 @@ function _aiScoreCell(e, best) {
         + `<span style="display:block;height:100%;width:${w}%;background:${col}"></span></span>`
         + `<b style="color:${col};${best ? '' : 'font-weight:400'}">${Math.round(sc)}</b>${e.veto ? '⛔' : ''}</span>`;
 }
+// 🧩 Сценарій входу (17.11): назва + крапки етапів (✓ зелена / · сіра) + стан.
+function _aiScenCell(e, best) {
+    if (!e) return '—';
+    const sc = e.scenario;
+    const parts = Object.entries(e.parts || {}).map(([k, v]) => `${_AI_PART[k] || k} ${Math.round((+v || 0) * 100)}%`).join(' · ');
+    if (!sc) {
+        return `<span style="color:#6b7280" title="${('Жодної реакції сценарію ще немає · довідково бал ' + Math.round(+e.score || 0) + (parts ? ' · ' + parts : '')).replace(/"/g, '&quot;')}">—</span>`;
+    }
+    const col = sc.broken ? '#6b7280' : (sc.ready && !e.veto ? '#4ade80' : (sc.stale ? '#94a3b8' : '#fbbf24'));
+    const dots = (sc.stages || []).map(x => `<span style="display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:2px;background:${x.done ? col : '#334155'}"></span>`).join('');
+    const tip = sc.name + ' ' + sc.done + '/' + sc.total + '\n'
+        + (sc.stages || []).map(x => (x.done ? '✓ ' : '· ') + x.label + (x.why ? ' — ' + x.why : '')).join('\n')
+        + (sc.broken ? '\n✗ злам: ' + sc.broken : '') + (sc.stale ? '\n⌛ сценарій завершено давно — точку входу пропущено' : '')
+        + (e.veto ? '\n⛔ вето: ' + e.veto : '')
+        + '\nДовідково: бал ' + Math.round(+e.score || 0) + (parts ? ' · ' + parts : '');
+    return `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;${best ? '' : 'opacity:0.75'}">`
+        + `<span style="color:${col};font-size:0.7rem">${sc.name}</span>${dots}<span style="font-family:monospace;color:${col}">${sc.done}/${sc.total}</span></span>`;
+}
+function _aiDecision(c) {
+    const b = c.best === 'LONG' ? c.long : c.short;
+    const sc = b && b.scenario;
+    const arrow = c.best === 'LONG' ? '▲' : '▼', col = c.best === 'LONG' ? '#4ade80' : '#f87171';
+    if (sc && sc.ready && !b.veto) return `<b style="color:${col}">✅ ${arrow} точка входу</b>`;
+    if (sc && sc.broken) return `<span style="color:#6b7280" title="${String(sc.broken).replace(/"/g, '&quot;')}">✗ злам</span>`;
+    if (sc && sc.stale) return '<span style="color:#94a3b8">⌛ запізно</span>';
+    if (sc && sc.done) return `<span style="color:#fbbf24">⏳ ${arrow} формується ${sc.done}/${sc.total}</span>`;
+    return '<span style="color:#6b7280">очікує</span>';
+}
+function _aiRulesHTML(cat) {
+    if (!cat) return '—';
+    const blk = (title, arr, col) => `<div style="margin:4px 0"><b style="color:${col}">${title}</b>`
+        + (arr || []).map(x => `<div style="margin:3px 0 3px 8px"><b>${x.name}</b>`
+            + `<span style="color:#8b93a7"> — ${x.why || ''}</span>`
+            + `<div style="margin-left:10px;color:#cbd5e1">${(x.stages || []).map((st, i) => `${i + 1}. ${st}`).join(' → ')}</div>`
+            + (x.break ? `<div style="margin-left:10px;color:#94a3b8">✗ злам: ${x.break}</div>` : '') + `</div>`).join('') + `</div>`;
+    return blk('ВХІД — сценарій має пройти ВСІ етапи по черзі', cat.entry, '#4ade80')
+        + blk('ВИХІД — лише реакції ПІСЛЯ входу', cat.exit, '#f87171')
+        + `<div style="margin-top:4px;color:#8b93a7">${(cat.rules || []).map(r => '• ' + r).join('<br>')}</div>`;
+}
 function _aiAge(sec) {
     if (sec == null) return '—';
     const m = Math.floor(sec / 60);
@@ -6863,19 +6910,20 @@ async function aiLoad() {
             ce.innerHTML = '🎓 Калібровка з «⚠ Аномалій обсягу» (30 дн): '
                 + (items.length ? items.join(' · ') : 'ще замало даних — ваги 1.0 (потрібно ≥30 випадків на вид)');
         }
+        const rb = document.getElementById('ai-rules-body');
+        if (rb && d.catalog && !rb.dataset.done) { rb.innerHTML = _aiRulesHTML(d.catalog); rb.dataset.done = '1'; }
         const tb = document.getElementById('ai-tbody');
         if (!tb) return;
         const rows = d.coins || [];
         if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" style="color:#8b93a7">Немає заряджених монет під наглядом</td></tr>'; return; }
         tb.innerHTML = rows.map(c => {
             const best = c.best === 'LONG' ? c.long : c.short;
-            const go = best && best.started && !best.veto;
-            const sig = c.signal ? `<b style="color:${c.signal.side === 'LONG' ? '#4ade80' : '#f87171'}">${c.signal.side === 'LONG' ? '▲' : '▼'} ${Math.round(c.signal.score || 0)}</b>${c.signal.ok === false ? ' <span style="color:#6b7280" title="' + String(c.signal.reason || '').replace(/"/g, '&quot;') + '">✗</span>' : ''}` : '—';
+                        const sig = c.signal ? `<b title="${String(c.signal.scenario_name || '').replace(/"/g, '&quot;')}" style="color:${c.signal.side === 'LONG' ? '#4ade80' : '#f87171'}">${c.signal.side === 'LONG' ? '▲' : '▼'} ${c.signal.scenario || Math.round(c.signal.score || 0)}</b>${c.signal.ok === false ? ' <span style="color:#6b7280" title="' + String(c.signal.reason || '').replace(/"/g, '&quot;') + '">✗</span>' : ''}` : '—';
             return `<tr><td>${typeof tvSym === 'function' ? tvSym(c.symbol) : c.symbol}</td>`
                 + `<td>${c.src === 'scan' ? '🔭' : '🌀'}</td>`
                 + `<td style="font-family:monospace">${c.charge != null ? Math.round(c.charge) : '—'}</td>`
-                + `<td>${_aiScoreCell(c.long, c.best === 'LONG')}</td><td>${_aiScoreCell(c.short, c.best === 'SHORT')}</td>`
-                + `<td>${go ? `<span style="color:${c.best === 'LONG' ? '#4ade80' : '#f87171'}">💥 ${c.best === 'LONG' ? '▲' : '▼'} почався</span>` : '<span style="color:#6b7280">очікує</span>'}</td>`
+                + `<td>${_aiScenCell(c.long, c.best === 'LONG')}</td><td>${_aiScenCell(c.short, c.best === 'SHORT')}</td>`
+                + `<td>${_aiDecision(c)}</td>`
                 + `<td style="font-family:monospace">${_aiAge(c.episode_age)}</td><td>${sig}</td></tr>`;
         }).join('');
     } catch (e) {
@@ -8184,8 +8232,6 @@ async function loadSettings() {
             if (vobAl) vobAl.checked = !!s.vob_alert_enabled;            // default OFF
             const aiSg = document.getElementById('sm-ai-signal');
             if (aiSg) aiSg.checked = !!s.ai_signal_enabled;              // default OFF
-            const aiEm = document.getElementById('sm-ai-entry-min');
-            if (aiEm) aiEm.value = (s.ai_entry_min != null ? s.ai_entry_min : 70);
             const aiMc = document.getElementById('sm-ai-min-charge');
             if (aiMc) aiMc.value = (s.ai_min_charge != null ? s.ai_min_charge : 65);
             const vobOne = document.getElementById('sm-vob-one-per-ob');
@@ -8427,7 +8473,7 @@ function updateSettingsSummary() {
         else if (bOn) summary += ' · банер ' + t;     // лише «за банером» (17.11)
     });
     { const _ai = document.getElementById('sm-ai-signal');
-      if (_ai && _ai.checked) summary += ` · 🤖 ШІ ≥${(document.getElementById('sm-ai-entry-min') || {}).value || 70}`; }
+      if (_ai && _ai.checked) summary += ' · 🤖 ШІ (сценарії)'; }
     [['sm-spbx-gate', '⚖ SMC Binance'], ['sm-spbw-gate', '⚖ SMC Bybit']].forEach(([g, t]) => {
         const _g = document.getElementById(g);
         if (_g && _g.checked) summary += ' · ' + t;
@@ -8530,7 +8576,6 @@ async function updateAiSignal() {
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 ai_signal_enabled: !!(g('sm-ai-signal') || {}).checked,
-                ai_entry_min: n('sm-ai-entry-min', 70),
                 ai_min_charge: n('sm-ai-min-charge', 65),
             }),
         });
@@ -11448,7 +11493,7 @@ async function loadTMSettings() {
         document.getElementById('tm-spring-fired-exit-dir').value = s.spring_fired_exit_dir || 'any';
         document.getElementById('tm-use-exh-exit').checked = !!s.use_exh_exit;
         { const _e = document.getElementById('tm-use-ai-exit'); if (_e) _e.checked = !!s.use_ai_exit;
-          const _m = document.getElementById('tm-ai-exit-min'); if (_m) _m.value = (s.ai_exit_min != null ? s.ai_exit_min : 70); }
+          const _m = document.getElementById('tm-ai-exit-mode'); if (_m) _m.value = (s.ai_exit_mode === 'all' ? 'all' : 'confirmed'); }
         document.getElementById('tm-exh-exit-min').value = (s.exh_exit_min != null) ? s.exh_exit_min : 75;
         document.getElementById('tm-exh-exit-atr').value = (s.exh_exit_atr != null) ? s.exh_exit_atr : 0.5;
         document.getElementById('tm-exh-exit-profit').value = (s.exh_exit_min_profit != null) ? s.exh_exit_min_profit : 0.3;
@@ -12016,7 +12061,7 @@ async function saveTMSettings() {
             spring_fired_exit_dir: document.getElementById('tm-spring-fired-exit-dir').value,
             use_exh_exit: document.getElementById('tm-use-exh-exit').checked,
             use_ai_exit: !!(document.getElementById('tm-use-ai-exit') || {}).checked,
-            ai_exit_min: _numOr('tm-ai-exit-min', 70),
+            ai_exit_mode: ((document.getElementById('tm-ai-exit-mode') || {}).value === 'all') ? 'all' : 'confirmed',
             exh_exit_min: _numOr('tm-exh-exit-min', 75),
             exh_exit_atr: _numOr('tm-exh-exit-atr', 0.5),
             exh_exit_min_profit: _numOr('tm-exh-exit-profit', 0.3),
@@ -19221,7 +19266,37 @@ function sbrTrailBadgeHTML(p) {
         + (t.charge_ok ? '<span style="color:#facc15">🌀</span>' : '')
         + `</span></td>`;
 }
+// 🤖 Вихід ШІ (17.11): стан рішення за аномаліями — значок у колонці 🚨.
+// Три крапки = групи свідчень «аномалії · ціна · прибуток» (зелена — за вихід);
+// у підказці — вердикт і повний чек-лист.
+const _AIX_ICON = {scenario: '🧩', all: '✅', combo: '🔥', close: '⚠', hold: '⚡', watch: '👁', wait: '⏳', none: '·'};
+const _AIX_COL = {scenario: '#f87171', all: '#f87171', combo: '#f87171', close: '#fb923c', hold: '#4ade80',
+                  watch: '#fbbf24', wait: '#94a3b8', none: '#64748b'};
+function aiExitChipHTML(p) {
+    const x = p && p.ai_exit;
+    if (!x || !x.verdict) return '';
+    const g = x.groups || {};
+    const dot = (on, nm) => `<span title="${nm}" style="display:inline-block;width:6px;height:6px;border-radius:50%;margin-left:2px;background:${on ? '#f87171' : '#334155'}"></span>`;
+    const lines = (x.checklist || []).map(c => (c.say === 'close' ? '✓ ' : (c.say === 'hold' ? '⚡ ' : '· '))
+        + c.label + ' ' + Math.round((Number(c.v) || 0) * 100) + '%');
+    (x.scenarios || []).filter(sc => sc && sc.done).forEach(sc => {
+        lines.push('🧩 ' + sc.name + ' ' + sc.done + '/' + sc.total + ': '
+            + (sc.stages || []).map(st => (st.done ? '✓ ' : '⏳ ') + st.label).join(' · '));
+    });
+    const tip = ('🤖 Вихід ШІ: ' + (x.verdict_ua || '') + '\n'
+        + 'Аномалій від входу: ' + (x.anoms != null ? x.anoms : '—')
+        + ' · режим: ' + (x.mode === 'all' ? 'лише коли всі показники за вихід' : 'аномалії + підтвердження')
+        + '\n' + lines.join('\n') + (x.score != null ? '\nДовідково: бал ' + x.score : '')).replace(/"/g, '&quot;');
+    const c = _AIX_COL[x.verdict] || '#64748b';
+    return `<span title="${tip}" style="display:inline-flex;align-items:center;gap:1px;margin-left:5px;padding:0 4px;border-radius:4px;border:1px solid ${c}55;color:${c};font-size:0.66rem;font-family:monospace;vertical-align:middle">🤖${_AIX_ICON[x.verdict] || ''}`
+        + dot(g.anom, 'аномалії') + dot(g.price, 'ціна') + dot(g.profit, 'прибуток') + `</span>`;
+}
 function mmdAlertCellHTML(p) {
+    const h = _mmdAlertCellCore(p);
+    const chip = aiExitChipHTML(p);
+    return chip ? h.replace(/<\/td>$/, chip + '</td>') : h;
+}
+function _mmdAlertCellCore(p) {
     // 🎯 % до цілі переїхав у колонку «Ціль»; «⚑ ДО ВХОДУ» не показуємо (вимога 11.11).
     const _tr = sbrTrailBadgeHTML(p);
     if (_tr) return _tr;
