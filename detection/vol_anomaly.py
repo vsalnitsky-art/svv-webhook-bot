@@ -41,16 +41,25 @@ FETCH_BARS = 40              # 20 база + 8 наслідок + запас
 SETTLE_SEC = 4               # біржа віддає закритий бар не миттєво
 RETRY_SEC = 8
 WORKERS = 4
-KEEP_DAYS = 120              # історія для статистики
+KEEP_DAYS = 120              # історія для статистики (дефолт налаштування keep_days)
+KEEP_DAYS_MIN, KEEP_DAYS_MAX = 7, 730
 KINDS = ('absorb', 'climax', 'side', 'spike')
 KIND_UA = {'absorb': '🧽 Поглинання', 'climax': '🔥 Кульмінація',
            'side': '⚡ Перекіс', 'spike': '📈 Сплеск'}
 DB_SETTINGS = 'vol_anomaly_settings'
-DEFAULT_SETTINGS = {'enabled': True, 'scope': 'watchlist'}   # watchlist | trades
+DEFAULT_SETTINGS = {'enabled': True, 'scope': 'watchlist', 'keep_days': KEEP_DAYS}   # scope: watchlist | trades
 BB_KLINE_URL = 'https://api.bybit.com/v5/market/kline'
 
 
 # ───────────────────────── ЧИСТІ ФУНКЦІЇ ─────────────────────────
+def keep_days_norm(v) -> int:
+    """Скільки днів тримати аномалії (автоочистка рушія раз на добу)."""
+    try:
+        return max(KEEP_DAYS_MIN, min(KEEP_DAYS_MAX, int(float(v))))
+    except (TypeError, ValueError):
+        return KEEP_DAYS
+
+
 def median(a: List[float]) -> float:
     b = sorted(a)
     n = len(b)
@@ -284,6 +293,7 @@ class VolAnomalyMonitor:
             if isinstance(st, str):
                 st = json.loads(st)
             self._settings.update({k: st[k] for k in DEFAULT_SETTINGS if k in st})
+            self._settings['keep_days'] = keep_days_norm(self._settings.get('keep_days'))
         except Exception:
             pass
 
@@ -296,6 +306,8 @@ class VolAnomalyMonitor:
             self._settings['enabled'] = bool(patch['enabled'])
         if patch.get('scope') in ('watchlist', 'trades'):
             self._settings['scope'] = patch['scope']
+        if 'keep_days' in patch:
+            self._settings['keep_days'] = keep_days_norm(patch.get('keep_days'))
         try:
             if self.db:
                 self.db.set_setting(DB_SETTINGS, dict(self._settings))
@@ -347,6 +359,15 @@ class VolAnomalyMonitor:
                     wl = list(sc.get_watchlist() or []) if sc else []
             except Exception:
                 wl = []
+            # 🌀/🔭 монети «Пружини — скан біржі» (17.11): дослідження розряду
+            # заряджених монет потребує їхніх аномалій, а WATCHLIST їх не має.
+            try:
+                import sys as _sys
+                _m = _sys.modules.get('detection.spring_scan')
+                if _m and hasattr(_m, 'signal_symbols'):
+                    wl = list(wl) + list(_m.signal_symbols(40) or [])
+            except Exception:
+                pass
         return list(dict.fromkeys(str(s).upper() for s in tr + wl if s))
 
     def _split(self, sym: str, tf: str, t_sec: int) -> Optional[float]:
@@ -478,7 +499,7 @@ class VolAnomalyMonitor:
         if now - self._last_purge > 86400 and self.db and hasattr(self.db, 'purge_vol_anomalies'):
             self._last_purge = now
             try:
-                self.db.purge_vol_anomalies(KEEP_DAYS)
+                self.db.purge_vol_anomalies(keep_days_norm(self._settings.get('keep_days')))
             except Exception:
                 pass
         return len(jobs)

@@ -25,7 +25,7 @@ PROG_MILESTONES = (25, 50, 75, 100)
 FIRE_MILESTONES = (50, 75)  # готовність вистрілу живого бару, %
 TRAIL_MOVE_GAP = 900        # рух стопу трейлу — не частіше ніж раз на 15 хв
 SNAP_KEYS = ('px', 'pnl', 'prog', 'exh', 'fp', 'rx', 'vx', 'bx', 'sq', 'clx',
-             'fired', 'tstop', 'sstop')
+             'fired', 'tstop', 'sstop', 'ai')   # ai — бал 🤖 «Виходу ШІ» в ту мить
 
 
 def _r(v, n=3):
@@ -64,6 +64,7 @@ def snap_of(pos: Dict, price, vw: Optional[Dict], ex: Optional[Dict]) -> Dict:
         'sq': vw.get('pre_sq'), 'clx': vw.get('climax'),
         'fired': (f.get('side') if isinstance(f, dict) else None),
         'tstop': _r(tt.get('stop_px'), 10), 'sstop': _r(st.get('stop_px'), 10),
+        'ai': _r(((pos.get('ai_exit') or {}) if isinstance(pos.get('ai_exit'), dict) else {}).get('score'), 1),
     }
 
 

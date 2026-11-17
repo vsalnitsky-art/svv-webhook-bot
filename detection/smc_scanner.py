@@ -476,6 +476,12 @@ DEFAULT_SETTINGS = {
     # (на ринку в русі заряд 2-12, тож 50 різав би майже все).
     'spring_charge_gate_enabled': False,
     'spring_min_charge': 50,
+    # 🤖 СИГНАЛИ ШІ (вимога 17.11): розряд ЗАРЯДЖЕНОЇ Пружини → сигнал у ті самі
+    # ворота `_signal_allowed`. Рушій — detection/ai_signals.py. Деф. ВИМК:
+    # новий тип сигналу не має мовчки розширити потік угод.
+    'ai_signal_enabled': False,
+    'ai_entry_min': 70,       # бал «розряд почався» ≥
+    'ai_min_charge': 65,      # «заряджена» = заряд ≥ (65 = 🌀 заряджена)
     # 🌀/🔭 «ЧЕРЕЗ ПРУЖИНУ-WL» і «ЧЕРЕЗ ПРУЖИНУ-СКАН» (вимога 10.11) — як
     # «🔔 Через МММ-SBR»: монета у вкладці свого боку таблиці (+ за бажанням
     # банер «Куди накручено» того самого боку). Усі деф. ВИМК.
@@ -1876,6 +1882,7 @@ class SMCScanner:
                        'sprw_gate_enabled', 'sprw_gate_banner',
                        'sprx_gate_enabled', 'sprx_gate_banner', 'sprx_scan_signals',
                        'spbx_gate_enabled', 'spbw_gate_enabled',
+                       'ai_signal_enabled', 'ai_entry_min', 'ai_min_charge',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -2059,6 +2066,13 @@ class SMCScanner:
                     self._settings.get('spring_min_charge', 50)))))
             except (TypeError, ValueError):
                 self._settings['spring_min_charge'] = 50
+            # 🤖 Сигнали ШІ
+            self._settings['ai_signal_enabled'] = bool(self._settings.get('ai_signal_enabled', False))
+            for _k, _d in (('ai_entry_min', 70), ('ai_min_charge', 65)):
+                try:
+                    self._settings[_k] = max(0, min(100, int(float(self._settings.get(_k, _d)))))
+                except (TypeError, ValueError):
+                    self._settings[_k] = _d
 
             # === 🆕 Алерт «новий OB»: валідація ===
             self._settings['ob_alert_enabled'] = bool(

@@ -85,9 +85,9 @@
       inner + "</a>";
   }
 
-  var SIGNAL_BADGES_JS = { "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS", "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB", "mm_vob": "🧮 VOB з МММ-монітора", "liq_vob": "💧 VOB + Сканер ліквідності", "ob_alert": "🆕 Новий OB", "poc": "🎯 POC-сетап", "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний", "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний" };
+  var SIGNAL_BADGES_JS = { "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS", "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB", "mm_vob": "🧮 VOB з МММ-монітора", "liq_vob": "💧 VOB + Сканер ліквідності", "ob_alert": "🆕 Новий OB", "ai": "🤖 Сигнал ШІ", "poc": "🎯 POC-сетап", "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний", "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний" };
   var ENGINE_BADGES_JS = { "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4", "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап", "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-Trend", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision", "MMR": "🧩 МММ-Готовність", "MMS": "🔔 МММ-SBR", "XSPR": "🔭 Пружина-скан", "SPR": "🌀 Пружина", "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий" };
-  var SIGNAL_ICON_JS = { "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰", "mm_vob": "🧮", "liq_vob": "💧", "ob_alert": "🆕", "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋", "manual_ui": "✋", "manual_ui_overflow": "✋", "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥", "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
+  var SIGNAL_ICON_JS = { "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰", "mm_vob": "🧮", "liq_vob": "💧", "ob_alert": "🆕", "ai": "🤖", "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋", "manual_ui": "✋", "manual_ui_overflow": "✋", "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥", "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
   var ENGINE_ICON_OVERRIDE_JS = { "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
   
   function signalCodeOf(raw) { return raw ? String(raw).split(" · ")[0].split(" → ")[0].trim() : ""; }
@@ -1364,10 +1364,24 @@
     if (!sym) { h.innerHTML = '<span class="iw-title">—</span>'; IW.layerLg = ""; if (lg) legendPaint(); return; }
     var c = IW.coin || {}, px = livePx(sym);
     /* OHLC-легенда переїхала у шапку графіка; SBR-бейджі 1H/4H видалені. */
-    h.innerHTML = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym, !!(c.src && c.src !== "ext")) + "</span>" +
+    /* 17.11: OHLC-легенду НЕ перестворюємо — шапка перемальовується щосекунди
+       (жива ціна), і порожній новий вузол легенди блимав «то є, то нема», доки
+       її не домальовувало наступне оновлення. Тепер той самий вузол
+       переноситься в нову розмітку, а незмінна шапка не чіпається взагалі. */
+    var headHtml = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym, !!(c.src && c.src !== "ext")) + "</span>" +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" + pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
-      (c.src === "ext" ? '<span class="bdg warn ext-badge" title="Outside the bot\'s WATCHLIST">🛰 NOT IN BOT</span>' : "") +
-      '<span class="tv-ohlc" id="tv-ohlc"><span class="ohlc-legend"></span></span>';
+      (c.src === "ext" ? '<span class="bdg warn ext-badge" title="Outside the bot\'s WATCHLIST">🛰 NOT IN BOT</span>' : "");
+    var keepLg = document.getElementById("tv-ohlc");
+    if (h._headSig !== headHtml || !keepLg || keepLg.parentNode !== h) {
+      h.innerHTML = headHtml;
+      h._headSig = headHtml;
+      if (!keepLg) {
+        keepLg = document.createElement("span");
+        keepLg.className = "tv-ohlc"; keepLg.id = "tv-ohlc";
+        keepLg.innerHTML = '<span class="ohlc-legend"></span>';
+      }
+      h.appendChild(keepLg);
+    }
     /* Легенда шарів переїхала в нижній рядок графіка (chart-footer). */
     IW.layerLg =
       '<span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
@@ -2170,7 +2184,7 @@
         '<td class="r pp-timer" data-since="' + Math.floor(p.opened_at || 0) + '">' + (p.opened_at ? ppTimer(p.opened_at) : "—") + "</td></tr>";
     }).join("");
   }
-  var PP_REASON = { manual: "✋ Закрито вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit", manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 Автопілот: ціль досягнута", breakeven: "🟰 Беззбиток", breakeven_close: "⚖️ Беззбиток", sbr_exit: "🔔 Протилежний сигнал SBR", sbr_trail_exit: "🔔⏳ Трейл після SBR", opposite_ob_exit: "🧱 Новий протилежний OB", mm_flat_exit: "🧮 МММ LiQ ⚖ рівновага", mm_against_exit: "🧮 МММ LiQ проти", reverse_signal: "🔄 Протилежний сигнал (реверс)", reverse_smc: "🔄 Розворот структури", exh_exit: "🎯 Досягнення вершини", spring_fired_exit: "💥 Пружина вистрілила", forecast_1h_exit: "🔮 Прогноз 1H проти", forecast_4h_exit: "🔮 Прогноз 4H проти", forecast_1h_confluence: "🔮 Прогноз 1H + розворот", decision_exit: "🧠 Decision проти", signal_exit_and: "🔗 Усі вердикти проти", htf_flip: "📡 Розворот старшого TF", time_stop: "⏱ Вихід за часом", trailing_stop: "📈 Трейлінг-стоп", external_close: "🌐 Закрито на біржі", auto_gate_wait: "⏸ Пауза Auto-gate", bos_2_partial: "✂️ Часткове BOS-2", bos_3_partial: "✂️ Часткове BOS-3", bos_4_partial: "✂️ Часткове BOS-4", fuel_flipped: "⛽ МММ розвернувся", fuel_faded: "⛽ МММ згас" };
+  var PP_REASON = { manual: "✋ Закрито вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit", manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 Автопілот: ціль досягнута", breakeven: "🟰 Беззбиток", breakeven_close: "⚖️ Беззбиток", sbr_exit: "🔔 Протилежний сигнал SBR", sbr_trail_exit: "🔔⏳ Трейл після SBR", opposite_ob_exit: "🧱 Новий протилежний OB", mm_flat_exit: "🧮 МММ LiQ ⚖ рівновага", mm_against_exit: "🧮 МММ LiQ проти", reverse_signal: "🔄 Протилежний сигнал (реверс)", reverse_smc: "🔄 Розворот структури", exh_exit: "🎯 Досягнення вершини", spring_fired_exit: "💥 Пружина вистрілила", ai_exit: "🤖 Вихід ШІ", forecast_1h_exit: "🔮 Прогноз 1H проти", forecast_4h_exit: "🔮 Прогноз 4H проти", forecast_1h_confluence: "🔮 Прогноз 1H + розворот", decision_exit: "🧠 Decision проти", signal_exit_and: "🔗 Усі вердикти проти", htf_flip: "📡 Розворот старшого TF", time_stop: "⏱ Вихід за часом", trailing_stop: "📈 Трейлінг-стоп", external_close: "🌐 Закрито на біржі", auto_gate_wait: "⏸ Пауза Auto-gate", bos_2_partial: "✂️ Часткове BOS-2", bos_3_partial: "✂️ Часткове BOS-3", bos_4_partial: "✂️ Часткове BOS-4", fuel_flipped: "⛽ МММ розвернувся", fuel_faded: "⛽ МММ згас" };
   // 🎯 «Досягнення вершини»: частка піку угоди, взята на виході (результат ÷ пік).
   function ppPeakShare(c) {
     if (!c || c.reason !== "exh_exit") return null;

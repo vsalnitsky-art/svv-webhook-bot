@@ -700,6 +700,11 @@ DEFAULT_SETTINGS = {
     'exh_exit_min': 75,
     'exh_exit_atr': 0.5,
     'exh_exit_min_profit': 0.3,
+    # 🤖 ВИХІД З УГОДИ ШІ (вимога 17.11, деф. OFF): «почались зворотні процеси»
+    # — бал `ai_signals.exit_score` ≥ ai_exit_min і ≥2 незалежні свідчення
+    # (розворот ціни · потік обсягу проти · кульмінація · ціль Пружини · віддача піку).
+    'use_ai_exit': False,
+    'ai_exit_min': 70,
     'sbr_exit_1h': True,
     'sbr_exit_4h': True,
     # 🔔⏳ ТРЕЙЛ замість миттєвого виходу (вимога 31.10, деф. OFF): протилежний
@@ -1395,7 +1400,7 @@ class TradeManager:
                       'use_forecast_1h_exit', 'use_forecast_4h_exit',
                       'use_decision_exit', 'use_mm_flat_exit',
                       'use_sbr_exit', 'sbr_exit_1h', 'sbr_exit_4h', 'sbr_exit_trail',
-                      'use_spring_fired_exit', 'use_exh_exit',
+                      'use_spring_fired_exit', 'use_exh_exit', 'use_ai_exit',
                       'pilot_enabled',
                       'pilot_autofill_tp', 'pilot_tp2_from_magnet',
                       'tp1_move_to_be',
@@ -1481,7 +1486,8 @@ class TradeManager:
                 self._settings['sbr_trail_charge_min'] = 40
             for _k, _d, _lo, _hi in (('exh_exit_min', 75, 30.0, 100.0),
                                      ('exh_exit_atr', 0.5, 0.05, 5.0),
-                                     ('exh_exit_min_profit', 0.3, 0.0, 10.0)):
+                                     ('exh_exit_min_profit', 0.3, 0.0, 10.0),
+                                     ('ai_exit_min', 70, 30.0, 100.0)):
                 try:
                     self._settings[_k] = max(_lo, min(_hi, float(self._settings.get(_k, _d))))
                 except (TypeError, ValueError):
@@ -4544,6 +4550,16 @@ class TradeManager:
             if hit:
                 return self._signal_exit_close(symbol, pos, current_price,
                                                is_shadow, hit)
+        # 🤖 Вихід ШІ — теж ВЛАСНИЙ тротл (живий бар з кешу + аномалії з БД).
+        if s.get('use_ai_exit'):
+            try:
+                hit = self._ai_exit_reason(symbol, pos, current_price, is_shadow)
+            except Exception as e:
+                print(f"[TM] ai-exit check error {symbol}: {e}")
+                hit = None
+            if hit:
+                return self._signal_exit_close(symbol, pos, current_price,
+                                               is_shadow, hit)
         if not (s.get('use_forecast_1h_exit') or s.get('use_forecast_4h_exit')
                 or s.get('use_decision_exit') or s.get('use_mm_flat_exit')
                 or s.get('use_sbr_exit') or pos.get('sbr_exit_on')):
@@ -4571,6 +4587,57 @@ class TradeManager:
         if not hit:
             return False
         return self._signal_exit_close(symbol, pos, current_price, is_shadow, hit)
+
+    AI_EXIT_TTL = 20.0
+
+    def _ai_exit_reason(self, symbol: str, pos: Dict, current_price,
+                        is_shadow: bool = False) -> Optional[tuple]:
+        """🤖 Вихід з угоди ШІ (17.11): бал «почались зворотні процеси»
+        (`ai_signals.exit_score`) — живий 1h-бар із КЕШУ (`_spring_fire_view`,
+        його вже тягне монітор), ⚠ аномалії обсягу за 2 год (БД), прогрес до
+        цілі Пружини і віддача від піку угоди. Знімок балу лежить на позиції
+        (`ai_exit`) — його бачать 🔬 дослідження і таблиця угод."""
+        s = self._settings
+        tk = getattr(self, '_ai_exit_at', None)
+        if tk is None:
+            tk = self._ai_exit_at = {}
+        k = self._exit_key(symbol, is_shadow)
+        now = time.time()
+        if now - float(tk.get(k) or 0) < self.AI_EXIT_TTL:
+            return None
+        tk[k] = now
+        from detection import ai_signals
+        vw = self._spring_fire_view(symbol, fetch=False) or {}
+        anoms = self._trade_anomalies(symbol, now - ai_signals.ANOM_LOOK_SEC, now)
+        exh = self.trade_exh_for(pos, vw) or {}
+        pnl = None
+        try:
+            en = float(pos.get('entry_price') or 0)
+            px = float(current_price or 0)
+            if en > 0 and px > 0:
+                pnl = (px / en - 1) * 100 * (1 if str(pos.get('side')).upper() == 'LONG' else -1)
+        except (TypeError, ValueError):
+            pnl = None
+        peak = ((pos.get('research') or {}).get('pk') or {}).get('pnl')
+        if peak is None:
+            peak = pos.get('peak_pnl_pct')
+        mult = {}
+        try:
+            eng = ai_signals.get_ai_engine()
+            mult = eng.calibration() if eng else {}
+        except Exception:
+            mult = {}
+        lv, ch = ai_signals.scanner_context(getattr(self, 'scanner', None), symbol)
+        r = ai_signals.exit_score(pos.get('side'), vw, anoms, now, exh, pnl, peak, mult, lv, ch)
+        pos['ai_exit'] = {'score': r['score'], 'parts': r['parts'], 'ready': r['ready'],
+                          'hold': r.get('hold'), 'notes': (r.get('flow_notes') or [])[:6],
+                          'ts': int(now)}
+        thr = float(s.get('ai_exit_min', 70) or 70)
+        if not (r['ready'] and r['score'] >= thr):
+            return None
+        return ('ai_exit', f"🤖 Вихід ШІ: бал {r['score']} ≥ {thr:g} · "
+                           f"{ai_signals.parts_text(r['parts'])}"
+                           + (f" · потік: {', '.join(r['flow_notes'][:4])}" if r['flow_notes'] else ''))
 
     def _signal_exit_close(self, symbol: str, pos: Dict, current_price: float,
                            is_shadow: bool, hit: tuple) -> bool:
@@ -6607,7 +6674,7 @@ class TradeManager:
             'settings': {k: self._settings.get(k) for k in (
                 'use_spring_fired_exit', 'spring_fired_exit_dir', 'use_exh_exit',
                 'exh_exit_min', 'exh_exit_atr', 'exh_exit_min_profit',
-                'use_sbr_exit', 'sbr_exit_trail')},
+                'use_sbr_exit', 'sbr_exit_trail', 'use_ai_exit', 'ai_exit_min')},
         }
         in_trade = [a for a in an if float(a.get('ts') or 0) >= float(oa or 0)]
         self.db.archive_research({
@@ -7617,6 +7684,7 @@ class TradeManager:
             'sbr_trail_exit': '🔔⏳ МММ-SBR проти: ціна не продовжила угоду (трейл від ціни сигналу)',
             'spring_fired_exit': '💥 Пружина монети вистрілила після входу',
             'exh_exit': '🎯 Досягнення вершини: відкат від вершини після сплеску «Виснаження»',
+            'ai_exit': '🤖 Вихід ШІ: почались зворотні процеси (кілька незалежних свідчень)',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
             'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
@@ -10562,6 +10630,7 @@ class TradeManager:
             'sbr_trail_exit': '🔔⏳ SBR трейл',
             'spring_fired_exit': '💥 Пружина вистрілила',
             'exh_exit': '🎯 Досягнення вершини',
+            'ai_exit': '🤖 Вихід ШІ',
             'signal_exit_and': '🔗 Signal Exit (AND)',
             'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',

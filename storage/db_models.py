@@ -556,6 +556,58 @@ class TradeResearch(Base):
         return d
 
 
+class AiEpisode(Base):
+    """🤖 Епізод «Пружини» (17.11): заряджена монета від заряду до розряду й
+    наслідку — датасет для калібровки «Сигналів ШІ» / «Виходу ШІ». Пише лише
+    `detection/ai_signals.AiEngine`; автоочистка не чіпає (🔬 дослідження)."""
+    __tablename__ = f'{TABLE_PREFIX}ai_episode'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(24), index=True)
+    src = Column(String(8))                   # wl (🌀 WATCHLIST) | scan (🔭 скан)
+    started_at = Column(Float)
+    ended_at = Column(Float, index=True)
+    end_reason = Column(String(12))           # idle | after | max
+    charge0 = Column(Float)
+    charge_max = Column(Float)
+    price0 = Column(Float)
+    lean0 = Column(String(8))
+    prob0 = Column(Float)
+    fire_side = Column(String(8))
+    fire_at = Column(Float)
+    signal_side = Column(String(8))
+    signal_at = Column(Float)
+    signal_score = Column(Float)
+    move_pct = Column(Float)
+    max_up_pct = Column(Float)
+    max_dn_pct = Column(Float)
+    discharge = Column(String(8))
+    sig_best_pct = Column(Float)
+    sig_worst_pct = Column(Float)
+    sig_end_pct = Column(Float)
+    events = Column(Text)                     # JSON
+    samples = Column(Text)                    # JSON
+    signal = Column(Text)                     # JSON
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        import json as _j
+
+        def _l(v):
+            try:
+                return _j.loads(v) if v else None
+            except Exception:
+                return None
+        d = {c: getattr(self, c) for c in (
+            'id', 'symbol', 'src', 'started_at', 'ended_at', 'end_reason', 'charge0',
+            'charge_max', 'price0', 'lean0', 'prob0', 'fire_side', 'fire_at', 'signal_side',
+            'signal_at', 'signal_score', 'move_pct', 'max_up_pct', 'max_dn_pct', 'discharge',
+            'sig_best_pct', 'sig_worst_pct', 'sig_end_pct')}
+        for c in ('events', 'samples', 'signal'):
+            d[c] = _l(getattr(self, c))
+        return d
+
+
 class EventLog(Base):
     """Event log for dashboard"""
     __tablename__ = f'{TABLE_PREFIX}event_logs'

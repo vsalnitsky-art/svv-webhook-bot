@@ -41,11 +41,78 @@ _SERVICE_TABLES_TIME = {
 }
 
 
-def _db_service_cleanup(keep_days=None, wipe_all=False):
-    """Delete СЛУЖБОВІ rows older than keep_days (or ALL if wipe_all).
-    Returns number of deleted rows. Never touches strategy DATA tables."""
+# 🔬 ДОСЛІДЖЕННЯ (датасет для навчання бота) — НЕ службові: автоочистка їх НЕ
+# чіпає, чистити лише вручну на «🗄️ Database Administration» (16.11).
+_RESEARCH_TABLES_TIME = {
+    'sob_vol_anomaly': ('ts', 'sec'),
+    'sob_trade_research': ('closed_at', 'sec'),
+    'sob_ai_episode': ('ended_at', 'sec'),
+}
+
+# Людські назви таблиць для сторінки адміністрування (одне джерело).
+_DB_TABLE_LABELS = {
+    'sob_event_logs': 'Лог подій', 'sob_readiness_log': 'Лог «Готовності» (Черга-3)',
+    'sob_liquidation_buckets': 'Liquidation-map: кошики', 'sob_liquidation_oi_snapshots': 'Liquidation-map: OI',
+    'sob_liquidation_events': 'Liquidation-map: події', 'sob_liq_heatmap_profiles': 'Heatmap профілі',
+    'sob_top100_ob_snapshots': 'Top-100 OB знімки', 'sob_top100_ob_history': 'Top-100 OB історія',
+    'volumized_radar_snapshots': 'Vol Radar знімки', 'sob_order_blocks': 'Order Blocks (кеш)',
+    'sob_vol_anomaly': '⚠ Аномалії обсягу', 'sob_trade_research': '🔬 Дослідження угод',
+    'sob_ai_episode': '🤖 Епізоди «Пружини» (ШІ)', 'sob_trade_archive': 'Архів угод',
+    'sob_trades': 'Угоди', 'sob_bot_settings': 'Налаштування і стан', 'sob_users': 'Користувачі',
+    'sob_smc_ob_state': 'Стан OB (SMC)', 'sob_symbol_blacklist': 'Чорний список',
+    'sob_sleeper_candidates': 'Sleeper кандидати', 'sob_performance_stats': 'Статистика',
+    'volumized_radar_metadata': 'Vol Radar метадані', 'volumized_radar_stats': 'Vol Radar статистика',
+}
+
+
+def _db_table_kind(name):
+    """'service' / 'research' / 'data' — ЄДИНЕ правило і для сторінки, і для
+    очистки (раніше сторінка вгадувала за підрядком назви й показувала
+    `sob_order_blocks` / `sob_readiness_log` «даними», а чистились вони як
+    службові)."""
+    if name in _SERVICE_TABLES_TIME:
+        return 'service'
+    if name in _RESEARCH_TABLES_TIME:
+        return 'research'
+    if any(h in name for h in ('event_log', 'liquidation', 'heatmap', 'snapshot', 'history')):
+        return 'service'
+    return 'data'
+
+
+def _db_prune_sql(tbl, col, kind, keep_days, wipe_all=False):
+    """SQL видалення рядків, старших за keep_days (або всіх). None — невідомий тип."""
+    if wipe_all:
+        return f"DELETE FROM {tbl}"
+    kd = max(0, min(3650, int(keep_days)))
+    if kind == 'dt':
+        return f"DELETE FROM {tbl} WHERE {col} < NOW() - INTERVAL '{kd} days'"
+    if kind == 'sec':
+        return f"DELETE FROM {tbl} WHERE {col} < EXTRACT(EPOCH FROM NOW()) - {kd}*86400"
+    if kind == 'ms':
+        return f"DELETE FROM {tbl} WHERE {col} < (EXTRACT(EPOCH FROM NOW()) - {kd}*86400)*1000"
+    return None
+
+
+def _db_prune_table(tbl, keep_days=None, wipe_all=False):
+    """Почистити ОДНУ таблицю з білого списку (службові + дослідження) у ВЛАСНІЙ
+    транзакції. → видалено рядків. Таблиця поза списком → ValueError."""
+    spec = _SERVICE_TABLES_TIME.get(tbl) or _RESEARCH_TABLES_TIME.get(tbl)
+    if not spec:
+        raise ValueError(f'таблицю {tbl} чистити не можна')
+    sql = _db_prune_sql(tbl, spec[0], spec[1], 3 if keep_days is None else keep_days, wipe_all)
+    if not sql:
+        return 0
     from storage.db_models import engine
     from sqlalchemy import text
+    with engine.begin() as conn:
+        r = conn.execute(text(sql))
+        return r.rowcount or 0
+
+
+def _db_service_cleanup(keep_days=None, wipe_all=False):
+    """Delete СЛУЖБОВІ rows older than keep_days (or ALL if wipe_all).
+    Returns number of deleted rows. Never touches strategy DATA tables
+    (і таблиці ДОСЛІДЖЕННЯ теж — їх чистять лише вручну)."""
     deleted = 0
     try:
         kd = max(0, min(365, int(keep_days if keep_days is not None else 3)))
@@ -56,21 +123,9 @@ def _db_service_cleanup(keep_days=None, wipe_all=False):
     # транзакцію в «aborted», усі наступні DELETE мовчки падають, а фінальний
     # commit відкочує й те, що встигло видалитись, — тобто одна проблемна
     # таблиця тихо вимикала ВСЮ автоочистку.
-    for tbl, (col, kind) in _SERVICE_TABLES_TIME.items():
-        if wipe_all:
-            sql = f"DELETE FROM {tbl}"
-        elif kind == 'dt':
-            sql = f"DELETE FROM {tbl} WHERE {col} < NOW() - INTERVAL '{kd} days'"
-        elif kind == 'sec':
-            sql = f"DELETE FROM {tbl} WHERE {col} < EXTRACT(EPOCH FROM NOW()) - {kd}*86400"
-        elif kind == 'ms':
-            sql = f"DELETE FROM {tbl} WHERE {col} < (EXTRACT(EPOCH FROM NOW()) - {kd}*86400)*1000"
-        else:
-            continue
+    for tbl in _SERVICE_TABLES_TIME:
         try:
-            with engine.begin() as conn:
-                r = conn.execute(text(sql))
-                deleted += r.rowcount or 0
+            deleted += _db_prune_table(tbl, kd, wipe_all)
         except Exception as _e:
             print(f"[DB cleanup] {tbl} skip: {_e}")
     return deleted
@@ -91,7 +146,9 @@ def _db_vacuum_full():
     # ⚠️ `sob_bot_settings`: рядків там мало, але стан FF (щотакту) і знімки
     # МММ-книг (щохвилини) ПЕРЕЗАПИСУЮТЬ великі JSON-блоби — кожен UPDATE лишає
     # мертву версію рядка (TOAST), і без VACUUM таблиця роздувається.
-    tables = list(_SERVICE_TABLES_TIME.keys()) + ['sob_smc_ob_state', 'sob_bot_settings']
+    tables = (list(_SERVICE_TABLES_TIME.keys()) + ['sob_smc_ob_state', 'sob_bot_settings']
+              # ⚠ аномалії: наслідки дописуються UPDATE-ами → мертві версії рядків
+              + ['sob_vol_anomaly'])
     ve = create_engine(engine.url, isolation_level='AUTOCOMMIT')
     ok, failed = 0, 0
     try:
@@ -583,6 +640,16 @@ def create_app():
                 init_vol_anomaly(db=get_db())
             except Exception as e:
                 print(f"[APP] Failed to start Volume anomaly monitor: {e}")
+
+        if not _auto_started.get('ai_engine'):
+            _auto_started['ai_engine'] = True
+            try:
+                # 🤖 ШІ (17.11): епізоди заряджених монет обох «Пружин» + «Сигнали
+                # ШІ» (тумблер сканера ai_signal_enabled, деф. ВИМК).
+                from detection.ai_signals import init_ai_engine
+                init_ai_engine(db=get_db())
+            except Exception as e:
+                print(f"[APP] Failed to start AI engine: {e}")
 
         if not _auto_started.get('funding_spring'):
             _auto_started['funding_spring'] = True
@@ -4150,10 +4217,8 @@ def register_api_routes(app):
         # Within the bot's tables, split СЛУЖБОВІ (logs / market snapshots /
         # liquidation & heatmap caches — high-volume, append-only telemetry)
         # from ДАНІ РОБОТИ БОТА (trades, order blocks, settings, state).
-        SERVICE_HINTS = ['event_log', 'liquidation', 'heatmap', 'snapshot', 'history']
-
         def is_service(table_name):
-            return any(h in table_name for h in SERVICE_HINTS)
+            return _db_table_kind(table_name) == 'service'
 
         try:
             with engine.connect() as conn:
@@ -4208,6 +4273,7 @@ def register_api_routes(app):
                 foreign_indexes = 0
                 bot_data_total = 0      # робочі дані стратегії
                 bot_service_total = 0   # службові: логи/снапшоти/liq-кеші
+                bot_research_total = 0  # 🔬 дослідження (у складі «даних»)
 
                 for row in result:
                     table, size, size_bytes, table_size, table_size_bytes, index_size, index_size_bytes = row
@@ -4228,8 +4294,14 @@ def register_api_routes(app):
                     }
 
                     if belongs_to_bot(table):
-                        _svc = is_service(table)
-                        table_info['category'] = 'service' if _svc else 'data'
+                        _kind = _db_table_kind(table)
+                        _svc = (_kind == 'service')
+                        table_info['category'] = _kind
+                        table_info['label'] = _DB_TABLE_LABELS.get(table, '')
+                        table_info['clearable'] = (table in _SERVICE_TABLES_TIME
+                                                   or table in _RESEARCH_TABLES_TIME)
+                        if _kind == 'research':
+                            bot_research_total += size_bytes
                         bot_tables.append(table_info)
                         bot_total += size_bytes
                         bot_indexes += index_size_bytes
@@ -4257,6 +4329,7 @@ def register_api_routes(app):
                         'bot_mb': round(bot_total / (1024**2), 2),
                         'bot_data_mb': round(bot_data_total / (1024**2), 2),
                         'bot_service_mb': round(bot_service_total / (1024**2), 2),
+                        'bot_research_mb': round(bot_research_total / (1024**2), 2),
                         'bot_data_pct': round(bot_data_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
                         'bot_service_pct': round(bot_service_total / actual_db_size_bytes * 100, 1) if actual_db_size_bytes > 0 else 0,
                         'foreign_mb': round(foreign_total / (1024**2), 2),
@@ -4344,18 +4417,26 @@ def register_api_routes(app):
                     conn.commit()
 
                 elif action == 'old_cache':
-                    # Delete old cache data (>7 days)
-                    tables = ['sob_order_blocks', 'sob_top100_ob_snapshots', 'sob_top100_ob_history']
-                    for tbl in tables:
+                    # Кеші старші 7 днів. 🐞 Раніше DELETE шукав колонку `timestamp`,
+                    # якої в цих таблицях НЕМАЄ (created_at / created_at_t), а помилка
+                    # першої таблиці в спільній транзакції гасила решту — дія не
+                    # видаляла нічого. Тепер — ті самі колонки, що й автоочистка.
+                    for tbl in ('sob_order_blocks', 'sob_top100_ob_snapshots', 'sob_top100_ob_history'):
                         try:
-                            result = conn.execute(text(f"""
-                                DELETE FROM {tbl}
-                                WHERE timestamp < NOW() - INTERVAL '7 days'
-                            """))
-                            deleted_rows += result.rowcount
-                        except:
-                            pass
-                    conn.commit()
+                            deleted_rows += _db_prune_table(tbl, 7)
+                        except Exception as _e:
+                            print(f"[DB cleanup] {tbl} skip: {_e}")
+
+                elif action in ('table_old', 'table_all'):
+                    # Одна таблиця з білого списку (службові + 🔬 дослідження).
+                    tbl = str(table_name or '')
+                    if tbl not in _SERVICE_TABLES_TIME and tbl not in _RESEARCH_TABLES_TIME:
+                        return jsonify({'ok': False, 'reason': f'таблицю {tbl or "?"} чистити не можна'})
+                    try:
+                        days = int(data.get('days', 30) or 30)
+                    except (TypeError, ValueError):
+                        days = 30
+                    deleted_rows += _db_prune_table(tbl, days, wipe_all=(action == 'table_all'))
 
                 elif action in ('service_old', 'service_all'):
                     # СЛУЖБОВІ дані (логи/снапшоти/liquidation/heatmap) — головне
@@ -6310,6 +6391,19 @@ def register_api_routes(app):
         eng = get_vol_anomaly() or init_vol_anomaly(db=get_db())
         return jsonify({'ok': True, 'settings': eng.update_settings(request.get_json(silent=True) or {})})
 
+    @app.route('/api/vol-anomaly/clear', methods=['POST'])
+    def api_vol_anomaly_clear():
+        """🗑 Очистити дані аномалій обсягу: {days} — старші за N днів, без
+        days — УСІ. Наслідки ще не дорахованих записів теж зникають."""
+        body = request.get_json(silent=True) or {}
+        days = body.get('days')
+        try:
+            days = None if days in (None, '', 'all') else max(0, int(days))
+        except (TypeError, ValueError):
+            return jsonify({'ok': False, 'reason': 'некоректне число днів'})
+        n = get_db().clear_vol_anomalies(days)
+        return jsonify({'ok': True, 'deleted_rows': n, 'days': days})
+
     @app.route('/api/vol-anomaly/export')
     def api_vol_anomaly_export():
         """⚠ Усі аномалії з наслідками: ?days=30 (0 = усе) &fmt=csv|json &symbol="""
@@ -6358,6 +6452,34 @@ def register_api_routes(app):
                     if k not in cols:
                         cols.append(k)
             return _csv_resp(flat, cols, 'trade_research.csv')
+        return jsonify({'ok': True, 'rows': rows})
+
+    @app.route('/api/ai/state')
+    def api_ai_state():
+        """🤖 Стан рушія ШІ: монети в заряді з живими балами входу (LONG/SHORT),
+        розклад складових, калібровка, відкриті епізоди."""
+        from detection.ai_signals import get_ai_engine, init_ai_engine
+        eng = get_ai_engine() or init_ai_engine(db=get_db())
+        st = eng.state()
+        try:
+            st['episodes_total'] = len(get_db().get_ai_episodes(since=_days_since(30), limit=50000))
+        except Exception:
+            st['episodes_total'] = None
+        return jsonify(st)
+
+    @app.route('/api/ai/episodes-export')
+    def api_ai_episodes_export():
+        """🤖 Закриті епізоди заряджених монет: ?days=30 (0 = усе) &fmt=json|csv."""
+        rows = get_db().get_ai_episodes(since=_days_since(30),
+                                        symbol=request.args.get('symbol') or None,
+                                        limit=100000)
+        if request.args.get('fmt') == 'csv':
+            cols = ['id', 'symbol', 'src', 'started_at', 'ended_at', 'end_reason', 'charge0',
+                    'charge_max', 'price0', 'lean0', 'prob0', 'fire_side', 'fire_at',
+                    'signal_side', 'signal_at', 'signal_score', 'move_pct', 'max_up_pct',
+                    'max_dn_pct', 'discharge', 'sig_best_pct', 'sig_worst_pct', 'sig_end_pct',
+                    'events']
+            return _csv_resp(rows, cols, 'ai_episodes.csv')
         return jsonify({'ok': True, 'rows': rows})
 
     @app.route('/api/tm/stats')

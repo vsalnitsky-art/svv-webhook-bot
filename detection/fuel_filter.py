@@ -2298,6 +2298,7 @@ class FuelFilterDaemon:
                      'vob': 'Volumized OB', 'vob_alert': 'Volumized OB',
                      'mm_vob': '🧮 VOB з МММ-монітора',
                      'liq_vob': '💧 VOB + Сканер ліквідності',
+                     'ai': '🤖 Сигнал ШІ',
                      'poc': '🎯 POC-сетап', 'opp': '🔄 Реверс'}.get(kind, kind or '?')
         try:
             from detection.activity_log import log_activity

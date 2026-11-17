@@ -13,7 +13,7 @@ from storage.db_models import (
     Top100OBSnapshot, Top100OBHistory,
     VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
     LiquidationBucket, LiquidationOISnapshot, LiquidationEvent,
-    LiqHeatmapProfile, TradeArchive, VolAnomaly, TradeResearch
+    LiqHeatmapProfile, TradeArchive, VolAnomaly, TradeResearch, AiEpisode
 )
 from config import DEFAULT_SETTINGS
 
@@ -769,6 +769,24 @@ class DBOperations:
         finally:
             session.close()
 
+    def clear_vol_anomalies(self, days: int = None) -> int:
+        """🗑 Очистити аномалії обсягу: days=None — УСІ, інакше старші за N днів."""
+        import time as _t
+        session = get_session()
+        try:
+            q = session.query(VolAnomaly)
+            if days is not None:
+                q = q.filter(VolAnomaly.ts < _t.time() - max(0, int(days)) * 86400)
+            n = q.delete(synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] clear_vol_anomalies: {e}")
+            return 0
+        finally:
+            session.close()
+
     def purge_vol_anomalies(self, days: int = 365) -> int:
         import time as _t
         session = get_session()
@@ -824,6 +842,64 @@ class DBOperations:
             return [r.to_dict() for r in rows]
         except Exception as e:
             print(f"[DB] get_research: {e}")
+            return []
+        finally:
+            session.close()
+
+    # === 🤖 ЕПІЗОДИ «ПРУЖИНИ» (ШІ, 17.11) ===
+
+    def archive_ai_episode(self, ep: Dict, out: Dict = None) -> bool:
+        """🤖 Закритий епізод зарядженої монети (ніколи не чиститься автоматично)."""
+        session = get_session()
+        try:
+            out = out or {}
+            fire = ep.get('fire') or {}
+            sig = ep.get('signal') or {}
+
+            def _j(v):
+                return json.dumps(v, ensure_ascii=False, default=str) if v else None
+
+            def _f(v):
+                try:
+                    return float(v) if v is not None else None
+                except (TypeError, ValueError):
+                    return None
+            row = AiEpisode(
+                symbol=ep.get('symbol'), src=ep.get('src'), started_at=_f(ep.get('started_at')),
+                ended_at=_f(ep.get('ended_at')), end_reason=(ep.get('end_reason') or '')[:12],
+                charge0=_f(ep.get('charge0')), charge_max=_f(ep.get('charge_max')),
+                price0=_f(ep.get('price0')), lean0=ep.get('lean0'), prob0=_f(ep.get('prob0')),
+                fire_side=fire.get('side'), fire_at=_f(fire.get('t')),
+                signal_side=sig.get('side'), signal_at=_f(sig.get('t')),
+                signal_score=_f(sig.get('score')),
+                move_pct=_f(out.get('move_pct')), max_up_pct=_f(out.get('max_up_pct')),
+                max_dn_pct=_f(out.get('max_dn_pct')), discharge=out.get('discharge'),
+                sig_best_pct=_f(out.get('sig_best_pct')), sig_worst_pct=_f(out.get('sig_worst_pct')),
+                sig_end_pct=_f(out.get('sig_end_pct')),
+                events=_j(ep.get('ev')), samples=_j(ep.get('s')), signal=_j(sig or None))
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] archive_ai_episode: {e}")
+            return False
+        finally:
+            session.close()
+
+    def get_ai_episodes(self, since: float = None, symbol: str = None,
+                        limit: int = 5000) -> List[Dict]:
+        session = get_session()
+        try:
+            q = session.query(AiEpisode)
+            if since is not None:
+                q = q.filter(AiEpisode.ended_at >= float(since))
+            if symbol:
+                q = q.filter(AiEpisode.symbol == symbol.upper())
+            rows = q.order_by(desc(AiEpisode.ended_at)).limit(int(limit or 5000)).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] get_ai_episodes: {e}")
             return []
         finally:
             session.close()
