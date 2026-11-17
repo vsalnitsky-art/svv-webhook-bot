@@ -26,7 +26,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 
 # ── налаштування (ключі СКАНЕРА — там, де всі сигнали) ──
-DEFAULTS = {'ai_signal_enabled': False, 'ai_min_charge': 65}
+DEFAULTS = {'ai_signal_enabled': False, 'ai_min_charge': 65,
+            'ai_professional_enabled': False, 'ai_professional_require_model': False,
+            'ai_learning_enabled': True}
 TICK_SEC = 30               # такт рушія
 LIVE_TTL = 60               # 1h-бари монети в заряді — не частіше раз на хвилину
 WORKERS = 4
@@ -44,6 +46,14 @@ CAL_REFRESH_SEC = 3600
 CAL_MIN_N = 30
 CAL_DAYS = 30
 DB_STATE = 'ai_engine_state_v1'
+DB_PRO_LEARNING = 'ai_professional_learning_v1'
+PRO_BAR_LIMIT = 300
+PRO_CACHE_TTL = {'15m': 240, '1h': 900, '4h': 1800}
+PRO_ANALYSIS_TTL = 45
+LEARN_REFRESH_SEC = 900
+LEARN_ROWS = 5000            # найновіших рядків на джерело (епізоди / дослідження)
+PRO_TFS = ('15m', '1h', '4h')
+PRO_OPEN_CAP = 60            # стеля монет відкритих угод для префетчу барів
 
 W_ENTRY = {'lean': 0.25, 'break': 0.30, 'impulse': 0.25, 'flow': 0.20}
 W_EXIT = {'against': 0.25, 'choch': 0.10, 'flow': 0.20, 'climax': 0.20,
@@ -350,20 +360,28 @@ def _fired_side(rec, vw):
     return f.get('side') if isinstance(f, dict) else None
 
 
-def _scen():
+def _sib(name: str):
+    """Сусідній модуль detection/<name>.py: пакетний імпорт, а якщо він
+    недоступний (ізольовані тести без pybit) — напряму з файлу."""
     import sys
-    m = sys.modules.get('detection.anomaly_scenarios')
+    full = f'detection.{name}'
+    m = sys.modules.get(full)
     if m is None:
         try:
-            from detection import anomaly_scenarios as m
+            import importlib
+            m = importlib.import_module(full)
         except Exception:
             import importlib.util, os
-            p = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'anomaly_scenarios.py')
-            sp = importlib.util.spec_from_file_location('detection.anomaly_scenarios', p)
+            p = os.path.join(os.path.dirname(os.path.abspath(__file__)), f'{name}.py')
+            sp = importlib.util.spec_from_file_location(full, p)
             m = importlib.util.module_from_spec(sp)
-            sys.modules['detection.anomaly_scenarios'] = m
+            sys.modules[full] = m
             sp.loader.exec_module(m)
     return m
+
+
+def _scen():
+    return _sib('anomaly_scenarios')
 
 
 def entry_score(side: str, rec: Optional[Dict], vw: Optional[Dict], anoms: List[Dict],
@@ -797,6 +815,14 @@ class AiEngine:
         self._eps: Dict[str, Dict] = {}
         self._live: Dict[str, tuple] = {}     # S → (ts, rec, vw)
         self._view: Dict[str, Dict] = {}      # S → останні бали (для UI)
+        self._pro = None                       # ProfessionalBrain, лінивий import
+        self._learner = None                   # champion/challenger на архівах
+        self._pro_lock = threading.RLock()
+        self._pro_bars: Dict[str, Dict] = {}
+        self._pro_analysis: Dict[str, tuple] = {}
+        self._pro_open_syms: set = set()
+        self._learn_at = 0.0
+        self._learning_state: Dict = {'status': 'not_run'}
         self._cal: Dict = {}
         self._cal_at = 0.0
         self._stat = {'last_at': 0, 'coins': 0, 'signals': 0, 'episodes_closed': 0,
@@ -835,6 +861,191 @@ class AiEngine:
 
     def calibration(self) -> Dict:
         return {k: dict(v) for k, v in self._cal.items()} if self._cal else {}
+
+    # ── Професійне ядро: закриті 15m/1h/4h бари + архівне навчання ──
+    def _pro_get(self):
+        with self._pro_lock:
+            if self._pro is None:
+                self._pro = _sib('professional_ai').ProfessionalBrain()
+            if self._learner is not None:
+                self._pro.model = self._learner.model
+            return self._pro
+
+    @staticmethod
+    def _pro_compact(a: Optional[Dict]) -> Optional[Dict]:
+        if not isinstance(a, dict):
+            return None
+        out = {k: a.get(k) for k in ('ok', 'action', 'side', 'best_side', 'quality',
+                                     'ts', 'data_issues', 'vetoes', 'regime', 'data',
+                                     'features', 'limitations') if k in a}
+        model = a.get('model') or {}
+        out['model'] = {k: model.get(k) for k in ('version', 'ready', 'oos_samples',
+                                                  'min_oos', 'brier', 'accuracy') if k in model}
+        out['sides'] = {}
+        for side, row in (a.get('sides') or {}).items():
+            out['sides'][side] = {k: row.get(k) for k in (
+                'quality', 'ready', 'model_probability', 'model_is_ready', 'vetoes',
+                'components', 'risk_plan') if k in row}
+        if 'risk_plan' in a:
+            out['risk_plan'] = a.get('risk_plan')
+        return out
+
+    def _pro_fetch_bars(self, symbol: str, tf: str, now: float, fetch: bool = True):
+        """Закриті бари для 🧠 мозку з власного кешу (`PRO_CACHE_TTL`).
+        `fetch=False` — ЛИШЕ кеш (монітор угод у мережу не ходить: бари для
+        відкритих угод заздалегідь тягне такт рушія, `_pro_prefetch_open`)."""
+        with self._pro_lock:
+            hit = (self._pro_bars.get(symbol) or {}).get(tf)
+        if hit and (not fetch or now - hit[0] < PRO_CACHE_TTL[tf]):
+            return hit[1]
+        if not fetch:
+            return []
+        try:
+            rows = self._md_get().fetch_klines(symbol, limit=PRO_BAR_LIMIT, interval=tf) or []
+            if rows:
+                with self._pro_lock:
+                    self._pro_bars.setdefault(symbol, {})[tf] = (now, rows)
+                return rows
+        except Exception as e:
+            self._stat['last_err'] = f'professional {symbol} {tf}: {e}'[:200]
+        # Мережа тимчасово недоступна → старий кеш; analyze сам перевірить вік
+        # останнього закритого бару й заборонить рішення на застарілих даних.
+        return hit[1] if hit else []
+
+    def _pro_market(self, symbol: str, now: float, fetch: bool = True) -> Dict:
+        return {tf: self._pro_fetch_bars(symbol, tf, now, fetch) for tf in PRO_TFS}
+
+    def _pro_exit_on(self) -> bool:
+        """Чи увімкнено «🧠 Професійний вихід ШІ» у Trade Manager."""
+        tm = self._tm_get()
+        try:
+            return bool((getattr(tm, '_settings', None) or {}).get('use_ai_professional_exit'))
+        except Exception:
+            return False
+
+    def _pro_prefetch_open(self, now: float) -> int:
+        """Бари 15m/1h/4h для монет ВІДКРИТИХ угод (real + paper) — паралельно,
+        у такті рушія. Так монітор TM читає готовий кеш і не чекає біржу."""
+        try:
+            syms = _sib('sbr_signals')._open_trade_symbols()
+        except Exception:
+            syms = []
+        syms = sorted(set(syms))[:PRO_OPEN_CAP]
+        self._pro_open_syms = set(syms)
+        if not syms:
+            return 0
+        with ThreadPoolExecutor(max_workers=WORKERS) as ex:
+            list(ex.map(lambda S: self._pro_market(S, now), syms))
+        return len(syms)
+
+    def _pro_prune(self, keep_view) -> None:
+        """Кеші 🧠 — лише для монет таблиці ШІ та відкритих угод (памʼять
+        обмежена; монета, що вибула, рахується наново, коли повернеться)."""
+        keep = set(keep_view) | set(getattr(self, '_pro_open_syms', ()) or ())
+        with self._pro_lock:
+            for S in [k for k in self._pro_bars if k not in keep]:
+                self._pro_bars.pop(S, None)
+        for S in [k for k in self._pro_analysis if k not in keep]:
+            self._pro_analysis.pop(S, None)
+
+    def _professional_snapshot(self, symbol: str, now: float) -> Dict:
+        symbol = str(symbol or '').upper()
+        hit = self._pro_analysis.get(symbol)
+        if hit and now - hit[0] < PRO_ANALYSIS_TTL:
+            return hit[1]
+        market = self._pro_market(symbol, now)
+        try:
+            require = bool(self.settings().get('ai_professional_require_model'))
+            with self._pro_lock:
+                result = self._pro_get().analyze(market, now, require_model=require)
+        except Exception as e:
+            result = {'ok': False, 'action': 'WAIT', 'side': None,
+                      'data_issues': [f'помилка аналізу: {e}'],
+                      'vetoes': [f'помилка аналізу: {e}'], 'model': {},
+                      'ts': now, 'sides': {}}
+            self._stat['errors'] += 1
+            self._stat['last_err'] = f'professional {symbol}: {e}'[:200]
+        self._pro_analysis[symbol] = (now, result)
+        return result
+
+    def _learn_professional(self, now: float, force: bool = False) -> Optional[Dict]:
+        """🎓 Champion/challenger на архівах (епізоди ШІ + 🔬 дослідження угод).
+        Лише коли 🧠 справді задіяний (фільтр входу або професійний вихід):
+        без нього в архівах немає ознак для навчання, а читання 2×5000
+        рядків БД раз на 15 хв було б марною роботою."""
+        s = self.settings()
+        if not s.get('ai_learning_enabled') or not self.db:
+            return None
+        if not (s.get('ai_professional_enabled') or self._pro_exit_on()):
+            return None
+        if not force and now - self._learn_at < LEARN_REFRESH_SEC:
+            return self._learning_state
+        self._learn_at = now
+        if not (hasattr(self.db, 'get_ai_episodes') and hasattr(self.db, 'get_research')):
+            self._learning_state = {'status': 'archive_api_unavailable', 'promoted': False}
+            return self._learning_state
+        try:
+            ArchiveLearner = _sib('professional_learning').ArchiveLearner
+            # БД читаємо ПОЗА локом мозку: аналіз монет не чекає запиту.
+            episodes = self.db.get_ai_episodes(limit=LEARN_ROWS) or []
+            research = self.db.get_research(limit=LEARN_ROWS) or []
+            with self._pro_lock:
+                if self._learner is None:
+                    self._learner = ArchiveLearner()
+                report = self._learner.run(episodes, research)
+                if self._pro is not None:
+                    self._pro.model = self._learner.model
+                self._learning_state = dict(report)
+                state = self._learner.state()
+            # Пишемо стан лише коли партію СПОЖИТО (promoted / rejected) —
+            # «немає нових міток» нічого не міняє, а блоб великий.
+            if report.get('status') in ('promoted', 'rejected_no_improvement'):
+                self.db.set_setting(DB_PRO_LEARNING, state)
+            return report
+        except Exception as e:
+            self._learning_state = {'status': 'learning_error', 'error': str(e)[:200],
+                                    'promoted': False}
+            self._stat['last_err'] = f'архівне навчання: {e}'[:200]
+            return self._learning_state
+
+    @staticmethod
+    def _pro_exit_slim(d: Dict) -> Dict:
+        """Те, що лягає на ПОЗИЦІЮ (і їде в /api/tm/state щополла): рішення й
+        пояснення без повного аналізу (ознаки 3 TF — кілобайти на угоду)."""
+        out = {k: d.get(k) for k in ('action', 'close', 'reason', 'explanation',
+                                     'r_multiple', 'peak_r', 'risk_source',
+                                     'current_price', 'monitor', 'ts', 'error') if k in d}
+        er = d.get('entry_risk') or {}
+        if er:
+            out['plan'] = {k: er.get(k) for k in ('stop', 'tp1', 'tp2', 'risk_pct',
+                                                  'net_rr_after_costs')}
+        an = d.get('analysis') or {}
+        if an:
+            out['data_ok'] = bool(an.get('ok'))
+            if an.get('data_issues'):
+                out['data_issues'] = list(an.get('data_issues'))[:4]
+        return out
+
+    def professional_exit(self, symbol: str, side: str, entry_price: float,
+                          opened_at: float, current_price: Optional[float] = None,
+                          peak_price: Optional[float] = None, fetch: bool = False) -> Dict:
+        """Супровід позиції для Trade Manager. Не виконує жодного ордера.
+        За замовчуванням ЛИШЕ кеш барів (монітор TM у мережу не ходить)."""
+        now = self._clock()
+        try:
+            market = self._pro_market(str(symbol).upper(), now, fetch)
+            require = bool(self.settings().get('ai_professional_require_model'))
+            with self._pro_lock:
+                decision = self._pro_get().manage_position(
+                    market, side, entry_price, opened_at, now,
+                    current_price=current_price, peak_price=peak_price,
+                    require_model=require)
+            decision['analysis'] = self._pro_compact(decision.get('analysis'))
+            return decision
+        except Exception as e:
+            self._stat['last_err'] = f'professional exit {symbol}: {e}'[:200]
+            return {'action': 'HOLD', 'close': False, 'reason': 'professional_exit_error',
+                    'error': str(e)[:200], 'ts': now}
 
     def _refresh_cal(self, now):
         if now - self._cal_at < CAL_REFRESH_SEC or not self.db:
@@ -888,6 +1099,14 @@ class AiEngine:
     def tick(self, now: Optional[float] = None) -> int:
         now = self._clock() if now is None else now
         s = self.settings()
+        self._learn_professional(now)
+        if self._pro_exit_on():
+            try:
+                self._pro_prefetch_open(now)
+            except Exception as e:
+                self._stat['last_err'] = f'professional prefetch: {e}'[:200]
+        else:
+            self._pro_open_syms = set()
         sc = self._scn()
         if sc is None or not (sc.get_settings() or {}).get('spring_enabled', True):
             return 0
@@ -903,8 +1122,12 @@ class AiEngine:
         except Exception:
             pass
 
+        pro_on = bool(s.get('ai_professional_enabled'))
+
         def load(S):
             try:
+                if pro_on:                    # бари 🧠 — у тому самому пулі
+                    self._pro_market(S, now)
                 return S, self._fetch_live(S, now)
             except Exception as e:
                 self._stat['errors'] += 1
@@ -937,12 +1160,18 @@ class AiEngine:
                 return (1 if entry_decide(x) else 0, (sc.get('done') or 0) / max(1, sc.get('total') or 1),
                         x['score'])
             best = el if _rk(el) >= _rk(es) else es
+            pro = self._professional_snapshot(S, now) if pro_on else None
+            pro_side = ((pro or {}).get('sides') or {}).get(best['side']) or {}
+            pro_allowed = (not s.get('ai_professional_enabled')) or bool(
+                pro and pro.get('ok') and pro_side.get('ready'))
             view[S] = {'symbol': S, 'src': src, 'charge': rec.get('charge'),
                        'state': rec.get('state'), 'lean': rec.get('lean'),
                        'prob_long': rec.get('prob_long'), 'long': el, 'short': es,
                        'best': best['side'], 'episode_age': (int(now - ep['started_at'])
                                                              if ep else None),
-                       'signal': (ep or {}).get('signal')}
+                       'signal': (ep or {}).get('signal'),
+                       'professional': self._pro_compact(pro),
+                       'professional_allowed': pro_allowed}
             if ep is not None:
                 for x in (el, es):
                     sc = x.get('scenario') or {}
@@ -952,23 +1181,31 @@ class AiEngine:
                             ep[k] = int(now)
                             _ev(ep, now, 'scenario', side=x['side'], key=sc.get('key'),
                                 name=sc.get('name'), score=x.get('score'))
-            if s.get('ai_signal_enabled') and ep is not None and entry_decide(best):
-                self._try_signal(S, best, rec, vw, ep, now)
+            if (s.get('ai_signal_enabled') and ep is not None and entry_decide(best)
+                    and pro_allowed):
+                self._try_signal(S, best, rec, vw, ep, now, professional=pro)
             if ep is not None:
                 why = episode_done(ep, now, charged)
                 if why:
                     self._close_episode(S, ep, now, why)
         with self._lock:
             self._view = view
+        self._pro_prune(view.keys() if pro_on else ())
         self._stat.update({'last_at': now, 'coins': len(view)})
         if self._dirty:
             self._persist()
         return len(view)
 
-    def _try_signal(self, S, sc_res, rec, vw, ep, now):
+    def _try_signal(self, S, sc_res, rec, vw, ep, now, professional=None):
         side = sc_res['side']
         if ep.get('signal'):
             return                          # один результативний сигнал на епізод
+        pro_side = ((professional or {}).get('sides') or {}).get(side) or {}
+        if self.settings().get('ai_professional_enabled') and not (
+                professional and professional.get('ok') and pro_side.get('ready')):
+            _ev(ep, now, 'professional_veto', side=side,
+                reason='; '.join((professional or {}).get('vetoes') or ['немає аналізу']))
+            return
         tr = ep.setdefault('tries', {}).get(side) or [0, 0]
         if tr[0] >= SIGNAL_TRIES or now - tr[1] < SIGNAL_RETRY_SEC:
             return
@@ -987,11 +1224,16 @@ class AiEngine:
             return
         ep['tries'][side] = [tr[0] + 1, int(now)]
         px = _px(vw, rec)
+        pro_compact = self._pro_compact(professional)
         head = (f"🤖 Сигнал ШІ {side} · 🧩 {sc_res.get('scenario_text') or ''} · "
                 f"заряд Пружини {rec.get('charge')} · довідково бал {sc_res['score']}")
+        if pro_side:
+            head += f" · 🧠 графік {pro_side.get('quality')}/100"
         log_activity(S, 'signal', f'{head} · {detail}', side=side, source='AI',
                      extra={'ai_score': sc_res['score'], 'ai_parts': sc_res['parts'],
-                            'ai_scenario': (sc_res.get('scenario') or {}).get('key')})
+                            'ai_scenario': (sc_res.get('scenario') or {}).get('key'),
+                            'professional_quality': pro_side.get('quality'),
+                            'professional_model': (pro_compact or {}).get('model')})
         if not ok:
             log_activity(S, 'rejected', reason, side=side, source='AI')
             _ev(ep, now, 'signal_rejected', side=side, score=sc_res['score'], reason=reason)
@@ -1001,12 +1243,16 @@ class AiEngine:
         if tm is not None:
             try:
                 res = tm.on_signal(symbol=S, side=side, entry_price=px or 0, opened_by='ai')
+                attach = getattr(tm, 'set_ai_professional_context', None)
+                if callable(attach) and pro_compact:
+                    attach(S, side, pro_compact)
             except Exception as e:
                 self._stat['last_err'] = f'on_signal {S}: {e}'[:200]
         ep['signal'] = {'t': int(now), 'side': side, 'px': px, 'score': sc_res['score'],
                         'parts': sc_res['parts'], 'result': str(res)[:80] if res else None,
                         'scenario': (sc_res.get('scenario') or {}).get('key'),
-                        'scenario_name': (sc_res.get('scenario') or {}).get('name')}
+                        'scenario_name': (sc_res.get('scenario') or {}).get('name'),
+                        'professional': pro_compact}
         _ev(ep, now, 'signal', side=side, px=px, score=sc_res['score'])
         self._stat['signals'] += 1
 
@@ -1045,13 +1291,39 @@ class AiEngine:
                 self._eps = {str(k).upper(): v for k, v in eps.items() if isinstance(v, dict)}
         except Exception:
             self._eps = {}
+        try:
+            pro_state = self.db.get_setting(DB_PRO_LEARNING, None)
+            if isinstance(pro_state, str):
+                pro_state = json.loads(pro_state)
+            if pro_state:
+                ArchiveLearner = _sib('professional_learning').ArchiveLearner
+                self._learner = ArchiveLearner.from_state(pro_state)
+                self._learning_state = dict(self._learner.last_report or
+                                            {'status': self._learner.last_status})
+        except Exception as e:
+            # Пошкоджена модель НЕ завантажується частково і не використовується.
+            self._learner = None
+            self._learning_state = {'status': 'model_load_error', 'error': str(e)[:200]}
 
     def state(self) -> Dict:
         with self._lock:
             view = sorted(self._view.values(),
                           key=lambda v: -max(v['long']['score'], v['short']['score']))
+        model = self._pro_get().model_state()
+        learning = {k: v for k, v in (self._learning_state or {}).items() if k != 'model'}
+        professional = {
+            'enabled': bool(self.settings().get('ai_professional_enabled')),
+            'require_model': bool(self.settings().get('ai_professional_require_model')),
+            'learning_enabled': bool(self.settings().get('ai_learning_enabled')),
+            'model': {k: model.get(k) for k in ('version', 'ready', 'train_samples',
+                                                'oos_samples', 'min_oos', 'brier', 'accuracy')},
+            'learning': learning,
+            'processed_archive_records': len(self._learner.seen) if self._learner else 0,
+            'monitored_symbols': len(self._pro_analysis),
+        }
         return {'ok': True, 'settings': self.settings(), 'stat': dict(self._stat),
                 'calibration': self.calibration(), 'coins': view,
+                'professional': professional,
                 'episodes_open': len(self._eps), 'server_now': self._clock(),
                 'weights': {'entry': W_ENTRY, 'exit': W_EXIT},
                 'catalog': getattr(_scen(), 'CATALOG', None)}

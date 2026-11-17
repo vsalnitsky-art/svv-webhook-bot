@@ -325,7 +325,9 @@ def _tm_class():
     sys.modules['storage.db_operations'] = db
     for nm, rel in (('detection.signal_labels', 'detection/signal_labels.py'),
                     ('detection.setup_grader', 'detection/setup_grader.py')):
-        if nm not in sys.modules:
+        # Неповний архів користувача може не містити необов'язковий helper;
+        # Trade Manager його не імпортує, тож не блокуємо предметний тест виходу.
+        if nm not in sys.modules and os.path.exists(os.path.join(_ROOT, rel)):
             _load(nm, rel)
     lg = types.ModuleType('detection.activity_log'); lg.log_activity = lambda *a, **k: None
     sys.modules['detection.activity_log'] = lg
@@ -342,7 +344,7 @@ def test_tm_ai_exit_reason():
     for a in combo:                       # аномалії «зараз»
         a['ts'] = a['ts'] - NOW + __import__('time').time()
     stub = types.SimpleNamespace(
-        _settings={'ai_exit_mode': 'all'}, AI_EXIT_TTL=20.0, scanner=None,
+        _settings={'use_ai_exit': True, 'ai_exit_mode': 'all'}, AI_EXIT_TTL=20.0, scanner=None,
         _exit_key=TM._exit_key,
         _spring_fire_view=lambda s, fetch=False: {'box_hi': 100.0, 'box_lo': 90.0, 'price': 99.0},
         _trade_anomalies=lambda s, a, b: combo,

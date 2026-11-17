@@ -72,7 +72,8 @@ def _lite_trade(d: Dict) -> Dict:
     fetched on demand via /api/tm/trade-history."""
     h = d.get('history') or []
     out = {k: v for k, v in d.items()
-           if k not in ('history', '_last_log_at', 'research', 'research_summary')}
+           if k not in ('history', '_last_log_at', 'research', 'research_summary',
+                        'professional_entry')}
     out['hist_len'] = len(h)
     return out
 
@@ -706,6 +707,7 @@ DEFAULT_SETTINGS = {
     # `ai_exit_mode`: 'confirmed' (деф.) | 'all' (лише коли ВСІ групи за вихід).
     'use_ai_exit': False,
     'ai_exit_mode': 'confirmed',
+    'use_ai_professional_exit': False,  # закритий графік 15m/1h/4h + ризик-план
     'sbr_exit_1h': True,
     'sbr_exit_4h': True,
     # 🔔⏳ ТРЕЙЛ замість миттєвого виходу (вимога 31.10, деф. OFF): протилежний
@@ -1027,6 +1029,16 @@ def forced_book(book) -> Optional[str]:
     """ЧИСТА: ✋ явний вибір книги людиною → 'real' | 'paper' | None (авто)."""
     b = str(book or '').lower().strip()
     return b if b in ('real', 'paper') else None
+
+
+# 🧠 Причини професійного виходу ШІ (`professional_ai.manage_position`).
+PRO_EXIT_REASON_UA = {
+    'professional_invalidation': 'зламано стоп сценарію (ATR/структура на вході)',
+    'professional_target': 'досягнуто ціль плану (2.2R)',
+    'professional_reversal': 'підтверджений розворот 15m/1h',
+    'professional_profit_giveback': 'віддача прибутку від піку',
+    'professional_time_stop': 'сценарій не реалізувався за 8 год',
+}
 
 class TradeManager:
     
@@ -1402,6 +1414,7 @@ class TradeManager:
                       'use_decision_exit', 'use_mm_flat_exit',
                       'use_sbr_exit', 'sbr_exit_1h', 'sbr_exit_4h', 'sbr_exit_trail',
                       'use_spring_fired_exit', 'use_exh_exit', 'use_ai_exit',
+                      'use_ai_professional_exit',
                       'pilot_enabled',
                       'pilot_autofill_tp', 'pilot_tp2_from_magnet',
                       'tp1_move_to_be',
@@ -4553,7 +4566,7 @@ class TradeManager:
                 return self._signal_exit_close(symbol, pos, current_price,
                                                is_shadow, hit)
         # 🤖 Вихід ШІ — теж ВЛАСНИЙ тротл (живий бар з кешу + аномалії з БД).
-        if s.get('use_ai_exit'):
+        if s.get('use_ai_exit') or s.get('use_ai_professional_exit'):
             try:
                 hit = self._ai_exit_reason(symbol, pos, current_price, is_shadow)
             except Exception as e:
@@ -4609,6 +4622,14 @@ class TradeManager:
             return None
         tk[k] = now
         from detection import ai_signals
+        # 🧠 Професійний вихід — ОКРЕМЕ правило зі своїм тумблером; «🤖 Вихід
+        # ШІ» за аномаліями рахується лише коли увімкнений він (раніше вмикання
+        # одного «🧠» тихо вмикало й закриття за аномаліями).
+        pro_hit = None
+        if s.get('use_ai_professional_exit'):
+            pro_hit = self._ai_pro_exit_reason(symbol, pos, current_price, ai_signals)
+        if not s.get('use_ai_exit'):
+            return pro_hit
         vw = self._spring_fire_view(symbol, fetch=False) or {}
         # ⚠ аномалії ВІД ВХОДУ (не давніші за EXIT_LOOK_MAX, не коротше 2 год):
         # вихід судить усю поведінку обсягу за час угоди, а не лише останні 2 год.
@@ -4654,7 +4675,7 @@ class TradeManager:
         pos['ai_exit']['mode'] = mode
         _dec = getattr(ai_signals, 'exit_decide', None)
         if not (_dec(r, mode) if _dec else r['ready']):
-            return None
+            return pro_hit
         _ck = getattr(ai_signals, 'exit_checklist_text', None)
         _sct = r.get('scenario_text') if r.get('verdict') == 'scenario' else ''
         return ('ai_exit', f"🤖 Вихід ШІ: {r.get('verdict_ua') or ''}"
@@ -4663,6 +4684,48 @@ class TradeManager:
                            + (f" · {_ck(r)}" if _ck else '')
                            + f" · {ai_signals.parts_text(r['parts'])}"
                            + (f" · потік: {', '.join(r['flow_notes'][:4])}" if r['flow_notes'] else ''))
+
+    def _ai_pro_exit_reason(self, symbol: str, pos: Dict, current_price,
+                            ai_signals=None) -> Optional[tuple]:
+        """🧠 Професійний вихід ШІ: закриті 15m/1h/4h бари (кеш рушія ШІ —
+        монітор у мережу НЕ ходить), ризик-план від ATR/структури на вході,
+        підтверджений розворот 15m/1h, віддача прибутку, часовий стоп.
+        Немає надійних даних → HOLD (вихід не вигадуємо). Знімок рішення —
+        `pos['ai_pro']` (без повного аналізу: він важкий для /api/tm/state)."""
+        if ai_signals is None:
+            from detection import ai_signals
+        eng = ai_signals.get_ai_engine()
+        if eng is None or not hasattr(eng, 'professional_exit'):
+            return None
+        side = str(pos.get('side') or '').upper()
+        try:
+            opened = float(pos.get('opened_at') or 0)
+            entry = float(pos.get('entry_price') or 0)
+        except (TypeError, ValueError):
+            return None
+        if side not in ('LONG', 'SHORT') or entry <= 0 or opened <= 0:
+            return None
+        peak = ((pos.get('research') or {}).get('pk') or {}).get('pnl')
+        if peak is None:
+            peak = pos.get('peak_pnl_pct')
+        peak_price = None
+        try:
+            if peak is not None:
+                peak_price = entry * (1.0 + float(peak) / 100.0 * (1.0 if side == 'LONG' else -1.0))
+        except (TypeError, ValueError):
+            peak_price = None
+        d = eng.professional_exit(symbol, side, entry, opened,
+                                  current_price=current_price, peak_price=peak_price)
+        slim = getattr(eng, '_pro_exit_slim', None)
+        pos['ai_pro'] = dict(slim(d) if callable(slim) else
+                             {k: d.get(k) for k in ('action', 'close', 'reason', 'explanation')})
+        if not d.get('close'):
+            return None
+        why = PRO_EXIT_REASON_UA.get(d.get('reason'), d.get('reason') or '')
+        return ('ai_pro_exit', f"🧠 Професійний вихід ШІ · {why}: "
+                               f"{d.get('explanation') or ''}"
+                               + (f" · R {d.get('r_multiple')}" if d.get('r_multiple') is not None else '')
+                               + (f" · пік {d.get('peak_r')}R" if d.get('peak_r') is not None else ''))
 
     def _signal_exit_close(self, symbol: str, pos: Dict, current_price: float,
                            is_shadow: bool, hit: tuple) -> bool:
@@ -5894,6 +5957,28 @@ class TradeManager:
     def _take_origin_trace(self, symbol: str) -> Optional[str]:
         return self._pending_origin.pop((symbol or '').upper(), None)
 
+    def set_ai_professional_context(self, symbol: str, side: str, context: Dict) -> bool:
+        """Зафіксувати знімок ШІ лише на вже відкритій угоді того самого боку.
+
+        Для відкладеної черги повертає False: застарілий контекст не переноситься
+        на майбутній ордер. Сам сигнал уже має знімок у закритому AI-епізоді.
+        """
+        sym = (symbol or '').upper()
+        side = str(side or '').upper()
+        if not sym or side not in ('LONG', 'SHORT') or not isinstance(context, dict):
+            return False
+        attached = False
+        with self._lock:
+            for book in (self._positions, self._shadow_positions):
+                pos = (book or {}).get(sym)
+                if pos and str(pos.get('side') or '').upper() == side:
+                    pos['professional_entry'] = context
+                    plan = ((context.get('sides') or {}).get(side) or {}).get('risk_plan')
+                    if plan:
+                        pos['ai_professional_plan'] = plan
+                    attached = True
+        return attached
+
     def set_pending_objective(self, symbol: str, obj: Optional[Dict]) -> None:
         """🎯 ЦІЛЬ, ЗА ЯКОЮ ГЕЙТ ЗА R ПРОПУСТИВ УГОДУ — передається сюди ПЕРЕД
         відкриттям і стає зафіксованою ціллю автопілота.
@@ -6689,6 +6774,7 @@ class TradeManager:
             'spring_open': pos.get('spring_open'), 'spring_open_tgt': pos.get('spring_open_tgt'),
             'spring_open_late': pos.get('spring_open_late'),
             'entry_snapshot': pos.get('entry_snapshot'),
+            'professional': pos.get('professional_entry'),
             'decision': {k: es.get(k) for k in ('verdict', 'recommended', 'prob_long',
                                                  'prob_short', 'headline')} if es else None,
             'ctr_open': pos.get('ctr_open'), 'ff_kind': pos.get('ff_kind'),
@@ -6699,7 +6785,8 @@ class TradeManager:
             'settings': {k: self._settings.get(k) for k in (
                 'use_spring_fired_exit', 'spring_fired_exit_dir', 'use_exh_exit',
                 'exh_exit_min', 'exh_exit_atr', 'exh_exit_min_profit',
-                'use_sbr_exit', 'sbr_exit_trail', 'use_ai_exit', 'ai_exit_mode')},
+                'use_sbr_exit', 'sbr_exit_trail', 'use_ai_exit', 'ai_exit_mode',
+                'use_ai_professional_exit')},
         }
         in_trade = [a for a in an if float(a.get('ts') or 0) >= float(oa or 0)]
         self.db.archive_research({
@@ -7710,6 +7797,7 @@ class TradeManager:
             'spring_fired_exit': '💥 Пружина монети вистрілила після входу',
             'exh_exit': '🎯 Досягнення вершини: відкат від вершини після сплеску «Виснаження»',
             'ai_exit': '🤖 Вихід ШІ: почались зворотні процеси (кілька незалежних свідчень)',
+            'ai_pro_exit': '🧠 Професійний вихід ШІ: стоп/ціль плану, розворот 15m/1h, віддача прибутку або часовий стоп',
             'signal_exit_and': '🔗 AND: усі увімкнені вердикти проти позиції',
             'pilot_target': '🎯 Автопілот: ціль на графіку досягнута',
         }
@@ -10656,6 +10744,7 @@ class TradeManager:
             'spring_fired_exit': '💥 Пружина вистрілила',
             'exh_exit': '🎯 Досягнення вершини',
             'ai_exit': '🤖 Вихід ШІ',
+            'ai_pro_exit': '🧠 Проф. вихід ШІ',
             'signal_exit_and': '🔗 Signal Exit (AND)',
             'pilot_target': '🎯 Автопілот (ціль)',
             'forecast_1h_confluence': '🔮 Forecast 1H Confluence',

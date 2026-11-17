@@ -2574,6 +2574,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         🤖 Сигнали ШІ
                     </label>
                     <label title="Мінімальний ЗАРЯД пружини (0-100), з якого монета береться під нагляд ШІ">заряд ≥ <input type="number" id="sm-ai-min-charge" min="0" max="100" step="5" style="width:48px" onchange="updateAiSignal()"></label>
+                    <label class="sm-checkbox" title="🧠 Професійний фільтр сигналів ШІ: перед сигналом — обовʼязковий аналіз ЗАКРИТИХ свічок 15m / 1h / 4h: тренд на трьох TF, імпульс, MACD, обсяг, волатильність і R:R після комісії та проковзування. Застарілі / неповні дані, конфлікт 1h і 4h або слабкий сетап (якість < 62) — сигналу ШІ немає. Сам нічого не відкриває: сигнал далі йде звичайними воротами. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-ai-professional" onchange="updateAiSignal()"> 🧠 Професійний фільтр
+                    </label>
+                    <label class="sm-checkbox" title="Додатково вимагати готовності навченої моделі: щонайменше 200 перевірок на ДАНИХ, ЯКИХ ВОНА НЕ БАЧИЛА (OOS), і оцінку моделі ≥ 0.56 у бік сигналу. Поки модель не готова — сигнали ШІ блокуються. ВИМК (дефолт).">
+                        <input type="checkbox" id="sm-ai-require-model" onchange="updateAiSignal()"> лише з OOS-моделлю
+                    </label>
+                    <label class="sm-checkbox" title="🎓 Раз на 15 хв навчати модель на нових ЗАКРИТИХ епізодах ШІ і угодах (🔬 дослідження). Кожен запис — рівно один раз; нова модель (претендент) замінює чинну, лише якщо краще передбачила пізніші, ще не бачені результати. Працює, лише коли 🧠 задіяний (фільтр або професійний вихід). Торгівлю саме не вмикає.">
+                        <input type="checkbox" id="sm-ai-learning" checked onchange="updateAiSignal()"> 🎓 навчання на архівах
+                    </label>
                     </span>
                     <label class="sm-checkbox" title="🔒 Один VOB-сигнал на один 1H-OB (Require OB Match TF). Перший 5хв-VOB, що пройшов усі увімкнені фільтри (OB/Forecast/Decision), дає ОДИН сигнал; решта 5хв-VOB на цьому ж 1H-OB тихо ігноруються, поки не з'явиться НОВИЙ 1H-OB (будь-який напрямок). Тобто 1 сигнал = 1×(1H OB) + 1×(5хв VOB).">
                         <input type="checkbox" id="sm-vob-one-per-ob" onchange="updateVobOnePerOb()">
@@ -5434,6 +5443,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                                 🤖 Вихід з угоди ШІ
                                 <span class="tm-help" title="САМОСТІЙНЕ правило під контролем ⚠ АНОМАЛІЙ ОБСЯГУ. Бот читає поведінку обсягу ВІД ВХОДУ (не давніше 6 год) за правилами «Аномалій» і зводить три групи свідчень: 📖 АНОМАЛІЇ — 🧽 поглинання / ⚡ зміна ініціативи / 🔥→🧽 проти угоди, 🔥 виснаження руху за угодою, сплеск живого бару за угодою; ЦІНА — живий 1h-бар пробиває коробку / пружина вистрілила ПРОТИ угоди, CHoCH проти угоди після входу; ПРИБУТОК — пройдено ≥70% шляху до цілі Пружини, віддано частину піку. Свіже ⚡/📈 продовження ЗА угодою — тримає. Без свідчення аномалій бот НЕ виходить (ціна чи прибуток самі — лише «⏳ чекаємо»: для них є SL і трейли). Підтверджений 🔥→🧽 проти угоди — вихід одразу. Ваги — з досліджень «⚠ Аномалії обсягу». Стан і чек-лист — значок 🤖 у колонці 🚨. Перевірка раз на ~20с на книгу, без нових запитів до біржі. 📌 Manual не чіпає. ВИМК (дефолт).">?</span>
                             </label>
+                            <label style="margin-left:10px" title="🧠 Окреме правило виходу (незалежне від «🤖 Вихід з угоди ШІ»): план угоди від ATR / структури на вході — закриття, якщо (1) ціна зламала стоп плану, (2) досягнуто 2.2R, (3) підтверджений розворот 15m/1h на двох закритих свічках, (4) віддано ≥ половини піку (пік ≥ 1R) при імпульсі проти, (5) за 8 год сценарій не реалізувався, а протилежний бік сильніший. Лише за модельною оцінкою НЕ закриває; немає надійних даних — тримає. Бари — з кешу рушія ШІ (монітор у мережу не ходить). Стан — значок 🧠 у колонці 🚨. 📌 Manual не чіпає. ВИМК (дефолт).">
+                                <input type="checkbox" id="tm-use-ai-professional-exit" onchange="saveTMSettings()"> 🧠 Професійний вихід ШІ
+                            </label>
                             <label style="margin-left:10px" title="Коли закривати. «Аномалії + підтвердження» — аномалії кажуть «закривати» і їх підтверджує ціна АБО прибуток. «Лише коли всі показники за вихід» — аномалії, ціна І прибуток разом (суворіше, рідше). Підтверджений 🔥→🧽 проти угоди закриває в обох режимах.">закривати:
                                 <select id="tm-ai-exit-mode" onchange="saveTMSettings()">
                                     <option value="confirmed">аномалії + підтвердження</option>
@@ -6899,6 +6911,10 @@ async function aiLoad() {
             + ` · епізодів відкрито ${d.episodes_open || 0}` + (d.episodes_total != null ? ` · закрито за 30 дн ${d.episodes_total}` : '')
             + ` · сигналів ${st.signals || 0}`
             + ` · <span style="color:${s.ai_signal_enabled ? '#4ade80' : '#6b7280'}">${s.ai_signal_enabled ? '🤖 сигнали увімкнено' : 'сигнали вимкнено (лише дослідження)'}</span>`
+            + ` · <span style="color:${s.ai_professional_enabled ? '#c4b5fd' : '#6b7280'}">🧠 ${s.ai_professional_enabled ? 'професійний фільтр активний' : 'професійний фільтр вимкнено'}</span>`
+            + ` · 🎓 OOS ${(((d.professional || {}).model || {}).oos_samples || 0)}/${(((d.professional || {}).model || {}).min_oos || 200)}`
+            + ` · архівів ${(d.professional || {}).processed_archive_records || 0}`
+            + ` · ${String(((d.professional || {}).learning || {}).status || 'not_run')}`
             + (st.errors ? ` · <span style="color:#f87171" title="${String(st.last_err || '').replace(/"/g, '&quot;')}">помилок ${st.errors}</span>` : '');
         const cal = d.calibration || {}, n = cal.n || {};
         const ce = document.getElementById('ai-cal');
@@ -6919,11 +6935,15 @@ async function aiLoad() {
         tb.innerHTML = rows.map(c => {
             const best = c.best === 'LONG' ? c.long : c.short;
                         const sig = c.signal ? `<b title="${String(c.signal.scenario_name || '').replace(/"/g, '&quot;')}" style="color:${c.signal.side === 'LONG' ? '#4ade80' : '#f87171'}">${c.signal.side === 'LONG' ? '▲' : '▼'} ${c.signal.scenario || Math.round(c.signal.score || 0)}</b>${c.signal.ok === false ? ' <span style="color:#6b7280" title="' + String(c.signal.reason || '').replace(/"/g, '&quot;') + '">✗</span>' : ''}` : '—';
+            const pr = c.professional || null, prs = pr && pr.sides ? (pr.sides[c.best] || {}) : {};
+            const prv = ((prs.vetoes || []).length ? prs.vetoes : ((pr || {}).data_issues || [])).join('; ')
+                .replace(/</g, '&lt;').replace(/"/g, '&quot;');
+            const proHTML = pr ? `<div title="${prv}" style="color:${prs.ready ? '#c4b5fd' : '#fbbf24'};font-size:10px">🧠 ${prs.quality != null ? prs.quality : '—'}/100 ${prs.ready ? '✓' : '· вето'}</div>` : '';
             return `<tr><td>${typeof tvSym === 'function' ? tvSym(c.symbol) : c.symbol}</td>`
                 + `<td>${c.src === 'scan' ? '🔭' : '🌀'}</td>`
                 + `<td style="font-family:monospace">${c.charge != null ? Math.round(c.charge) : '—'}</td>`
                 + `<td>${_aiScenCell(c.long, c.best === 'LONG')}</td><td>${_aiScenCell(c.short, c.best === 'SHORT')}</td>`
-                + `<td>${_aiDecision(c)}</td>`
+                + `<td>${_aiDecision(c)}${proHTML}</td>`
                 + `<td style="font-family:monospace">${_aiAge(c.episode_age)}</td><td>${sig}</td></tr>`;
         }).join('');
     } catch (e) {
@@ -8234,6 +8254,12 @@ async function loadSettings() {
             if (aiSg) aiSg.checked = !!s.ai_signal_enabled;              // default OFF
             const aiMc = document.getElementById('sm-ai-min-charge');
             if (aiMc) aiMc.value = (s.ai_min_charge != null ? s.ai_min_charge : 65);
+            const aiPro = document.getElementById('sm-ai-professional');
+            if (aiPro) aiPro.checked = !!s.ai_professional_enabled;
+            const aiReq = document.getElementById('sm-ai-require-model');
+            if (aiReq) aiReq.checked = !!s.ai_professional_require_model;
+            const aiLearn = document.getElementById('sm-ai-learning');
+            if (aiLearn) aiLearn.checked = s.ai_learning_enabled !== false;
             const vobOne = document.getElementById('sm-vob-one-per-ob');
             if (vobOne) vobOne.checked = !!s.vob_one_per_ob;             // default OFF
             const obChoch = document.getElementById('sm-ob-choch-only');
@@ -8577,6 +8603,9 @@ async function updateAiSignal() {
             body: JSON.stringify({
                 ai_signal_enabled: !!(g('sm-ai-signal') || {}).checked,
                 ai_min_charge: n('sm-ai-min-charge', 65),
+                ai_professional_enabled: !!(g('sm-ai-professional') || {}).checked,
+                ai_professional_require_model: !!(g('sm-ai-require-model') || {}).checked,
+                ai_learning_enabled: !!(g('sm-ai-learning') || {}).checked,
             }),
         });
         if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -11493,7 +11522,8 @@ async function loadTMSettings() {
         document.getElementById('tm-spring-fired-exit-dir').value = s.spring_fired_exit_dir || 'any';
         document.getElementById('tm-use-exh-exit').checked = !!s.use_exh_exit;
         { const _e = document.getElementById('tm-use-ai-exit'); if (_e) _e.checked = !!s.use_ai_exit;
-          const _m = document.getElementById('tm-ai-exit-mode'); if (_m) _m.value = (s.ai_exit_mode === 'all' ? 'all' : 'confirmed'); }
+          const _m = document.getElementById('tm-ai-exit-mode'); if (_m) _m.value = (s.ai_exit_mode === 'all' ? 'all' : 'confirmed');
+          const _p = document.getElementById('tm-use-ai-professional-exit'); if (_p) _p.checked = !!s.use_ai_professional_exit; }
         document.getElementById('tm-exh-exit-min').value = (s.exh_exit_min != null) ? s.exh_exit_min : 75;
         document.getElementById('tm-exh-exit-atr').value = (s.exh_exit_atr != null) ? s.exh_exit_atr : 0.5;
         document.getElementById('tm-exh-exit-profit').value = (s.exh_exit_min_profit != null) ? s.exh_exit_min_profit : 0.3;
@@ -12061,6 +12091,7 @@ async function saveTMSettings() {
             spring_fired_exit_dir: document.getElementById('tm-spring-fired-exit-dir').value,
             use_exh_exit: document.getElementById('tm-use-exh-exit').checked,
             use_ai_exit: !!(document.getElementById('tm-use-ai-exit') || {}).checked,
+            use_ai_professional_exit: !!(document.getElementById('tm-use-ai-professional-exit') || {}).checked,
             ai_exit_mode: ((document.getElementById('tm-ai-exit-mode') || {}).value === 'all') ? 'all' : 'confirmed',
             exh_exit_min: _numOr('tm-exh-exit-min', 75),
             exh_exit_atr: _numOr('tm-exh-exit-atr', 0.5),
@@ -12378,6 +12409,7 @@ function reasonLabel(r) {
         'sbr_exit': '🔔 SBR проти',
         'spring_fired_exit': '💥 Пружина вистрілила',
         'ai_exit': '🤖 Вихід ШІ',
+        'ai_pro_exit': '🧠 Проф. вихід ШІ',
         'exh_exit': '🎯 Досягнення вершини',
         'sbr_trail_exit': '🔔⏳ SBR трейл',
         'signal_exit_and': '🔗 AND (усі проти)',
@@ -19291,9 +19323,25 @@ function aiExitChipHTML(p) {
     return `<span title="${tip}" style="display:inline-flex;align-items:center;gap:1px;margin-left:5px;padding:0 4px;border-radius:4px;border:1px solid ${c}55;color:${c};font-size:0.66rem;font-family:monospace;vertical-align:middle">🤖${_AIX_ICON[x.verdict] || ''}`
         + dot(g.anom, 'аномалії') + dot(g.price, 'ціна') + dot(g.profit, 'прибуток') + `</span>`;
 }
+// 🧠 Професійний вихід ШІ — значок поруч: R угоди за планом + стан рішення.
+function aiProChipHTML(p) {
+    const x = p && p.ai_pro;
+    if (!x || !x.action) return '';
+    const ok = x.data_ok !== false;
+    const c = x.close ? '#f87171' : (ok ? '#c4b5fd' : '#94a3b8');
+    const pl = x.plan || {};
+    const tip = ('🧠 Професійний вихід ШІ: ' + (x.close ? 'ЗАКРИТИ' : 'тримати')
+        + '\n' + (x.explanation || x.reason || '')
+        + (x.r_multiple != null ? '\nR зараз ' + x.r_multiple + (x.peak_r != null ? ' · пік ' + x.peak_r + 'R' : '') : '')
+        + (pl.stop != null ? '\nПлан: стоп ' + fmtPriceJS(pl.stop) + ' · ціль ' + fmtPriceJS(pl.tp2) : '')
+        + (x.risk_source === 'current_ATR_approximation' ? '\n(ризик — за поточним ATR: мало історії на вході)' : '')
+        + ((x.data_issues || []).length ? '\nДані: ' + x.data_issues.join('; ') : '')).replace(/"/g, '&quot;');
+    const r = (x.r_multiple != null) ? (x.r_multiple >= 0 ? '+' : '') + Number(x.r_multiple).toFixed(1) + 'R' : (ok ? '' : '⏳');
+    return `<span title="${tip}" style="display:inline-flex;align-items:center;margin-left:5px;padding:0 4px;border-radius:4px;border:1px solid ${c}55;color:${c};font-size:0.66rem;font-family:monospace;vertical-align:middle">🧠${r}</span>`;
+}
 function mmdAlertCellHTML(p) {
     const h = _mmdAlertCellCore(p);
-    const chip = aiExitChipHTML(p);
+    const chip = aiExitChipHTML(p) + aiProChipHTML(p);
     return chip ? h.replace(/<\/td>$/, chip + '</td>') : h;
 }
 function _mmdAlertCellCore(p) {

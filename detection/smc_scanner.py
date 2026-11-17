@@ -501,6 +501,9 @@ DEFAULT_SETTINGS = {
     # новий тип сигналу не має мовчки розширити потік угод.
     'ai_signal_enabled': False,
     'ai_min_charge': 65,      # «заряджена» = заряд ≥ (65 = 🌀 заряджена)
+    'ai_professional_enabled': False,       # обов'язковий 15m/1h/4h фільтр графіка
+    'ai_professional_require_model': False, # True = лише після достатньої OOS-вибірки
+    'ai_learning_enabled': True,            # champion/challenger на закритих архівах
     # 🌀/🔭 «ЧЕРЕЗ ПРУЖИНУ-WL» і «ЧЕРЕЗ ПРУЖИНУ-СКАН» (вимога 10.11) — як
     # «🔔 Через МММ-SBR»: монета у вкладці свого боку таблиці (+ за бажанням
     # банер «Куди накручено» того самого боку). Усі деф. ВИМК.
@@ -1902,6 +1905,8 @@ class SMCScanner:
                        'sprx_gate_enabled', 'sprx_gate_banner', 'sprx_scan_signals',
                        'spbx_gate_enabled', 'spbw_gate_enabled',
                        'ai_signal_enabled', 'ai_min_charge',
+                       'ai_professional_enabled', 'ai_professional_require_model',
+                       'ai_learning_enabled',
                        # 🆕 Алерт «новий OB на графіку» (лише повідомлення)
                        'ob_alert_enabled', 'ob_alert_htf',
                        'ob_alert_htf_enabled', 'ob_alert_dedup',
@@ -2087,6 +2092,12 @@ class SMCScanner:
                 self._settings['spring_min_charge'] = 50
             # 🤖 Сигнали ШІ
             self._settings['ai_signal_enabled'] = bool(self._settings.get('ai_signal_enabled', False))
+            self._settings['ai_professional_enabled'] = bool(
+                self._settings.get('ai_professional_enabled', False))
+            self._settings['ai_professional_require_model'] = bool(
+                self._settings.get('ai_professional_require_model', False))
+            self._settings['ai_learning_enabled'] = bool(
+                self._settings.get('ai_learning_enabled', True))
             for _k, _d in (('ai_min_charge', 65),):
                 try:
                     self._settings[_k] = max(0, min(100, int(float(self._settings.get(_k, _d)))))
