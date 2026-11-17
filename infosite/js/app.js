@@ -229,7 +229,7 @@
              prim: null, pocLine: null, chartKey: "", universe: [],
              tf: "15m", ob_tf: "1h", vob_tf: "5m", hl_tf: "off", sbr_tf: "chart", poc_days: 7, poc_tf: "1h", show_imb: true, show_sbr: true, show_shl: true,
              sbr: {}, tg_linked: true, bellOpen: "" };
-  var SBR_TFS = ["1h", "4h"];          // TF особистих 🔔 підписок (рушій бота)
+  var SBR_TFS = ["15m", "30m", "45m", "1h", "4h", "1d"];   // TF особистих 🔔 підписок (17.11: усі TF рушія; сервер шле sbr_tfs)
   var SBR_MARK_PX = 14;                 // розмір позначки S/B на графіку (css px)
   /* 🔔 SBR на графіку — на ВСІХ TF графіка (вимога 16.11): «chart» = TF графіка. */
   var SBR_CHART_TFS = ["15m", "30m", "1h", "4h", "1d"];
@@ -396,14 +396,14 @@
   function bellHTML(sym) {
     var tfs = IW.sbr[sym] || [];
     var on = tfs.length > 0;
-    var lbl = on ? tfs.map(tfLbl).join("+") : "";
+    var lbl = on ? tfs.map(function (t) { return String(t).toUpperCase(); }).join("+") : "";
     var tip = on ? "SBR-сигнали " + lbl + " по " + sym + " приходять вам у Telegram." : "Отримувати сигнали SBR по " + sym + " у Telegram";
     var menu = IW.bellOpen === sym
       ? '<div class="iw-bell-menu" data-bellmenu="' + esc(sym) + '">' +
           '<div class="t">🔔 SBR у Telegram · ' + esc(sym.replace(/USDT$/, "")) + "</div>" +
-          SBR_TFS.map(function (tf) {
-            return '<label><input type="checkbox" data-belltf="' + tf + '"' + (tfs.indexOf(tf) >= 0 ? " checked" : "") + "> " + tfLbl(tf) + "</label>";
-          }).join("") +
+          '<div class="iw-bell-tfs">' + SBR_TFS.map(function (tf) {
+            return '<label><input type="checkbox" data-belltf="' + tf + '"' + (tfs.indexOf(tf) >= 0 ? " checked" : "") + "> " + tf.toUpperCase() + "</label>";
+          }).join("") + "</div>" +
           (IW.tg_linked ? "" : '<div class="w">⚠️ Telegram не прив’язано — сигнали не дійдуть. <button class="tglink-btn" data-tglink="1">🔗 Привʼязати</button></div>') +
           '<div class="n">Сигнал приходить у ваш особистий чат із ботом після закриття бару.</div></div>'
       : "";
@@ -475,6 +475,7 @@
     if (typeof d.show_sbr === "boolean") IW.show_sbr = d.show_sbr;
     if (typeof d.show_shl === "boolean") IW.show_shl = d.show_shl;
     if (d.sbr && typeof d.sbr === "object") IW.sbr = d.sbr;
+    if (Array.isArray(d.sbr_tfs) && d.sbr_tfs.length) SBR_TFS = d.sbr_tfs.slice();
     if (typeof d.tg_linked === "boolean") IW.tg_linked = d.tg_linked;
     renderList(); renderTfBar();
     if (changed) { IW.sig = ""; IW.coin = null; loadCoin(true); }

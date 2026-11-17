@@ -415,7 +415,7 @@ def test_recalc_does_not_resurrect_a_removed_coin():
 def test_sbr_engine_feeds_and_calls_spring_scan():
     src = open(os.path.join(ROOT, 'detection', 'sbr_signals.py'), encoding='utf-8').read()
     assert 'from detection.spring_scan import sbr_symbols' in src
-    assert 'spring=_default_spring' in src and 'self._spring(S, items)' in src
+    assert 'spring=_default_spring' in src and 'self._spring(S, base)' in src
 
 
 # ── ✋ ВІДКРИТТЯ УГОДИ З ТАБЛИЦІ СКАНУ (вимога 10.11) ──

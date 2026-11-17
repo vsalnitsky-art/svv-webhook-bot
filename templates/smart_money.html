@@ -1595,8 +1595,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 </label>
                 <input type="text" id="sbr-alarm-sym" class="sm-alarm-in" value="BTC" maxlength="20"
                        onchange="sbrSaveAlarm()" title="Монета (BTC = BTCUSDT)">
-                <span class="sm-alarm-tfs" id="sbr-alarm-tfs" title="Таймфрейми сигналу: будить СВІЖИЙ сигнал на будь-якому з позначених TF. 15M / 30M / 45M рахуються лише для монети будильника (45M — із 15-хвилинних свічок, межі від 00:00 UTC, як у TradingView).">
-                    <label><input type="checkbox" data-atf="15m" onchange="sbrSaveAlarm()">15M</label><label><input type="checkbox" data-atf="30m" onchange="sbrSaveAlarm()">30M</label><label><input type="checkbox" data-atf="45m" onchange="sbrSaveAlarm()">45M</label><label><input type="checkbox" data-atf="1h" onchange="sbrSaveAlarm()">1H</label><label><input type="checkbox" data-atf="4h" onchange="sbrSaveAlarm()">4H</label>
+                <span class="sm-alarm-tfs" id="sbr-alarm-tfs" title="Таймфрейми сигналу: будить СВІЖИЙ сигнал на будь-якому з позначених TF. 15M / 30M / 45M / 1D рахуються лише для монети будильника (45M — із 15-хвилинних свічок, межі від 00:00 UTC, як у TradingView).">
+                    <label><input type="checkbox" data-atf="15m" onchange="sbrSaveAlarm()">15M</label><label><input type="checkbox" data-atf="30m" onchange="sbrSaveAlarm()">30M</label><label><input type="checkbox" data-atf="45m" onchange="sbrSaveAlarm()">45M</label><label><input type="checkbox" data-atf="1h" onchange="sbrSaveAlarm()">1H</label><label><input type="checkbox" data-atf="4h" onchange="sbrSaveAlarm()">4H</label><label><input type="checkbox" data-atf="1d" onchange="sbrSaveAlarm()">1D</label>
                 </span>
                 <select id="sbr-alarm-side" class="sm-alarm-in" onchange="sbrSaveAlarm()" title="Який сигнал чекаємо — і яку кнопку вмикаємо">
                     <option value="LONG">LONG → 📈</option><option value="SHORT">SHORT → 📉</option>
@@ -2591,7 +2591,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mm-gate" onchange="updateMmGate()">
                         🧮 Через МММ-Trend
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-Trend»: банер МММ-Trend мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Trend». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-Trend»: банер МММ-Trend мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Без «Через МММ-Trend» (сам) — сигнал лише в бік банера, таблицю не питаємо (вимога 17.11). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-banner" onchange="updateMmGate()">
                         за банером МММ-Trend
                     </label>
@@ -2599,7 +2599,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmo-gate" onchange="updateMmGate()">
                         🧮 Через МММ-МОНІТОР
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-МОНІТОР»: банер МММ-монітора мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-МОНІТОР». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-МОНІТОР»: банер МММ-монітора мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Без «Через МММ-МОНІТОР» (сам) — сигнал лише в бік банера, таблицю не питаємо (вимога 17.11). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mmo-gate-banner" onchange="updateMmGate()">
                         за банером МММ-МОНІТОР
                     </label>
@@ -2607,7 +2607,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmc-gate" onchange="updateMmGate()">
                         ⚡ Через МММ-CTR
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-CTR»: банер ⚡ МММ-CTR мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-CTR». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-CTR»: банер ⚡ МММ-CTR мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Без «Через МММ-CTR» (сам) — сигнал лише в бік банера, таблицю не питаємо (вимога 17.11). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mmc-gate-banner" onchange="updateMmGate()">
                         за банером МММ-CTR
                     </label>
@@ -2615,7 +2615,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmf-gate" onchange="updateMmGate()">
                         🔮 Через МММ-Local
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-Local»: банер 🔮 МММ-Local мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Local». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-Local»: банер 🔮 МММ-Local мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Без «Через МММ-Local» (сам) — сигнал лише в бік банера, таблицю не питаємо (вимога 17.11). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mmf-gate-banner" onchange="updateMmGate()">
                         за банером МММ-Local
                     </label>
@@ -2623,7 +2623,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmp-gate" onchange="updateMmGate()">
                         🧭 Через МММ-Pull
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-Pull»: банер 🧭 МММ-Pull мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Pull». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-Pull»: банер 🧭 МММ-Pull мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Без «Через МММ-Pull» (сам) — сигнал лише в бік банера, таблицю не питаємо (вимога 17.11). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mmp-gate-banner" onchange="updateMmGate()">
                         за банером МММ-Pull
                     </label>
@@ -2631,7 +2631,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmd-gate" onchange="updateMmGate()">
                         🧠 Через МММ-Decision
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-Decision»: банер 🧠 МММ-Decision мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Decision». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-Decision»: банер 🧠 МММ-Decision мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Без «Через МММ-Decision» (сам) — сигнал лише в бік банера, таблицю не питаємо (вимога 17.11). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mmd-gate-banner" onchange="updateMmGate()">
                         за банером МММ-Decision
                     </label>
@@ -2639,7 +2639,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mmr-gate" onchange="updateMmGate()">
                         🧩 Через МММ-Готовність
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-Готовність»: банер 🧩 МММ-Готовність мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-Готовність». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-Готовність»: банер 🧩 МММ-Готовність мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Без «Через МММ-Готовність» (сам) — сигнал лише в бік банера, таблицю не питаємо (вимога 17.11). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mmr-gate-banner" onchange="updateMmGate()">
                         за банером МММ-Готовність
                     </label>
@@ -2647,7 +2647,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mms-gate" onchange="updateMmGate()">
                         🔔 Через МММ-SBR
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через МММ-SBR»: банер 🔔 МММ-SBR мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Діє лише разом із «Через МММ-SBR». ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Додатково до «Через МММ-SBR»: банер 🔔 МММ-SBR мусить мати той самий напрямок, що й сигнал (банер ⚖ або протилежний → сигнал відхиляється). Без «Через МММ-SBR» (сам) — сигнал лише в бік банера, таблицю не питаємо (вимога 17.11). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mms-gate-banner" onchange="updateMmGate()">
                         за банером МММ-SBR
                     </label>
@@ -2655,7 +2655,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-sprw-gate" onchange="updateMmGate()">
                         🌀 Через Пружину-WL
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через Пружину-WL»: банер «Куди накручено» 🌀 Пружини мусить мати той самий напрямок, що й сигнал (⚖ / замало заряджених / протилежний → сигнал відхиляється). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Сам або додатково до «Через Пружину-WL»: банер «Куди накручено» 🌀 Пружини мусить мати той самий напрямок, що й сигнал (⚖ / замало заряджених / протилежний → сигнал відхиляється). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-sprw-gate-banner" onchange="updateMmGate()">
                         за банером Пружини-WL
                     </label>
@@ -2663,7 +2663,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-sprx-gate" onchange="updateMmGate()">
                         🔭 Через Пружину-скан
                     </label>
-                    <label class="sm-checkbox" title="Додатково до «Через Пружину-скан»: банер «Куди накручено» останнього скану біржі мусить мати той самий напрямок, що й сигнал. ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="Сам або додатково до «Через Пружину-скан»: банер «Куди накручено» останнього скану біржі мусить мати той самий напрямок, що й сигнал. ВИМК (дефолт).">
                         <input type="checkbox" id="sm-sprx-gate-banner" onchange="updateMmGate()">
                         за банером Пружини-скан
                     </label>
@@ -2675,7 +2675,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-spbw-gate" onchange="updateMmGate()">
                         ⚖ за банером SMC Bybit
                     </label>
-                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Діє лише разом із «Через МММ-Trend» / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги; у 🧠 МММ-Decision — ще й фільтр «Вердикт ≥»). ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="⚑ МММ-ворота враховують поріг «Сила ≥» ВКЛАДКИ, у якій стоїть монета: сигнал проходить, лише коли монета ВИДИМА в таблиці блоку (її сила ≥ порогу своєї вкладки). Поріг вкладки 0 = фільтр не задіяно, умова не діє. Вкладки з увімкненим порогом позначені «⚑≥N». Без «Через МММ-Trend» (сам) — сигнал лише в бік банера, таблицю не питаємо (вимога 17.11). / «Через МММ-МОНІТОР» / «Через МММ-CTR» / «Через МММ-Local» / «Через МММ-Pull» / «Через МММ-Decision» (для кожного блоку — його власні пороги; у 🧠 МММ-Decision — ще й фільтр «Вердикт ≥»). ВИМК (дефолт).">
                         <input type="checkbox" id="sm-mm-gate-str" onchange="updateMmGate()">
                         ⚑ з порогом «Сила ≥» вкладки
                     </label>
@@ -3984,10 +3984,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                     📶 Банер: <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tf-1h" onchange="sbrTfGuard(this,'mms-tf-4h');saveFuelFilterSettings()"> 1H</label>
                     <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tf-4h" onchange="sbrTfGuard(this,'mms-tf-1h');saveFuelFilterSettings()"> 4H</label>
                 </span>
-                <span style="display:flex;align-items:center;gap:6px;margin-left:8px;color:#8b93a7" title="📨 Сигнали в Telegram «🔔 Сигнали»: майстер-вимикач і з яких TF слати. Свіжий сигнал по монеті з кнопкою 🔔 у WATCHLIST одразу йде в тему (за замовчуванням 🔔 увімкнено для BTCUSDT і ETHUSDT). 1H і 4H на одному закритті в один бік — одне повідомлення «1H+4H». Обидва TF вимкнути не можна — лишиться той, що був.">
+                <span style="display:flex;align-items:center;gap:6px;margin-left:8px;color:#8b93a7" title="📨 Сигнали в Telegram «🔔 Сигнали»: майстер-вимикач і з яких TF слати (будь-який набір 15M · 30M · 45M · 1H · 4H · 1D). Свіжий сигнал по монеті з кнопкою 🔔 у WATCHLIST одразу йде в тему (за замовчуванням 🔔 увімкнено для BTCUSDT і ETHUSDT). Сигнали кількох TF на одному закритті в один бік — одне повідомлення «1H+4H». 15M / 30M / 45M / 1D рахуються лише для монет із 🔔. Зняти всі TF не можна — лишиться 1H+4H.">
                     <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tg-enabled" onchange="sbrSaveTg()"> 📨 Telegram:</label>
-                    <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tg-1h" onchange="sbrTfGuard(this,'mms-tg-4h');sbrSaveTg()"> 1H</label>
-                    <label style="display:flex;align-items:center;gap:3px;cursor:pointer"><input type="checkbox" id="mms-tg-4h" onchange="sbrTfGuard(this,'mms-tg-1h');sbrSaveTg()"> 4H</label>
+                    <span class="sm-alarm-tfs" id="mms-tg-tfs"><label><input type="checkbox" data-ttf="15m" onchange="sbrSaveTg()">15M</label><label><input type="checkbox" data-ttf="30m" onchange="sbrSaveTg()">30M</label><label><input type="checkbox" data-ttf="45m" onchange="sbrSaveTg()">45M</label><label><input type="checkbox" data-ttf="1h" onchange="sbrSaveTg()">1H</label><label><input type="checkbox" data-ttf="4h" onchange="sbrSaveTg()">4H</label><label><input type="checkbox" data-ttf="1d" onchange="sbrSaveTg()">1D</label></span>
                 </span>
                 <span id="mms-scan-status" style="flex-basis:100%;font-size:0.66rem;color:#8b93a7;font-family:monospace"></span>
             </div>
@@ -8422,9 +8421,10 @@ function updateSettingsSummary() {
      ['sm-sprw-gate', 'sm-sprw-gate-banner', '🌀 Пружина-WL'],
      ['sm-sprx-gate', 'sm-sprx-gate-banner', '🔭 Пружина-скан']].forEach(([g, b, t]) => {
         const _g = document.getElementById(g);
-        if (!_g || !_g.checked) return;
         const _b = document.getElementById(b);
-        summary += ' · ' + t + (_b && _b.checked ? ' +банер' : '');
+        const gOn = !!(_g && _g.checked), bOn = !!(_b && _b.checked);
+        if (gOn) summary += ' · ' + t + (bOn ? ' +банер' : '');
+        else if (bOn) summary += ' · банер ' + t;     // лише «за банером» (17.11)
     });
     { const _ai = document.getElementById('sm-ai-signal');
       if (_ai && _ai.checked) summary += ` · 🤖 ШІ ≥${(document.getElementById('sm-ai-entry-min') || {}).value || 70}`; }
@@ -8560,8 +8560,9 @@ async function updateVobOnePerOb() {
     } catch (err) { alert('VOB one-per-OB update error: ' + err); }
 }
 // 🧮 ЗАГАЛЬНІ МММ-ВОРОТА (вимога 09.10): «Через МММ-Trend» / «Через
-// МММ-МОНІТОР» + «за банером …». Усі чотири тумблери шлемо РАЗОМ; «за
-// банером» гаситься, поки його головний тумблер вимкнено.
+// МММ-МОНІТОР» + «за банером …». Усі тумблери шлемо РАЗОМ. «за банером»
+// РОЗБЛОКОВАНО (вимога 17.11): без «Через …» він сам — ворота лише за
+// напрямком банера блоку (таблицю не питаємо).
 const _SM_MM_GATES = [['sm-mm-gate', 'sm-mm-gate-banner', 'mm_gate_enabled', 'mm_gate_banner'],
                       ['sm-mmo-gate', 'sm-mmo-gate-banner', 'mmo_gate_enabled', 'mmo_gate_banner'],
                       ['sm-mmc-gate', 'sm-mmc-gate-banner', 'mmc_gate_enabled', 'mmc_gate_banner'],
@@ -8576,12 +8577,11 @@ const _SM_SPR_GATES = [['sm-sprw-gate', 'sm-sprw-gate-banner', 'sprw_gate_enable
                        ['sm-sprx-gate', 'sm-sprx-gate-banner', 'sprx_gate_enabled', 'sprx_gate_banner']];
 function _smMmGateSync() {
     _SM_MM_GATES.concat(_SM_SPR_GATES).forEach(([gi, bi]) => {
-        const g = document.getElementById(gi);
         const b = document.getElementById(bi);
-        if (!g || !b) return;
-        b.disabled = !g.checked;
+        if (!b) return;
+        b.disabled = false;          // 17.11: «за банером» працює й сам
         const lbl = b.closest ? b.closest('label') : null;
-        if (lbl && lbl.style) lbl.style.opacity = g.checked ? '' : '0.45';
+        if (lbl && lbl.style) lbl.style.opacity = '';
     });
     // ⚑ «з порогом вкладки» має сенс лише при хоч одних увімкнених МММ-воротах.
     const gs = document.getElementById('sm-mm-gate-str');
@@ -20889,11 +20889,22 @@ function _sbrChk(id, dflt) {
 }
 function _sbrApplyTgSettings(st) {
     if (!st) return;
-    [['mms-tg-enabled', st.tg_enabled], ['mms-tg-1h', st.tg_1h], ['mms-tg-4h', st.tg_4h]]
-        .forEach(([id, v]) => {
-            const e = document.getElementById(id);
-            if (e && document.activeElement !== e) e.checked = v !== false;
-        });
+    const e = document.getElementById('mms-tg-enabled');
+    if (e && document.activeElement !== e) e.checked = st.tg_enabled !== false;
+    const tfs = _sbrTgTfsOf(st);
+    document.querySelectorAll('#mms-tg-tfs input[data-ttf]').forEach(c => {
+        if (document.activeElement !== c) c.checked = tfs.indexOf(c.dataset.ttf) >= 0;
+    });
+}
+// 📶 TF групи Telegram (вимога 17.11): `tg_tfs`; старий бекенд — tg_1h / tg_4h.
+function _sbrTgTfsOf(st) {
+    const raw = (st && Array.isArray(st.tg_tfs)) ? st.tg_tfs.map(x => String(x).toLowerCase()) : [];
+    const got = _SBR_ALARM_TFS.filter(x => raw.indexOf(x) >= 0);
+    if (got.length) return got;
+    const out = [];
+    if (!st || st.tg_1h !== false) out.push('1h');
+    if (!st || st.tg_4h !== false) out.push('4h');
+    return out.length ? out : ['1h', '4h'];
 }
 // ⏰ Будильник SBR — показ стану й збереження (вимога 01.11).
 function _sbrAlarmShortSym(s) { return String(s || 'BTCUSDT').replace(/USDT$/, ''); }
@@ -20937,7 +20948,7 @@ function _sbrApplyAlarm(st) {
     }
 }
 // ⏰ TF будильника: `alarm_tfs` (список), старий бекенд — `alarm_tf`.
-const _SBR_ALARM_TFS = ['15m', '30m', '45m', '1h', '4h'];
+const _SBR_ALARM_TFS = ['15m', '30m', '45m', '1h', '4h', '1d'];
 function _sbrAlarmTfsOf(st) {
     const raw = (st && Array.isArray(st.alarm_tfs)) ? st.alarm_tfs.map(x => String(x).toLowerCase()) : [];
     const got = _SBR_ALARM_TFS.filter(x => raw.indexOf(x) >= 0);
@@ -20981,12 +20992,16 @@ async function sbrSaveAlarm() {
 async function sbrSaveTg() {
     const tg = document.getElementById('mms-tg-enabled');
     if (!tg) return;
+    const chips = Array.from(document.querySelectorAll('#mms-tg-tfs input[data-ttf]'));
+    let tfs = chips.filter(c => c.checked).map(c => c.dataset.ttf);
+    if (!tfs.length) {        // жодного TF = тема мовчала б → повертаємо 1H+4H
+        tfs = ['1h', '4h'];
+        chips.forEach(c => { c.checked = tfs.indexOf(c.dataset.ttf) >= 0; });
+    }
     try {
         const res = await fetch('/api/sbr/settings', {
             method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({tg_enabled: !!tg.checked,
-                                  tg_1h: _sbrChk('mms-tg-1h', true),
-                                  tg_4h: _sbrChk('mms-tg-4h', true)}),
+            body: JSON.stringify({tg_enabled: !!tg.checked, tg_tfs: tfs}),
         });
         const d = res.ok ? await res.json() : {ok: false, reason: 'HTTP ' + res.status};
         if (!d.ok) { alert('📨 Не збережено: ' + (d.reason || '')); tg.checked = !tg.checked; }

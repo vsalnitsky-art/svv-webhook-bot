@@ -9077,3 +9077,35 @@ Manager", проконтролюй, що алгоритм чітко розум�
 - Таблиці 🌀 Пружина і 💰 Funding — Пружина: сортування за замовчуванням
   «Заряд» ↓ (`_sprSortCol`/`_fsprSortCol` = 'charge'; 🔭 скан уже був).
 Тест: `test_vol_anomaly_research.py` (+4).
+
+## 📶 SBR: УСІ TF для групи TG і особистих підписок · 🔓 «за банером» сам (17.11)
+Дослівно: «Додай можливість вибору всіх таймфреймів для бота і інфосайта» ·
+«Розблокуй всі "за банером"».
+- **TF:** `sbr_signals.ALL_TFS` = 15m · 30m · 45m · 1h · 4h · 1d (`TF_SEC` +1d,
+  `ALARM_TF_ALL = ALL_TFS`). `EXTRA_TFS` (усе, крім 1H/4H; `ALARM_ONLY_TFS` —
+  історичний аліас) рушій рахує ЛИШЕ ЗА ПОТРЕБОЮ — `SbrEngine._extra_plan(s)`:
+  ⏰ монета будильника · 📨 монети групи з 🔔 при `tg_enabled` і обраному TF ·
+  👤 особисті підписки (`get_extra_tfs` → `info_portal.sbr_extra_tfs()` =
+  ЧИСТА `sbr_tfs_map`). 1H/4H — як і раніше, увесь всесвіт.
+- Група TG: ключ `tg_tfs` (список; None → історичні `tg_1h`/`tg_4h`, які
+  лишились ДЗЕРКАЛОМ — `_tg_clean`); ЧИСТІ `tfs_norm`, `tg_tfs_of`. Старий UI
+  (tg_1h/tg_4h) молодші TF не губить. `/api/sbr/settings` приймає `tg_tfs`.
+  UI: чипи `#mms-tg-tfs` (`data-ttf`, порожньо → 1H+4H), `_sbrTgTfsOf`;
+  будильник — +1D (`_SBR_ALARM_TFS`).
+- `_on_signals`: додатковий TF іде ЛИШЕ туди, де його обрано (група / особисто);
+  🔭 скан отримує тільки 1H/4H (`self._spring(S, base)`); книга 🔔 МММ-SBR,
+  правило виходу, ворота — 1H/4H без змін.
+- Кабінет: `info_portal.SBR_SUB_TFS` (= `ALL_TFS`, тест звіряє), `sbr_norm`
+  приймає їх; `sbr_extra_symbols` — лише монети з 1H/4H-підпискою (інакше
+  1H/4H тягнулись би даремно); сервер шле `sbr_tfs`, меню 🔔 — сітка 3×2
+  (`.iw-bell-tfs`). Ассети `app.js?v=229`, `style.css?v=219`.
+- **«за банером …» розблоковано** (усі 8 МММ + 🌀/🔭 Пружини): `_smMmGateSync`
+  більше не гасить чекбокс. Без «Через …» — ворота ЛИШЕ за напрямком банера
+  блоку (таблицю не питаємо): ЧИСТА `smc_scanner.mm_gates_plan(s)` →
+  `[(book, need_banner, need_coin)]`, `mm_gate_decide(..., need_coin=False)`;
+  Пружини — `spring_gates.banner_only_decide` («Куди накручено»). ⚑ поріг
+  «Сила ≥» до «лише банер» не застосовується. Шапка: `· банер 🧮 МММ-Trend`.
+  `mm_gates_active` лишився (тести). ⚠️ «за банером Пружини-WL» сам = те саме,
+  що «⚖ за банером SMC Bybit» (той самий `spring_banner()`).
+Тести: `test_sbr_signals.py` (34), `test_info_portal.py` (42),
+`test_mm_signal_gate.py` (26), `test_spring_gates.py` (29).

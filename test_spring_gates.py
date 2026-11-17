@@ -412,6 +412,18 @@ def test_signal_symbols_only_visible_bybit_rows():
     assert eng.signal_symbols() == [], 'монети немає на Bybit — сканер її не веде'
 
 
+
+def test_spring_banner_only_1711():
+    def _check(c, m):
+        assert c, m
+    ok = sg.banner_only_decide(sg.TAG_WL, 'LONG', 'LONG')
+    _check(ok[0] and ok[1], ok)
+    no = sg.banner_only_decide(sg.TAG_XS, None, 'LONG')
+    _check(no[0] and not no[1] and '⚖' in no[2], no)
+    src = open(os.path.join(ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
+    _check("s.get('sprw_gate_banner') and not s.get('sprw_gate_enabled')" in src
+           and 'sg.banner_only_decide(sg.TAG_XS' in src, 'сканер: лише банер Пружини')
+
 if __name__ == '__main__':
     n = 0
     for k, v in list(globals().items()):

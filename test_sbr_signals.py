@@ -374,12 +374,12 @@ def test_gates_and_banner_tg_wired():
     ff = _ff_src()
     _check("'key': 'mms_bias_tg'" in ff and "book='sbr')" in ff, 'TG банера SBR')
     for i in ('sm-mms-gate', 'sm-mms-gate-banner', 'ff-mms-bias-tg', 'mms-tf-1h',
-              'mms-tf-4h', 'mms-tg-1h', 'mms-tg-4h'):
+              'mms-tf-4h', 'mms-tg-tfs'):
         _check(f'id="{i}"' in _HTML, f'контрол {i}')
     _check("'mms_gate_enabled', 'mms_gate_banner']" in _HTML, 'ворота в _SM_MM_GATES')
     _check("mms_tf_1h: _c('mms-tf-1h')" in _HTML and "mms_bias_tg: _c('ff-mms-bias-tg')" in _HTML,
            'збереження')
-    _check("tg_1h: _sbrChk('mms-tg-1h', true)" in _HTML, 'TG TF у sbrSaveTg')
+    _check("tg_tfs: tfs" in _HTML and 'data-ttf="1d"' in _HTML, 'TG TF (усі) у sbrSaveTg')
     _check("'pchg'" not in re.search(r"_MMB\.sbr\.cols = \[[^\]]*\]", _HTML).group(0),
            'колонку «Рух» прибрано')
 
@@ -434,7 +434,7 @@ def test_gate_rejects_while_sbr_state_is_stale():
 
 # ── ⏰ БУДИЛЬНИК SBR → головна кнопка напрямку (вимога 01.11) ──────────────────
 def _asig(side, score=80.0):
-    return {'side': side, 'score': score, 'trigger': 1.0, 't': 0, 'close_t': 0, 'n': 1}
+    return {'side': side, 'score': score, 'trigger': 1.0, 't': 0, 'close_t': 0, 'n': 1, 'sl': 0.9}
 
 
 def test_alarm_match_rule():
@@ -558,6 +558,46 @@ def test_45m_is_built_from_15m_aligned_to_utc_day():
            and a['l'] == 88 and a['v'] == 30 and a['q'] == 3, a)
     _check(out[1]['t'] == (day + 2700) * 1000, 'межі 45m від 00:00 UTC')
     _check(86400 % 2700 == 0, '32 бари 45m на добу — епоха й доба вирівняні')
+
+
+def test_all_tfs_for_group_and_personal_1711():
+    _check(S.ALL_TFS == ('15m', '30m', '45m', '1h', '4h', '1d') and S.ALARM_TF_ALL == S.ALL_TFS,
+           'усі TF рушія')
+    _check(S.tg_tfs_of({'tg_tfs': ['1d', '15m', 'zz']}) == ('15m', '1d'), 'набір із ALL_TFS')
+    _check(S.tg_tfs_of({'tg_tfs': []}) == S.TFS, 'порожньо → 1H+4H')
+    e = S.SbrEngine(_MemDB(), lambda: ['ETHUSDT'], None, None,
+                    get_extra_tfs=lambda: {'30m': ['XRPUSDT'], '1h': ['ZZZUSDT']})
+    e.start = lambda: None
+    e.update_settings({'tg_tfs': ['15m', '4h'], 'tg_symbols': ['BTCUSDT']})
+    st = e.get_settings()
+    _check(st['tg_tfs'] == ['15m', '4h'] and st['tg_1h'] is False and st['tg_4h'] is True,
+           f'дзеркало tg_1h/tg_4h: {st}')
+    e.update_settings({'tg_1h': True})              # старий UI не губить 15M
+    _check(e.get_settings()['tg_tfs'] == ['15m', '1h', '4h'], e.get_settings()['tg_tfs'])
+    plan = dict(e._plan(['ETHUSDT', 'BTCUSDT']))
+    _check(plan.get('15m') == ['BTCUSDT'], f'15M — лише монети групи з 🔔: {plan}')
+    _check(plan.get('30m') == ['XRPUSDT'], 'особиста підписка 30M')
+    _check('1d' not in plan and '45m' not in plan, 'не обрано → не рахується')
+    _check(plan['1h'] == ['ETHUSDT', 'BTCUSDT'], '1H/4H — як і раніше')
+    e._safe_fetch = lambda *a: None
+    e.update_settings({'tg_enabled': False})
+    _check('15m' not in dict(e._plan(['BTCUSDT'])), 'TG вимкнено → 15M групи не рахується')
+
+
+def test_young_tf_routes_to_group_and_personal_1711():
+    group, pers, spring = [], [], []
+    e = S.SbrEngine(_MemDB(), lambda: [], None, lambda t: (group.append(t) or True, ''),
+                    personal=lambda S_, it: pers.append(it) or (0, 0),
+                    spring=lambda S_, it: spring.append(it),
+                    get_extra_tfs=lambda: {'45m': ['ETHUSDT']})
+    e.start = lambda: None
+    e.update_settings({'tg_symbols': ['BTCUSDT'], 'tg_tfs': ['15m']})
+    e._on_signals('BTCUSDT', [('15m', _asig('LONG'))], 100.0)
+    _check(group and '15M' in group[-1], f'15M обрано для групи → іде в тему: {group}')
+    _check(not spring, '🔭 скан — лише 1H/4H')
+    e._on_signals('ETHUSDT', [('45m', _asig('SHORT')), ('30m', _asig('SHORT'))], 200.0)
+    _check(pers and [x[0] for x in pers[-1]] == ['45m'], f'особисто — лише підписаний TF: {pers}')
+    _check(len(group) == 1, 'ETH без 🔔 у групі → тема мовчить')
 
 
 def test_low_tfs_only_for_alarm_coin_and_45m_fetches_15m():

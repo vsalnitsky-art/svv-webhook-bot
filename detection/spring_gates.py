@@ -125,6 +125,19 @@ def book_decide(tag: str, rec: Optional[Dict], banner: Optional[str], side: str,
     return (True, True, f'{tag}[вкладка {cs}{bn}{where}]:✓', '')
 
 
+def banner_only_decide(tag: str, banner: Optional[str], side: str) -> Tuple[bool, bool, str, str]:
+    """«за банером Пружини-…» без «Через Пружину-…» (вимога 17.11): сигнал
+    лише в бік банера «Куди накручено» цієї Пружини; ⚖ / немає даних → відмова."""
+    side = str(side or '').upper()
+    name = NAME.get(tag, tag)
+    if side not in SIDES:
+        return (False, True, '', '')
+    if banner == side:
+        return (True, True, f'{tag}[банер {banner}]:✓', '')
+    return (True, False, f'{tag}[банер {banner or "⚖"}]:✗',
+            f'{name}: банер «Куди накручено» {banner or "⚖ без напрямку"}, а сигнал {side}')
+
+
 def banner_decide(tag: str, banner: Optional[str], side: str) -> Tuple[bool, bool, str, str]:
     """⚖ Ворота за банером «SMC Forecast» (вимога 11.11): банер LONG → лише
     LONG-сигнали, SHORT → лише SHORT; ⚖ рівновага / замало заряджених / немає

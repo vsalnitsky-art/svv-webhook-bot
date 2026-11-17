@@ -72,7 +72,7 @@ _MM_GATE_TAG = {'new': ('🧮МММ-Trend', '🧮 МММ-Trend'),
 
 
 def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
-                   need_strength: bool = False):
+                   need_strength: bool = False, need_coin: bool = True):
     """🧮 ЧИСТЕ правило воріт «Через МММ-Trend» / «Через МММ-МОНІТОР».
 
     `view` — `FuelFilterDaemon.mm_gate_view(symbol, book)`; `book` = 'new'
@@ -88,6 +88,9 @@ def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
         ще й сила монети ≥ порогу «Сила ≥» ЇЇ вкладки (`view['str_min']`),
         тобто монета мусить бути ВИДИМА в таблиці. Поріг 0 = фільтр вкладки
         не задіяно → умова не діє.
+      • `need_coin=False` — ЛИШЕ «за банером …» (вимога 17.11: чекбокс банера
+        працює й без «Через …»): судимо лише напрямок банера блоку, таблицю
+        («Список монет») не питаємо.
     """
     side = str(side or '').upper()
     tag, name = _MM_GATE_TAG.get(book, _MM_GATE_TAG['new'])
@@ -112,6 +115,8 @@ def mm_gate_decide(view, side, need_banner: bool = False, book: str = 'new',
         if b != side:
             return (True, False, f'{tag}[банер {b}]:✗',
                     f'{name}: банер {b}, а сигнал {side}')
+    if not need_coin:
+        return True, True, f'{tag}[банер {b}]:✓', ''
     if c is None:
         return (True, False, f'{tag}[монети немає в списку{bn}]:✗',
                 f'{name}: монети немає у «Списку монет» (МММ ще невідомий)')
@@ -166,6 +171,21 @@ def mm_gates_active(settings):
     settings = settings or {}
     return [(book, bool(settings.get(bk, False)))
             for ek, bk, book in MM_GATES if settings.get(ek, False)]
+
+
+def mm_gates_plan(settings):
+    """`[(book, need_banner, need_coin)]` у порядку MM_GATES (ЧИСТА).
+    «Через …» → таблиця (+ банер, якщо позначено); лише «за банером …»
+    (вимога 17.11, чекбокс розблоковано) → лише напрямок банера блоку."""
+    settings = settings or {}
+    out = []
+    for ek, bk, book in MM_GATES:
+        g, b = bool(settings.get(ek, False)), bool(settings.get(bk, False))
+        if g:
+            out.append((book, b, True))
+        elif b:
+            out.append((book, True, False))
+    return out
 
 
 def liq_gate_decide(on, row, side):
@@ -4083,7 +4103,8 @@ class SMCScanner:
         Пружину-WL» і «Через Пружину-скан»."""
         s = getattr(self, '_settings', None) or {}
         if not (s.get('sprw_gate_enabled') or s.get('sprx_gate_enabled')
-                or s.get('spbx_gate_enabled') or s.get('spbw_gate_enabled')):
+                or s.get('spbx_gate_enabled') or s.get('spbw_gate_enabled')
+                or s.get('sprw_gate_banner') or s.get('sprx_gate_banner')):
             return []
         try:
             sg = _sibling_mod('spring_gates', '_SPRING_GATES_MOD')
@@ -4104,6 +4125,18 @@ class SMCScanner:
                 out.append(sg.banner_decide(f'⚖{ex.title()}', sg.banner_side(eng.banner_agg()), side))
         if s.get('spbw_gate_enabled') and s.get('spring_enabled', True):
             out.append(sg.banner_decide('⚖Bybit', sg.banner_side(self.spring_banner()), side))
+        # «за банером Пружини-…» БЕЗ «Через Пружину-…» (вимога 17.11, чекбокс
+        # розблоковано): лише напрямок банера «Куди накручено» тієї Пружини,
+        # таблицю не питаємо.
+        if (s.get('sprw_gate_banner') and not s.get('sprw_gate_enabled')
+                and s.get('spring_enabled', True)):
+            out.append(sg.banner_only_decide(sg.TAG_WL, sg.banner_side(self.spring_banner()), side))
+        if s.get('sprx_gate_banner') and not s.get('sprx_gate_enabled'):
+            import sys as _sys
+            _m = _sys.modules.get('detection.spring_scan')
+            eng = _m.get_spring_scan() if _m is not None else None
+            if eng is not None and hasattr(eng, 'banner_agg'):
+                out.append(sg.banner_only_decide(sg.TAG_XS, sg.banner_side(eng.banner_agg()), side))
         if not (s.get('sprw_gate_enabled') or s.get('sprx_gate_enabled')):
             return out
         wl_rec = (self.spring_for([S]) or {}).get(S) if s.get('spring_enabled', True) else None
@@ -5674,9 +5707,10 @@ class SMCScanner:
         # читає лише памʼять двигуна, тож після відмови решту не рахуємо.
         # Вимкнений блок → умова не діє (fail-open).
         _need_s = bool(self._settings.get('mm_gate_strength', False))
-        for _book, _need_b in mm_gates_active(self._settings):
+        for _book, _need_b, _need_c in mm_gates_plan(self._settings):
             _app, _mok, _mchip, _mwhy = mm_gate_decide(
-                _mm_gate_view(symbol, _book), side_label, _need_b, _book, _need_s)
+                _mm_gate_view(symbol, _book), side_label, _need_b, _book,
+                _need_s and _need_c, _need_c)
             if _app:
                 parts.append(_mchip)
                 if not _mok:

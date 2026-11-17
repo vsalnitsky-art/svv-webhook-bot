@@ -365,8 +365,10 @@ def test_imb_carries_volume_and_impulse_share():
 
 def test_personal_sbr_subscriptions():
     cur = ip.user_info({'info': {'wl': ['BTCUSDT', 'ETHUSDT'],
-                                 'sbr': {'BTCUSDT': ['1h', '15m'], 'XRPUSDT': ['4h']}}}, [])
-    _check(cur['sbr'] == {'BTCUSDT': ['1h']}, 'лише 1H/4H і лише монети списку')
+                                 'sbr': {'BTCUSDT': ['1h', '15m', '2h'], 'XRPUSDT': ['4h']}}}, [])
+    _check(cur['sbr'] == {'BTCUSDT': ['15m', '1h']},
+           ('17.11: будь-який TF рушія (невідомі відкидаються) і лише монети списку', cur['sbr']))
+    cur, _ = ip.apply_change(cur, {'sbr': {'symbol': 'BTCUSDT', 'tfs': ['1h']}}, [])
     cur, _ = ip.apply_change(cur, {'sbr': {'symbol': 'eth', 'tfs': ['4h', '1h']}}, [])
     _check(cur['sbr'] == {'BTCUSDT': ['1h'], 'ETHUSDT': ['1h', '4h']}, cur['sbr'])
     cur, _ = ip.apply_change(cur, {'sbr': {'symbol': 'BTCUSDT', 'tfs': []}}, [])
@@ -391,6 +393,30 @@ def test_sbr_engine_delivers_personally_and_tracks_extra():
     e._on_signals('ZZZUSDT', [('1h', sig)], 0)
     _check(got and got[0][0] == 'ZZZUSDT', 'свіжий сигнал → особиста доставка')
     print('✓ рушій SBR: особиста доставка + монети підписок')
+
+
+def test_personal_sbr_all_timeframes_1711():
+    S = _load('sbr_signals_t2', 'detection/sbr_signals.py')
+    _check(tuple(ip.SBR_SUB_TFS) == tuple(S.ALL_TFS), 'TF підписок = усі TF рушія (дзеркало)')
+    subs = [('1', {'BTCUSDT': ['15m', '1h']}), ('2', {'ETHUSDT': ['45m', '1d']}),
+            ('3', {'SOLUSDT': ['4h']})]
+    m = ip.sbr_tfs_map(subs)
+    _check(m == {'15m': ['BTCUSDT'], '45m': ['ETHUSDT'], '1d': ['ETHUSDT']}, m)
+    old = ip.sbr_subs
+    ip.sbr_subs = lambda force=False: subs
+    try:
+        ex = ip.sbr_extra_symbols()
+    finally:
+        ip.sbr_subs = old
+    _check(ex == ['BTCUSDT', 'SOLUSDT'], ('1H/4H тягнемо лише там, де їх обрано', ex))
+    rc = ip.sbr_recipients(subs, 'ETHUSDT', [('45m', {'side': 'LONG'}), ('1h', {'side': 'LONG'})])
+    _check(list(rc) == ['2'] and [x[0] for x in rc['2']] == ['45m'], rc)
+    js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
+    _check('"15m", "30m", "45m", "1h", "4h", "1d"' in js and 'd.sbr_tfs' in js
+           and 'iw-bell-tfs' in js, 'меню 🔔 — усі TF, список із сервера')
+    _check("'sbr_tfs': list(SBR_SUB_TFS)" in open(os.path.join(_HERE, 'web', 'info_portal.py'),
+                                                encoding='utf-8').read(), 'сервер шле TF')
+    print('✓ особисті SBR: усі TF рушія')
 
 
 def test_blocked_user_has_no_access_and_no_group():

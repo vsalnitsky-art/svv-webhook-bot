@@ -560,7 +560,11 @@ def imb_of(klines, tf, now=None, sym=None, hist=None):
     return out
 
 
-SBR_TFS = ('1h', '4h')       # SBR — TF рушія бота, Telegram і особистих підписок
+SBR_TFS = ('1h', '4h')       # SBR — TF рушія бота («останній сигнал» у шапці графіка)
+# 🔔 Особисті підписки — БУДЬ-ЯКИЙ TF рушія SBR (вимога 17.11). Дзеркало
+# `sbr_signals.ALL_TFS` (тест звіряє): 15m/30m/45m/1d рушій рахує лише для
+# монет, де цей TF обрано.
+SBR_SUB_TFS = ('15m', '30m', '45m', '1h', '4h', '1d')
 # 🔔 SBR НА ГРАФІКУ КАБІНЕТУ — на ВСІХ таймфреймах графіка (вимога 16.11).
 # 'chart' = TF графіка; можна обрати й інший TF графіка (сигнали 4H на 15m-
 # графіку тощо) — тоді його рахує фоновий потік (частина 'sbr'), кеш — до
@@ -1313,13 +1317,14 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
 # ── Особисті дані користувача ─────────────────────────────────────────────
 def sbr_norm(raw, wl=None):
     """ЧИСТА: {SYM: ['1h','4h']} — персональні 🔔 SBR-підписки. Лише монети
-    списку (якщо `wl` задано), лише TF 1H/4H; порожній вибір = немає підписки."""
+    списку (якщо `wl` задано), лише TF із SBR_SUB_TFS (15M…1D); порожній вибір
+    = немає підписки."""
     out = {}
     for k, v in (raw or {}).items() if isinstance(raw, dict) else []:
         S = norm_symbol(k)
         if not valid_symbol(S) or (wl is not None and S not in wl):
             continue
-        tfs = [t for t in SBR_TFS if t in [str(x).lower() for x in (v or [])]]
+        tfs = [t for t in SBR_SUB_TFS if t in [str(x).lower() for x in (v or [])]]
         if tfs:
             out[S] = tfs
     return out
@@ -1442,13 +1447,37 @@ def sbr_subs_invalidate():
 
 
 def sbr_extra_symbols():
-    """Монети особистих підписок — рушій SBR рахує їх навіть поза WATCHLIST бота."""
+    """Монети особистих підписок на 1H/4H — рушій SBR рахує їх навіть поза
+    WATCHLIST бота. Підписка лише на інші TF (15M…1D) сюди не потрапляє: її
+    веде `sbr_extra_tfs`, і 1H/4H по такій монеті не тягнуться даремно."""
     out = []
     for _c, sub in sbr_subs():
-        for S in sub:
-            if S not in out:
+        for S, tfs in sbr_norm(sub).items():
+            if S not in out and any(t in SBR_TFS for t in tfs):
                 out.append(S)
     return out[:SUBS_EXTRA_MAX]
+
+
+def sbr_extra_tfs():
+    """{tf: [монети]} особистих підписок на ДОДАТКОВІ TF (15M/30M/45M/1D) —
+    рушій рахує ці TF лише для цих монет (вимога 17.11)."""
+    return sbr_tfs_map(sbr_subs())
+
+
+def sbr_tfs_map(subs):
+    """ЧИСТА: [(chat, {SYM: tfs})] → {tf: [SYM…]} для TF поза 1H/4H."""
+    out = {}
+    n = 0
+    for _c, sub in subs or []:
+        for S, tfs in sbr_norm(sub).items():
+            for t in tfs:
+                if t in SBR_TFS:
+                    continue
+                lst = out.setdefault(t, [])
+                if S not in lst and n < SUBS_EXTRA_MAX:
+                    lst.append(S)
+                    n += 1
+    return out
 
 
 def sbr_recipients(subs, symbol, items):
@@ -2259,4 +2288,4 @@ def register_info_portal(app):
             sbr_subs_invalidate()
         return jsonify({'ok': not err, 'error': err, 'max': IWL_MAX, 'universe_n': len(uni),
                         'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
-                        'sbr_tfs': list(SBR_TFS), **cur})
+                        'sbr_tfs': list(SBR_SUB_TFS), **cur})

@@ -60,12 +60,16 @@ DEFAULTS = {
 }
 
 TFS = ('1h', '4h')
-# ⏰ Молодші TF — ЛИШЕ для будильника (вимога 16.11): рушій рахує їх тільки для
-# монети будильника і лише коли TF обрано. Група TG, особисті підписки, книга
-# 🔔 МММ-SBR, правило виходу і 🔭 скан їх не бачать (фільтрують своїми TF).
-ALARM_ONLY_TFS = ('15m', '30m', '45m')
-TF_SEC = {'15m': 900, '30m': 1800, '45m': 2700, '1h': 3600, '4h': 14400}
-TF_LABEL = {'15m': '15M', '30m': '30M', '45m': '45M', '1h': '1H', '4h': '4H'}
+# 📶 УСІ TF сигналів SBR (вимога 17.11): будильник, група Telegram і особисті
+# підписки кабінету обирають будь-який набір із ALL_TFS.
+ALL_TFS = ('15m', '30m', '45m', '1h', '4h', '1d')
+# ⏰ ДОДАТКОВІ TF (усе, крім 1H/4H) рушій рахує ЛИШЕ ЗА ПОТРЕБОЮ: для монети
+# будильника, для монет групи TG і особистих підписок, де цей TF обрано.
+# Книга 🔔 МММ-SBR, правило виходу і 🔭 скан і далі живуть на 1H/4H.
+EXTRA_TFS = ('15m', '30m', '45m', '1d')
+ALARM_ONLY_TFS = EXTRA_TFS          # історична назва (16.11: лише будильник)
+TF_SEC = {'15m': 900, '30m': 1800, '45m': 2700, '1h': 3600, '4h': 14400, '1d': 86400}
+TF_LABEL = {'15m': '15M', '30m': '30M', '45m': '45M', '1h': '1H', '4h': '4H', '1d': '1D'}
 # 45m біржа не віддає → збираємо з 15m (межі 45m від 00:00 UTC, як TradingView:
 # 1440 / 45 = 32 бари на добу, тож епоха й доба вирівняні однаково).
 AGG_FROM = {'45m': ('15m', 3)}
@@ -91,6 +95,8 @@ DEFAULT_SETTINGS = {
     # Обидва вимкнені = обидва (інакше тумблер мовчки гасив би всю тему).
     'tg_1h': True,
     'tg_4h': True,
+    # 📶 Будь-який набір із ALL_TFS (вимога 17.11). None → з tg_1h / tg_4h.
+    'tg_tfs': None,
     # ⏰ БУДИЛЬНИК (вимога 01.11): свіжий сигнал SBR обраної монети / TF / боку
     # вмикає відповідну ГОЛОВНУ кнопку напрямку (Trade Direction).
     # `alarm_on` = ГОЛОВНИЙ ТУМБЛЕР будильника (деф. ВИМК): поки увімкнений,
@@ -109,7 +115,7 @@ DEFAULT_SETTINGS = {
 }
 
 ALARM_TFS = ('any', '1h', '4h')                     # історичний `alarm_tf`
-ALARM_TF_ALL = ('15m', '30m', '45m', '1h', '4h')     # вибір у новому UI
+ALARM_TF_ALL = ALL_TFS                              # вибір у новому UI
 ALARM_SIDES = ('LONG', 'SHORT')
 ALARM_TM = ('', 'on', 'off')
 
@@ -209,9 +215,20 @@ def alarm_match(settings, symbol, items):
     return None
 
 
+def tfs_norm(raw) -> tuple:
+    """Набір TF із ALL_TFS у порядку від молодшого (невідомі відкидаються). ЧИСТА."""
+    got = {str(x).lower() for x in (raw or [])} if isinstance(raw, (list, tuple, set)) else set()
+    return tuple(tf for tf in ALL_TFS if tf in got)
+
+
 def tg_tfs_of(settings) -> tuple:
-    """TF, сигнали яких ідуть у Telegram. ЧИСТА."""
+    """TF, сигнали яких ідуть у Telegram (група). ЧИСТА. `tg_tfs` (список із
+    ALL_TFS) — головне; немає → історичні `tg_1h` / `tg_4h`. Порожньо → 1H+4H
+    (інакше вибір мовчки гасив би всю тему)."""
     s = settings or {}
+    out = tfs_norm(s.get('tg_tfs'))
+    if out:
+        return out
     out = tuple(tf for tf, k in (('1h', 'tg_1h'), ('4h', 'tg_4h')) if bool(s.get(k, True)))
     return out or TFS
 
@@ -446,8 +463,11 @@ class SbrEngine:
     шле Telegram по монетах, відмічених кнопкою 🔔 у WATCHLIST."""
 
     def __init__(self, db=None, get_watchlist=None, fetch=None, notify=None,
-                 clock=None, get_extra=None, personal=None, spring=None):
+                 clock=None, get_extra=None, personal=None, spring=None,
+                 get_extra_tfs=None):
         self.db = db
+        # 📶 {tf: [монети]} особистих підписок на ДОДАТКОВІ TF (17.11).
+        self._get_extra_tfs = get_extra_tfs or (lambda: {})
         # 👤 особисті підписки з кабінету (вимога 09.11): монети, які треба
         # вести навіть поза WATCHLIST, і доставка сигналу в особистий чат.
         self._get_extra = get_extra or (lambda: [])
@@ -485,12 +505,17 @@ class SbrEngine:
         s['tg_symbols'] = sorted({str(x).upper() for x in (s.get('tg_symbols') or []) if x})
         s['enabled'] = bool(s.get('enabled', True))
         s['tg_enabled'] = bool(s.get('tg_enabled', True))
-        s['tg_1h'] = bool(s.get('tg_1h', True))
-        s['tg_4h'] = bool(s.get('tg_4h', True))
-        if not (s['tg_1h'] or s['tg_4h']):
-            s['tg_1h'] = s['tg_4h'] = True
+        self._tg_clean(s)
         self._alarm_clean(s)
         return s
+
+    @staticmethod
+    def _tg_clean(s: Dict) -> None:
+        """`tg_tfs` — головне; `tg_1h`/`tg_4h` лишаються дзеркалом (старі UI)."""
+        tfs = list(tg_tfs_of(s))
+        s['tg_tfs'] = tfs
+        s['tg_1h'] = '1h' in tfs
+        s['tg_4h'] = '4h' in tfs
 
     @staticmethod
     def _alarm_clean(s: Dict) -> None:
@@ -509,7 +534,9 @@ class SbrEngine:
     def get_settings(self) -> Dict:
         with self._lock:
             return {**self._settings, 'tg_symbols': list(self._settings['tg_symbols']),
-                    'alarm_tfs': list(self._settings.get('alarm_tfs') or [])}
+                    'alarm_tfs': list(self._settings.get('alarm_tfs') or []),
+                    'tg_tfs': list(self._settings.get('tg_tfs') or []),
+                    'all_tfs': list(ALL_TFS)}
 
     def _save_settings(self):
         try:
@@ -524,11 +551,15 @@ class SbrEngine:
                 self._settings['enabled'] = bool(patch['enabled'])
             if 'tg_enabled' in patch:
                 self._settings['tg_enabled'] = bool(patch['tg_enabled'])
-            for k in ('tg_1h', 'tg_4h'):
-                if k in patch:
-                    self._settings[k] = bool(patch[k])
-            if not (self._settings.get('tg_1h', True) or self._settings.get('tg_4h', True)):
-                self._settings['tg_1h'] = self._settings['tg_4h'] = True
+            if 'tg_tfs' in patch:
+                self._settings['tg_tfs'] = list(tfs_norm(patch['tg_tfs'])) or None
+            elif 'tg_1h' in patch or 'tg_4h' in patch:     # старий UI: лише 1H/4H
+                keep = [tf for tf in tg_tfs_of(self._settings) if tf not in TFS]
+                for tf, k in (('1h', 'tg_1h'), ('4h', 'tg_4h')):
+                    if bool(patch.get(k, self._settings.get(k, True))):
+                        keep.append(tf)
+                self._settings['tg_tfs'] = list(tfs_norm(keep)) or None
+            self._tg_clean(self._settings)
             if 'tg_symbols' in patch and isinstance(patch['tg_symbols'], list):
                 self._settings['tg_symbols'] = sorted(
                     {str(x).upper() for x in patch['tg_symbols'] if x})
@@ -722,15 +753,39 @@ class SbrEngine:
             self._persist()
         return done
 
-    def _plan(self, syms: List[str]) -> List[tuple]:
-        """[(tf, монети)] на прохід: 1H/4H — увесь всесвіт; ⏰ 15m/30m/45m —
-        ЛИШЕ монета будильника і лише обрані TF, поки будильник увімкнений."""
-        plan = [(tf, syms) for tf in TFS]
-        s = self.get_settings()
+    def _extra_plan(self, s: Dict) -> Dict[str, List[str]]:
+        """{tf: [монети]} ДОДАТКОВИХ TF (EXTRA_TFS): ⏰ будильник · 📨 група TG
+        (лише монети 🔔 і лише обрані TF) · 👤 особисті підписки кабінету."""
+        out: Dict[str, List[str]] = {}
+
+        def add(tf, sym):
+            if tf in EXTRA_TFS and sym:
+                lst = out.setdefault(tf, [])
+                if sym not in lst:
+                    lst.append(str(sym).upper())
         if s.get('alarm_on'):
             for tf in alarm_tfs_of(s):
-                if tf in ALARM_ONLY_TFS:
-                    plan.append((tf, [s['alarm_symbol']]))
+                add(tf, s['alarm_symbol'])
+        if s.get('tg_enabled'):
+            for tf in tg_tfs_of(s):
+                for S in s.get('tg_symbols') or []:
+                    add(tf, S)
+        try:
+            for tf, syms in (self._get_extra_tfs() or {}).items():
+                for S in syms or []:
+                    add(str(tf).lower(), S)
+        except Exception:
+            pass
+        return out
+
+    def _plan(self, syms: List[str]) -> List[tuple]:
+        """[(tf, монети)] на прохід: 1H/4H — увесь всесвіт; додаткові TF
+        (15m/30m/45m/1d) — ЛИШЕ монети, де цей TF обрано (`_extra_plan`)."""
+        plan = [(tf, syms) for tf in TFS]
+        ex = self._extra_plan(self.get_settings())
+        for tf in EXTRA_TFS:
+            if ex.get(tf):
+                plan.append((tf, ex[tf]))
         return plan
 
     @staticmethod
@@ -844,9 +899,14 @@ class SbrEngine:
             self._alarm_check(S, items, now, s)
         except Exception as e:
             print(f"[SBR] alarm error {S}: {e}")
-        # ⏰ Молодші TF рахуються лише для будильника — далі (група, особисті,
-        # 🔭 скан, журнал) ідуть тільки 1H/4H.
-        items = [it for it in items if it[0] in TFS]
+        # 📶 Додаткові TF (15m/30m/45m/1d) — лише туди, де їх обрано: група
+        # (tg_tfs) і особисті підписки. 🔭 скан і журнал книги — 1H/4H.
+        ex = self._extra_plan(s)
+        grp_extra = set(tg_tfs_of(s)) if (s.get('tg_enabled') and S in s.get('tg_symbols', [])) else set()
+        pers_extra = {tf for tf, syms in ex.items() if S in syms}
+        all_items = [it for it in items if it[0] in TFS or it[0] in grp_extra or it[0] in pers_extra]
+        base = [it for it in items if it[0] in TFS]
+        items = all_items
         if not items:
             return
         by_side: Dict[str, List[tuple]] = {}
@@ -862,9 +922,9 @@ class SbrEngine:
                 print(f"[SBR] personal send error {S}: {e}")
         # 🔭 Монети з таблиці «Пружина — скан біржі» (кнопки 1H/4H): незалежно
         # від групових тумблерів SBR — у таблиці людина обрала монету сама.
-        if self._spring:
+        if self._spring and base:
             try:
-                self._spring(S, items)
+                self._spring(S, base)
             except Exception as e:
                 print(f"[SBR] spring-scan hook error {S}: {e}")
         for side, grp in by_side.items():
@@ -1052,13 +1112,21 @@ def _default_personal(symbol, items):
     return sbr_personal_send(symbol, items)
 
 
+def _default_extra_tfs():
+    try:
+        from web.info_portal import sbr_extra_tfs
+        return sbr_extra_tfs() or {}
+    except Exception:
+        return {}
+
+
 def init_sbr_engine(db=None, get_watchlist=None, fetch=None, notify=None) -> SbrEngine:
     global _instance
     if _instance is None:
         _instance = SbrEngine(db, get_watchlist, fetch or _default_fetch,
                               notify or _default_notify,
                               get_extra=_default_extra, personal=_default_personal,
-                              spring=_default_spring)
+                              spring=_default_spring, get_extra_tfs=_default_extra_tfs)
         if _instance.is_enabled():
             _instance.start()
     return _instance

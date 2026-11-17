@@ -439,6 +439,31 @@ def test_fc_gate_rule_labels_and_activation():
     print('✓ «Через МММ-Local» — те саме правило, свої підписи, деф. ВИМК, UI')
 
 
+
+def test_banner_only_unlocked_1711():
+    """«за банером …» розблоковано (17.11): без «Через …» — лише напрямок банера."""
+    plan = sc.mm_gates_plan({'mm_gate_banner': True, 'mmo_gate_enabled': True,
+                             'mmo_gate_banner': True, 'mmc_gate_enabled': True})
+    _check(plan == [('new', True, False), ('old', True, True), ('ctr', False, True)], plan)
+    v = {'on': True, 'dir': 'LONG', 'coin': None}
+    app, ok, chip, _ = sc.mm_gate_decide(v, 'LONG', True, 'new', True, False)
+    _check(app and ok and 'банер LONG' in chip, ('монети немає в списку — не важить', chip))
+    app, ok, _c, why = sc.mm_gate_decide(v, 'SHORT', True, 'new', False, False)
+    _check(app and not ok and 'банер LONG' in why, why)
+    app, ok, _c, _w = sc.mm_gate_decide({'on': True, 'dir': None}, 'LONG', True, 'new', False, False)
+    _check(app and not ok, '⚖ банер → відмова')
+    _check(sc.mm_gate_decide({'on': False}, 'LONG', True, 'new', False, False)[0] is False,
+           'блок вимкнено → умова не діє')
+    src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'detection',
+                            'smc_scanner.py'), encoding='utf-8').read()
+    _check('mm_gates_plan(self._settings)' in src, 'сканер бере план із «лише банер»')
+    html = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates',
+                             'smart_money.html'), encoding='utf-8').read()
+    body = html[html.index('function _smMmGateSync()'):]
+    body = body[:body.index('\n}')]
+    _check('b.disabled = false' in body and 'b.disabled = !g.checked' not in body,
+           '«за банером» більше не гаситься')
+
 if __name__ == '__main__':
     _fns = [v for k, v in list(globals().items()) if k.startswith('test_')]
     for fn in _fns:
