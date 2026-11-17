@@ -164,7 +164,7 @@ def test_route_only_reads():
 def _js(body):
     src = ''
     for f in ('function chargeColor(', 'function springTradeCellHTML(',
-              'function mmdAlertCellHTML(', 'function aiExitChipHTML(', 'function aiProChipHTML('):
+              'function mmdAlertCellHTML(', 'function aiExitChipHTML('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
     for c in ('const _CHG_STOPS', 'const _AIX_ICON', 'const _AIX_COL'):
@@ -183,8 +183,8 @@ def _js(body):
 
 
 def test_js_cells():
-    """⚠️ 17.11: колонка 🚨 = ЛИШЕ ШІ (🤖 вихід за аномаліями + 🧠 професійний
-    вихід). Показ 🔔 МММ-SBR («✓ OK» / «⚠ ПРОТИ» / «🔔 без сигналу» / трейл)
+    """⚠️ 17.11: колонка 🚨 = ЛИШЕ ШІ (🤖 вихід — єдиний мозок: вердикт + R
+    угоди за планом). Показ 🔔 МММ-SBR («✓ OK» / «⚠ ПРОТИ» / «🔔 без сигналу» / трейл)
     прибрано (тест переписано)."""
     out = _js(r"""
 const m = {alert:{level:'against', side:'SHORT', tf:'1H+4H', text:'ПРОТИ угоди: 🔔 МММ-SBR SHORT 1H+4H'}};
@@ -192,8 +192,8 @@ console.log(springTradeCellHTML({side:'LONG', spring_open:30, spring:{charge:70,
 console.log('|');
 console.log(mmdAlertCellHTML({mmd:m, sbr_trail:{armed_px:100, stop_px:101, tf:'1H'}}));
 console.log('|');
-console.log(mmdAlertCellHTML({mmd:m, ai_exit:{verdict:'close', verdict_ua:'закрити', groups:{anom:true, price:true}},
-  ai_pro:{action:'HOLD', close:false, r_multiple:1.2, data_ok:true}}));
+console.log(mmdAlertCellHTML({mmd:m, ai_exit:{verdict:'close', verdict_ua:'закрити', groups:{anom:true, price:true},
+  r:1.2, plan:{stop:95, target:110}}}));
 console.log('|');
 console.log(mmdAlertCellHTML({}) + springTradeCellHTML({}));
 """)
@@ -204,9 +204,9 @@ console.log(mmdAlertCellHTML({}) + springTradeCellHTML({}));
     for bad in ('ПРОТИ', 'OK', '🔔', 'tm-mmd-alert-hot'):
         _check(bad not in p[1] and bad not in p[2], f'SBR у 🚨 більше не показується: {bad}')
     _check('>—<' in p[1], 'без даних ШІ → «—»')
-    _check('🤖⚠' in p[2] and '🧠+1.2R' in p[2] and '>—<' not in p[2], p[2])
+    _check('🤖⚠' in p[2] and '+1.2R' in p[2] and '🧠' not in p[2] and '>—<' not in p[2], p[2])
     _check(p[3].count('>—<') == 2, 'немає даних → «—» в обох комірках')
-    print('✓ JS: 🌀 заряд + 🚨 лише ШІ (🤖 вердикт · 🧠 R), без 🔔 МММ-SBR')
+    print('✓ JS: 🌀 заряд + 🚨 лише ШІ (🤖 вердикт · R), без 🔔 МММ-SBR')
 
 
 def test_blink_css_exists():

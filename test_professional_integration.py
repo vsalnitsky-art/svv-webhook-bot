@@ -49,7 +49,7 @@ def _engine(direction=1, **settings):
         bar['l'] -= 0.5
     market = {'15m': bars, '1h': L.A and __import__('detection.professional_ai', fromlist=['resample_ohlcv']).resample_ohlcv(bars, '1h'),
               '4h': __import__('detection.professional_ai', fromlist=['resample_ohlcv']).resample_ohlcv(bars, '4h')}
-    sc = _Sc(True, ai_professional_enabled=True, **settings)
+    sc = _Sc(True, **settings)
     tm = L._Tm()
     db = L._Db([dict(L._an('side', hint='up', o1=0.3), symbol='XUSDT')])
     engine = L.A.AiEngine(db=db, md=_Md(market), scanner=sc, tm=tm, clock=lambda: L.NOW)
@@ -59,17 +59,20 @@ def _engine(direction=1, **settings):
 
 
 def test_professional_entry_passes_all_existing_gates():
+    # 17.11 «єдиний мозок»: графік 15m/1h/4h — частина рішення 🤖 завжди
+    # (окремого тумблера немає); санітарні перевірки пройдено → сигнал іде
+    # через спільні ворота, ознаки й план — в епізод.
     engine, scanner, tm = _engine(1)
     engine.tick(L.NOW)
     _check(tm.sig and tm.sig[0]['side'] == 'LONG', 'Valid chart should allow LONG through on_signal')
     _check(scanner.calls and scanner.calls[0][2] is True and scanner.calls[0][3] == 'ai',
            'Existing shared gates remain mandatory')
     row = engine.state()['coins'][0]
-    _check(row['professional']['ok'] and row['professional_allowed'],
-           'Professional snapshot must be visible in state')
+    _check(row['brain']['ok'] and row['brain']['plan'], row['brain'])
     signal = engine._eps['XUSDT']['signal']
     _check(signal['professional']['features']['15m']['trend'] > 0,
            'Entry features must be archived for later learning')
+    _check(signal['brain']['plan']['stop'] and signal['brain']['checks'], signal['brain'])
 
 
 def test_stale_chart_blocks_before_shared_gates():
@@ -80,15 +83,18 @@ def test_stale_chart_blocks_before_shared_gates():
     engine.tick(L.NOW)
     _check(not tm.sig and not scanner.calls, 'Stale 15m data must fail closed')
     row = engine.state()['coins'][0]
-    _check(not row['professional']['ok'] and not row['professional_allowed'], row['professional'])
+    _check(not row['brain']['ok'] and any(c['k'] == 'data' and c['ok'] is False
+                                          for c in row['brain']['checks']), row['brain'])
 
 
-def test_unready_required_model_blocks_entry():
-    engine, scanner, tm = _engine(1, ai_professional_require_model=True)
+def test_untrained_model_does_not_block_entry():
+    # Модель, що ще вчиться (OOS < 200), на рішення НЕ впливає (раніше був
+    # окремий тумблер «лише з OOS-моделлю» — прибрано 17.11).
+    engine, scanner, tm = _engine(1)
     engine.tick(L.NOW)
-    _check(not tm.sig and not scanner.calls, 'Required untrained model cannot open a trade')
     row = engine.state()['coins'][0]
-    _check(any('модель' in x for x in row['professional']['vetoes']), row['professional'])
+    m = [c for c in row['brain']['checks'] if c['k'] == 'model'][0]
+    _check(m['ok'] is None and not m['hard'] and tm.sig, m)
 
 
 def _tm_stub(TM, engine, settings, calls=None):
@@ -101,46 +107,41 @@ def _tm_stub(TM, engine, settings, calls=None):
         _settings=dict(settings), AI_EXIT_TTL=20.0, scanner=None, _exit_key=TM._exit_key,
         _spring_fire_view=lambda s, fetch=False: {'box_hi': 100.0, 'box_lo': 90.0, 'price': 99.0},
         _trade_anomalies=_anoms, trade_exh_for=lambda pos, vw: {})
-    stub._ai_pro_exit_reason = lambda *a, **k: TM._ai_pro_exit_reason(stub, *a, **k)
+    stub._ai_plan_follow = lambda *a, **k: TM._ai_plan_follow(stub, *a, **k)
     return stub
 
 
-def test_trade_manager_professional_exit():
+def test_trade_manager_plan_follow_is_part_of_ai_exit():
+    # «🧠 Професійний вихід» більше не окреме правило: супровід за планом —
+    # частина «🤖 Вихід з угоди ШІ» (один тумблер), кеш барів рушія.
     engine, _scanner, _tm = _engine(-1)
     L.A._instance = engine
     TM = L._tm_class()
     sys.modules['detection'].ai_signals = L.A
     calls = []
-    stub = _tm_stub(TM, engine, {'use_ai_exit': False, 'use_ai_professional_exit': True}, calls)
+    stub = _tm_stub(TM, engine, {'use_ai_exit': True}, calls)
     opened = engine._md.market['15m'][0]['t']
     current = engine._md.market['15m'][-1]['c']
     pos = {'side': 'LONG', 'entry_price': 140.0, 'opened_at': opened,
            'peak_pnl_pct': 100.0 * (145.0 / 140.0 - 1.0)}
-    # Монітор у мережу НЕ ходить: без кешу рушія — тримаємо (даних немає).
+    # Монітор у мережу НЕ ходить: без кешу рушія — даних графіка немає.
     n0 = len(engine._md.calls)
-    hit = TM._ai_exit_reason(stub, 'XUSDT', pos, current, False)
-    _check(hit is None and len(engine._md.calls) == n0, 'Exit must read cache only')
-    _check(pos['ai_pro']['close'] is False, pos.get('ai_pro'))
-    # Кеш наповнює такт рушія → тепер рішення є.
+    TM._ai_exit_reason(stub, 'XUSDT', pos, current, False)
+    _check(len(engine._md.calls) == n0, 'Exit must read cache only')
+    _check(pos['ai_pro']['close'] is False and calls == ['anoms'], pos.get('ai_pro'))
+    # Кеш наповнює такт рушія → план угоди є, ціна далеко нижче стопу плану.
     engine._pro_market('XUSDT', L.NOW)
     stub._ai_exit_at = {}
     hit = TM._ai_exit_reason(stub, 'XUSDT', pos, current, False)
-    _check(hit and hit[0] == 'ai_pro_exit' and 'Професійний вихід' in hit[1], hit)
-    _check(pos['ai_pro']['close'] and 'analysis' not in pos['ai_pro'], pos['ai_pro'])
-    # «🤖 Вихід ШІ» за аномаліями ВИМКНЕНО — він не рахувався і не закривав.
-    _check(not calls and 'ai_exit' not in pos, 'Legacy AI exit must stay off')
-
-
-def test_legacy_exit_runs_only_with_its_own_switch():
-    engine, _scanner, _tm = _engine(1)
-    L.A._instance = engine
-    TM = L._tm_class()
-    sys.modules['detection'].ai_signals = L.A
-    calls = []
-    stub = _tm_stub(TM, engine, {'use_ai_exit': True, 'use_ai_professional_exit': False}, calls)
-    pos = {'side': 'LONG', 'entry_price': 100.0, 'opened_at': L.NOW - 3600}
-    TM._ai_exit_reason(stub, 'XUSDT', pos, 101.0, False)
-    _check(calls == ['anoms'] and 'ai_exit' in pos and 'ai_pro' not in pos, pos)
+    _check(hit and hit[0] == 'ai_exit' and 'стоп плану' in hit[1], hit)
+    _check(pos['ai_exit']['verdict'] == 'invalid' and pos['ai_exit']['plan']['stop']
+           and 'analysis' not in pos['ai_pro'], pos['ai_exit'])
+    # Вимкнено «🤖 Вихід з угоди ШІ» → нічого не рахується і не закривається.
+    stub2 = _tm_stub(TM, engine, {'use_ai_exit': False}, [])
+    pos2 = dict(pos)
+    pos2.pop('ai_exit', None); pos2.pop('ai_pro', None)
+    _check(TM._ai_exit_reason(stub2, 'XUSDT', pos2, current, False) is None
+           and 'ai_pro' not in pos2, pos2)
 
 
 def test_engine_prefetches_open_trades_and_learning_is_gated():
@@ -150,7 +151,7 @@ def test_engine_prefetches_open_trades_and_learning_is_gated():
     old = sys.modules.get('detection.sbr_signals')
     sys.modules['detection.sbr_signals'] = sb
     try:
-        engine._tm = types.SimpleNamespace(_settings={'use_ai_professional_exit': True})
+        engine._tm = types.SimpleNamespace(_settings={'use_ai_exit': True})
         _check(engine._pro_prefetch_open(L.NOW) == 1, 'One open trade')
         got = {(c[0], c[2]) for c in engine._md.calls}
         _check({('YUSDT', '15m'), ('YUSDT', '1h'), ('YUSDT', '4h')} <= got, got)
@@ -174,11 +175,11 @@ def test_engine_prefetches_open_trades_and_learning_is_gated():
     e2, sc2, _ = _engine(1)
     e2.db = _Db2()
     e2._tm = types.SimpleNamespace(_settings={})
-    sc2.extra.update(ai_professional_enabled=False, ai_learning_enabled=True)
+    sc2.extra.update(ai_signal_enabled=False, ai_learning_enabled=True)
     sc2.get_settings = lambda: dict(L._Sc.get_settings(sc2), **sc2.extra)
     _check(e2._learn_professional(L.NOW, force=True) is None and _Db2.n == 0,
            'No archive reads while the brain is unused')
-    sc2.extra['ai_professional_enabled'] = True
+    sc2.extra['ai_signal_enabled'] = True
     rep = e2._learn_professional(L.NOW, force=True)
     _check(_Db2.n == 1 and rep['status'] == 'no_new_labels', rep)
 
@@ -195,38 +196,44 @@ def test_reason_labels_and_light_payload():
     _check('professional_entry' not in lite, 'Heavy entry context stays out of /api/tm/state')
 
 
-def test_new_settings_are_explicit_and_default_safe():
+def test_one_brain_one_switch_per_side_of_the_trade():
+    # 17.11: окремих 🧠-тумблерів немає — один на вхід, один на вихід.
     source = open(os.path.join(ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
     tm_source = open(os.path.join(ROOT, 'detection', 'trade_manager.py'), encoding='utf-8').read()
     html = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
-    for key in ('ai_professional_enabled', 'ai_professional_require_model', 'ai_learning_enabled'):
-        _check(f"'{key}'" in source, key)
-    _check("'use_ai_professional_exit': False" in tm_source, 'Professional exit must default OFF')
-    for element in ('sm-ai-professional', 'sm-ai-require-model', 'sm-ai-learning',
-                    'tm-use-ai-professional-exit'):
+    _check("'ai_learning_enabled'" in source, 'learning key')
+    _check("'ai_professional_enabled': False" not in source
+           and "'ai_professional_require_model': False" not in source, 'pro filter keys removed')
+    _check("'use_ai_professional_exit'" not in tm_source, 'pro exit key removed')
+    _check('_ai_pro_exit_reason' not in tm_source and 'def _ai_plan_follow' in tm_source, 'plan follow')
+    for element in ('sm-ai-professional', 'sm-ai-require-model', 'tm-use-ai-professional-exit'):
+        _check(f'id="{element}"' not in html, element)
+    for element in ('sm-ai-signal', 'sm-ai-learning', 'tm-use-ai-exit', 'tm-ai-exit-mode'):
         _check(f'id="{element}"' in html, element)
-    # 17.11: «закривати:» належить 🤖 виходу — стоїть ОДРАЗУ за ним, до 🧠.
-    a, m, b = (html.index(f'id="{x}"') for x in
-               ('tm-use-ai-exit', 'tm-ai-exit-mode', 'tm-use-ai-professional-exit'))
-    _check(a < m < b, 'випадайка режиму — біля «🤖 Вихід з угоди ШІ», а не біля 🧠')
+    _check('function aiProChipHTML' not in html and 'function _aiBrainCell' in html, 'UI мозку')
+    a, m = (html.index(f'id="{x}"') for x in ('tm-use-ai-exit', 'tm-ai-exit-mode'))
+    _check(a < m, 'випадайка режиму — біля «🤖 Вихід з угоди ШІ»')
 
 
-def test_js_pro_chip_renders():
+def test_js_exit_chip_shows_r_and_plan():
     import json as _json
     import subprocess
     import tempfile
     html = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
-    a = html.index('function aiProChipHTML(')
-    src = "function fmtPriceJS(v){return String(Number(v));}\n" + html[a:html.index('\n}', a) + 2]
-    pos = {'ai_pro': {'action': 'HOLD', 'close': False, 'r_multiple': 1.234, 'peak_r': 1.8,
-                      'data_ok': True, 'plan': {'stop': 95, 'tp2': 111}, 'explanation': 'тримаємо'}}
-    src += "\nconsole.log(JSON.stringify([aiProChipHTML(%s), aiProChipHTML({})]));" % _json.dumps(pos)
+    a = html.index('const _AIX_ICON')
+    b = html.index('function aiExitChipHTML(')
+    src = ("function fmtPriceJS(v){return String(Number(v));}\n" + html[a:html.index('function aiExitChipHTML(', a)]
+           + html[b:html.index('\n}', b) + 2])
+    pos = {'ai_exit': {'verdict': 'hold', 'verdict_ua': 'тримаємо', 'r': 1.234, 'peak_r': 1.8,
+                       'groups': {'anom': False, 'price': True, 'profit': False},
+                       'plan': {'stop': 95, 'target': 111, 'net_rr': 2.1}, 'plan_src': 'ai'}}
+    src += "\nconsole.log(JSON.stringify([aiExitChipHTML(%s), aiExitChipHTML({})]));" % _json.dumps(pos)
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False) as f:
         f.write(src)
     out = subprocess.run(['node', f.name], capture_output=True, text=True, timeout=30)
     _check(out.returncode == 0, out.stderr)
     lines = _json.loads(out.stdout)
-    _check('🧠+1.2R' in lines[0] and 'ціль 111' in lines[0], lines[0])
+    _check('+1.2R' in lines[0] and 'ціль 111' in lines[0] and 'сигналу ШІ' in lines[0], lines[0])
     _check(lines[1] == '', 'No chip without data')
 
 

@@ -288,7 +288,25 @@ def _engine(ok=True):
     e = A.AiEngine(db=db, scanner=sc, tm=tm, clock=lambda: NOW)
     e._refresh_cal = lambda now: None
     e._fetch_live = lambda S, now: (dict(_REC), dict(_VW_UP))
+    e._professional_snapshot = lambda S, now: pro_ok()
     return e, sc, tm
+
+
+def pro_ok(mom=0.3, atr=0.6, ready_model=False, p=0.6, strict_ready=False):
+    """Аналіз мозку графіка «дані свіжі»: план стоп −1% / 2.2R, тренд на 3 TF
+    ще плаский (строгий фільтр проти — як на старті розряду)."""
+    def side(sd):
+        sg = 1 if sd == 'LONG' else -1
+        return {'quality': 55.0, 'ready': strict_ready, 'momentum_signed': mom * sg if sd == 'LONG' else -mom,
+                'model_probability': p, 'vetoes': [] if strict_ready else ['багатотаймфреймовий тренд не підтверджує бік'],
+                'components': {'participation': 0.6},
+                'risk_plan': {'entry': 100.0, 'stop': 100.0 - sg * 1.0, 'risk_distance': 1.0,
+                              'risk_pct': 1.0, 'tp2': 100.0 + sg * 2.2,
+                              'assumed_roundtrip_cost_pct': 0.15}}
+    return {'ok': True, 'sides': {'LONG': side('LONG'), 'SHORT': side('SHORT')},
+            'features': {'15m': {'atr_pct': atr, 'trend': 0.0}, '1h': {'trend': 0.05}, '4h': {'trend': 0.0}},
+            'model': {'ready': ready_model, 'oos_samples': 250 if ready_model else 3, 'min_oos': 200},
+            'data_issues': [], 'vetoes': []}
 
 
 def test_engine_signal_goes_through_shared_gates():
@@ -345,7 +363,7 @@ def test_tm_ai_exit_reason():
         a['ts'] = a['ts'] - NOW + __import__('time').time()
     stub = types.SimpleNamespace(
         _settings={'use_ai_exit': True, 'ai_exit_mode': 'all'}, AI_EXIT_TTL=20.0, scanner=None,
-        _exit_key=TM._exit_key,
+        _exit_key=TM._exit_key, _ai_plan_follow=lambda *a, **k: None,
         _spring_fire_view=lambda s, fetch=False: {'box_hi': 100.0, 'box_lo': 90.0, 'price': 99.0},
         _trade_anomalies=lambda s, a, b: combo,
         trade_exh_for=lambda pos, vw: {})

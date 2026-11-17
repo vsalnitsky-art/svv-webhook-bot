@@ -26,8 +26,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional
 
 # ── налаштування (ключі СКАНЕРА — там, де всі сигнали) ──
+# 🧠 Окремих тумблерів «професійного фільтра / OOS-моделі» більше НЕМАЄ
+# (17.11, «єдиний мозок»): графік 15m/1h/4h — частина рішення 🤖 завжди.
 DEFAULTS = {'ai_signal_enabled': False, 'ai_min_charge': 65,
-            'ai_professional_enabled': False, 'ai_professional_require_model': False,
             'ai_learning_enabled': True}
 TICK_SEC = 30               # такт рушія
 LIVE_TTL = 60               # 1h-бари монети в заряді — не частіше раз на хвилину
@@ -916,10 +917,11 @@ class AiEngine:
         return {tf: self._pro_fetch_bars(symbol, tf, now, fetch) for tf in PRO_TFS}
 
     def _pro_exit_on(self) -> bool:
-        """Чи увімкнено «🧠 Професійний вихід ШІ» у Trade Manager."""
+        """Чи увімкнено «🤖 Вихід з угоди ШІ» у Trade Manager — супровід угоди
+        за планом мозку графіка тепер його частина (бари треба готувати)."""
         tm = self._tm_get()
         try:
-            return bool((getattr(tm, '_settings', None) or {}).get('use_ai_professional_exit'))
+            return bool((getattr(tm, '_settings', None) or {}).get('use_ai_exit'))
         except Exception:
             return False
 
@@ -955,9 +957,8 @@ class AiEngine:
             return hit[1]
         market = self._pro_market(symbol, now)
         try:
-            require = bool(self.settings().get('ai_professional_require_model'))
             with self._pro_lock:
-                result = self._pro_get().analyze(market, now, require_model=require)
+                result = self._pro_get().analyze(market, now, require_model=False)
         except Exception as e:
             result = {'ok': False, 'action': 'WAIT', 'side': None,
                       'data_issues': [f'помилка аналізу: {e}'],
@@ -970,13 +971,13 @@ class AiEngine:
 
     def _learn_professional(self, now: float, force: bool = False) -> Optional[Dict]:
         """🎓 Champion/challenger на архівах (епізоди ШІ + 🔬 дослідження угод).
-        Лише коли 🧠 справді задіяний (фільтр входу або професійний вихід):
-        без нього в архівах немає ознак для навчання, а читання 2×5000
-        рядків БД раз на 15 хв було б марною роботою."""
+        Лише коли 🤖 справді задіяний (сигнали або вихід ШІ): без нього в
+        архівах немає нових ознак, а читання 2×5000 рядків БД раз на 15 хв
+        було б марною роботою."""
         s = self.settings()
         if not s.get('ai_learning_enabled') or not self.db:
             return None
-        if not (s.get('ai_professional_enabled') or self._pro_exit_on()):
+        if not (s.get('ai_signal_enabled') or self._pro_exit_on()):
             return None
         if not force and now - self._learn_at < LEARN_REFRESH_SEC:
             return self._learning_state
@@ -1034,12 +1035,11 @@ class AiEngine:
         now = self._clock()
         try:
             market = self._pro_market(str(symbol).upper(), now, fetch)
-            require = bool(self.settings().get('ai_professional_require_model'))
             with self._pro_lock:
                 decision = self._pro_get().manage_position(
                     market, side, entry_price, opened_at, now,
                     current_price=current_price, peak_price=peak_price,
-                    require_model=require)
+                    require_model=False)
             decision['analysis'] = self._pro_compact(decision.get('analysis'))
             return decision
         except Exception as e:
@@ -1094,6 +1094,9 @@ class AiEngine:
         vw = spring_coil.live_fire_view(kl)
         rec = rec if rec.get('ok') else None
         self._live[S] = (now, rec, vw)
+        # ті самі 300 1h-барів — у кеш мозку графіка (другий запит не потрібен)
+        with self._pro_lock:
+            self._pro_bars.setdefault(S, {})['1h'] = (now, kl)
         return rec, vw
 
     def tick(self, now: Optional[float] = None) -> int:
@@ -1122,13 +1125,13 @@ class AiEngine:
         except Exception:
             pass
 
-        pro_on = bool(s.get('ai_professional_enabled'))
+        brain = _sib('ai_brain')
 
         def load(S):
             try:
-                if pro_on:                    # бари 🧠 — у тому самому пулі
-                    self._pro_market(S, now)
-                return S, self._fetch_live(S, now)
+                live = self._fetch_live(S, now)
+                self._pro_market(S, now)      # графік 15m/1h/4h — у тому самому пулі
+                return S, live
             except Exception as e:
                 self._stat['errors'] += 1
                 self._stat['last_err'] = f'{S}: {e}'[:200]
@@ -1160,18 +1163,16 @@ class AiEngine:
                 return (1 if entry_decide(x) else 0, (sc.get('done') or 0) / max(1, sc.get('total') or 1),
                         x['score'])
             best = el if _rk(el) >= _rk(es) else es
-            pro = self._professional_snapshot(S, now) if pro_on else None
-            pro_side = ((pro or {}).get('sides') or {}).get(best['side']) or {}
-            pro_allowed = (not s.get('ai_professional_enabled')) or bool(
-                pro and pro.get('ok') and pro_side.get('ready'))
+            # 🤖🧠 ЄДИНИЙ МОЗОК: напрямок → старт → санітарні перевірки графіка → план
+            pro = self._professional_snapshot(S, now)
+            bc = brain.entry_check(best['side'], best, pro, rec)
             view[S] = {'symbol': S, 'src': src, 'charge': rec.get('charge'),
                        'state': rec.get('state'), 'lean': rec.get('lean'),
                        'prob_long': rec.get('prob_long'), 'long': el, 'short': es,
                        'best': best['side'], 'episode_age': (int(now - ep['started_at'])
                                                              if ep else None),
                        'signal': (ep or {}).get('signal'),
-                       'professional': self._pro_compact(pro),
-                       'professional_allowed': pro_allowed}
+                       'brain': bc}
             if ep is not None:
                 for x in (el, es):
                     sc = x.get('scenario') or {}
@@ -1181,30 +1182,35 @@ class AiEngine:
                             ep[k] = int(now)
                             _ev(ep, now, 'scenario', side=x['side'], key=sc.get('key'),
                                 name=sc.get('name'), score=x.get('score'))
-            if (s.get('ai_signal_enabled') and ep is not None and entry_decide(best)
-                    and pro_allowed):
-                self._try_signal(S, best, rec, vw, ep, now, professional=pro)
+            if s.get('ai_signal_enabled') and ep is not None and entry_decide(best):
+                self._try_signal(S, best, rec, vw, ep, now, professional=pro, brain=bc)
             if ep is not None:
                 why = episode_done(ep, now, charged)
                 if why:
                     self._close_episode(S, ep, now, why)
         with self._lock:
             self._view = view
-        self._pro_prune(view.keys() if pro_on else ())
+        self._pro_prune(view.keys())
         self._stat.update({'last_at': now, 'coins': len(view)})
         if self._dirty:
             self._persist()
         return len(view)
 
-    def _try_signal(self, S, sc_res, rec, vw, ep, now, professional=None):
+    def _try_signal(self, S, sc_res, rec, vw, ep, now, professional=None, brain=None):
         side = sc_res['side']
         if ep.get('signal'):
             return                          # один результативний сигнал на епізод
         pro_side = ((professional or {}).get('sides') or {}).get(side) or {}
-        if self.settings().get('ai_professional_enabled') and not (
-                professional and professional.get('ok') and pro_side.get('ready')):
-            _ev(ep, now, 'professional_veto', side=side,
-                reason='; '.join((professional or {}).get('vetoes') or ['немає аналізу']))
+        if brain is None:
+            brain = _sib('ai_brain').entry_check(side, sc_res, professional, rec)
+        if not brain.get('ok'):
+            # 🧠 мозок не дав входу: подія в епізоді — ЛИШЕ коли причина змінилась
+            # (такт 30с, точка свіжа ≤2 свічки → інакше десятки однакових подій).
+            last = ep.setdefault('brain_veto', {})
+            if last.get(side) != brain.get('reason'):
+                last[side] = brain.get('reason')
+                _ev(ep, now, 'brain_veto', side=side, reason=brain.get('reason'),
+                    strict=(brain.get('strict') or {}).get('ready'))
             return
         tr = ep.setdefault('tries', {}).get(side) or [0, 0]
         if tr[0] >= SIGNAL_TRIES or now - tr[1] < SIGNAL_RETRY_SEC:
@@ -1225,13 +1231,22 @@ class AiEngine:
         ep['tries'][side] = [tr[0] + 1, int(now)]
         px = _px(vw, rec)
         pro_compact = self._pro_compact(professional)
+        bm = _sib('ai_brain')
+        plan = brain.get('plan') or {}
         head = (f"🤖 Сигнал ШІ {side} · 🧩 {sc_res.get('scenario_text') or ''} · "
-                f"заряд Пружини {rec.get('charge')} · довідково бал {sc_res['score']}")
-        if pro_side:
-            head += f" · 🧠 графік {pro_side.get('quality')}/100"
+                f"заряд Пружини {rec.get('charge')} · 🧠 {bm.checks_text(brain)}")
+        if plan:
+            head += (f" · план: стоп {plan.get('stop')} (−{plan.get('risk_pct')}%) · ціль "
+                     f"{plan.get('target')} (+{plan.get('reward_pct')}%) · R {plan.get('net_rr')}")
+        head += f" · впевненість {brain.get('confidence')}"
+        st = brain.get('strict') or {}
+        if st and not st.get('ready'):
+            head += ' · 🕶 строгий трендовий фільтр був би проти'
         log_activity(S, 'signal', f'{head} · {detail}', side=side, source='AI',
                      extra={'ai_score': sc_res['score'], 'ai_parts': sc_res['parts'],
                             'ai_scenario': (sc_res.get('scenario') or {}).get('key'),
+                            'ai_plan': plan or None, 'ai_confidence': brain.get('confidence'),
+                            'ai_strict': st.get('ready'),
                             'professional_quality': pro_side.get('quality'),
                             'professional_model': (pro_compact or {}).get('model')})
         if not ok:
@@ -1244,15 +1259,21 @@ class AiEngine:
             try:
                 res = tm.on_signal(symbol=S, side=side, entry_price=px or 0, opened_by='ai')
                 attach = getattr(tm, 'set_ai_professional_context', None)
-                if callable(attach) and pro_compact:
-                    attach(S, side, pro_compact)
+                if callable(attach) and (pro_compact or plan):
+                    try:
+                        attach(S, side, pro_compact or {}, plan=plan or None)
+                    except TypeError:           # старіший TM без plan=
+                        attach(S, side, pro_compact or {})
             except Exception as e:
                 self._stat['last_err'] = f'on_signal {S}: {e}'[:200]
         ep['signal'] = {'t': int(now), 'side': side, 'px': px, 'score': sc_res['score'],
                         'parts': sc_res['parts'], 'result': str(res)[:80] if res else None,
                         'scenario': (sc_res.get('scenario') or {}).get('key'),
                         'scenario_name': (sc_res.get('scenario') or {}).get('name'),
-                        'professional': pro_compact}
+                        'professional': pro_compact,
+                        'brain': {'checks': brain.get('checks'), 'plan': plan or None,
+                                  'confidence': brain.get('confidence'),
+                                  'strict': brain.get('strict'), 'context': brain.get('context')}}
         _ev(ep, now, 'signal', side=side, px=px, score=sc_res['score'])
         self._stat['signals'] += 1
 
@@ -1312,8 +1333,7 @@ class AiEngine:
         model = self._pro_get().model_state()
         learning = {k: v for k, v in (self._learning_state or {}).items() if k != 'model'}
         professional = {
-            'enabled': bool(self.settings().get('ai_professional_enabled')),
-            'require_model': bool(self.settings().get('ai_professional_require_model')),
+            'enabled': True,                   # частина 🤖 рішення завжди (17.11)
             'learning_enabled': bool(self.settings().get('ai_learning_enabled')),
             'model': {k: model.get(k) for k in ('version', 'ready', 'train_samples',
                                                 'oos_samples', 'min_oos', 'brier', 'accuracy')},
@@ -1326,7 +1346,8 @@ class AiEngine:
                 'professional': professional,
                 'episodes_open': len(self._eps), 'server_now': self._clock(),
                 'weights': {'entry': W_ENTRY, 'exit': W_EXIT},
-                'catalog': getattr(_scen(), 'CATALOG', None)}
+                'catalog': getattr(_scen(), 'CATALOG', None),
+                'brain_rules': getattr(_sib('ai_brain'), 'RULES', None)}
 
     def _loop(self):
         time.sleep(45)

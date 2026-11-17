@@ -707,7 +707,6 @@ DEFAULT_SETTINGS = {
     # `ai_exit_mode`: 'confirmed' (деф.) | 'all' (лише коли ВСІ групи за вихід).
     'use_ai_exit': False,
     'ai_exit_mode': 'confirmed',
-    'use_ai_professional_exit': False,  # закритий графік 15m/1h/4h + ризик-план
     'sbr_exit_1h': True,
     'sbr_exit_4h': True,
     # 🔔⏳ ТРЕЙЛ замість миттєвого виходу (вимога 31.10, деф. OFF): протилежний
@@ -1414,7 +1413,6 @@ class TradeManager:
                       'use_decision_exit', 'use_mm_flat_exit',
                       'use_sbr_exit', 'sbr_exit_1h', 'sbr_exit_4h', 'sbr_exit_trail',
                       'use_spring_fired_exit', 'use_exh_exit', 'use_ai_exit',
-                      'use_ai_professional_exit',
                       'pilot_enabled',
                       'pilot_autofill_tp', 'pilot_tp2_from_magnet',
                       'tp1_move_to_be',
@@ -4566,7 +4564,7 @@ class TradeManager:
                 return self._signal_exit_close(symbol, pos, current_price,
                                                is_shadow, hit)
         # 🤖 Вихід ШІ — теж ВЛАСНИЙ тротл (живий бар з кешу + аномалії з БД).
-        if s.get('use_ai_exit') or s.get('use_ai_professional_exit'):
+        if s.get('use_ai_exit'):
             try:
                 hit = self._ai_exit_reason(symbol, pos, current_price, is_shadow)
             except Exception as e:
@@ -4607,11 +4605,13 @@ class TradeManager:
 
     def _ai_exit_reason(self, symbol: str, pos: Dict, current_price,
                         is_shadow: bool = False) -> Optional[tuple]:
-        """🤖 Вихід з угоди ШІ (17.11): бал «почались зворотні процеси»
-        (`ai_signals.exit_score`) — живий 1h-бар із КЕШУ (`_spring_fire_view`,
-        його вже тягне монітор), ⚠ аномалії обсягу за 2 год (БД), прогрес до
-        цілі Пружини і віддача від піку угоди. Знімок балу лежить на позиції
-        (`ai_exit`) — його бачать 🔬 дослідження і таблиця угод."""
+        """🤖 Вихід з угоди ШІ — ЄДИНИЙ МОЗОК (17.11): вердикт ⚠ аномалій
+        (`ai_signals.exit_score`: живий 1h-бар із КЕШУ `_spring_fire_view`,
+        аномалії від входу з БД, прогрес до цілі Пружини, віддача від піку) +
+        супровід за ПЛАНОМ угоди мозку графіка (`professional_exit`: стоп плану,
+        підтверджений розворот 15m/1h, віддача ≥ ½ піку, ціль, часовий стоп).
+        Зводить їх `ai_brain.exit_merge`. Бари — ЛИШЕ кеш рушія ШІ (монітор у
+        мережу не ходить). Знімок рішення — `pos['ai_exit']` (🚨 + 🔬)."""
         s = self._settings
         tk = getattr(self, '_ai_exit_at', None)
         if tk is None:
@@ -4622,14 +4622,8 @@ class TradeManager:
             return None
         tk[k] = now
         from detection import ai_signals
-        # 🧠 Професійний вихід — ОКРЕМЕ правило зі своїм тумблером; «🤖 Вихід
-        # ШІ» за аномаліями рахується лише коли увімкнений він (раніше вмикання
-        # одного «🧠» тихо вмикало й закриття за аномаліями).
-        pro_hit = None
-        if s.get('use_ai_professional_exit'):
-            pro_hit = self._ai_pro_exit_reason(symbol, pos, current_price, ai_signals)
         if not s.get('use_ai_exit'):
-            return pro_hit
+            return None
         vw = self._spring_fire_view(symbol, fetch=False) or {}
         # ⚠ аномалії ВІД ВХОДУ (не давніші за EXIT_LOOK_MAX, не коротше 2 год):
         # вихід судить усю поведінку обсягу за час угоди, а не лише останні 2 год.
@@ -4665,33 +4659,43 @@ class TradeManager:
                                       lv, ch, opened_at=opened, look=now - t0)
         except TypeError:                     # старіший ai_signals без opened_at/look
             r = ai_signals.exit_score(pos.get('side'), vw, anoms, now, exh, pnl, peak, mult, lv, ch)
-        pos['ai_exit'] = {'score': r['score'], 'parts': r['parts'], 'ready': r['ready'],
-                          'hold': r.get('hold'), 'notes': (r.get('flow_notes') or [])[:6],
-                          'verdict': r.get('verdict'), 'verdict_ua': r.get('verdict_ua'),
-                          'groups': r.get('groups'), 'checklist': r.get('checklist'),
-                          'scenario': r.get('scenario'), 'scenarios': r.get('scenarios'),
-                          'anoms': len(anoms), 'ts': int(now)}
         mode = s.get('ai_exit_mode') if s.get('ai_exit_mode') in ('confirmed', 'all') else 'confirmed'
-        pos['ai_exit']['mode'] = mode
-        _dec = getattr(ai_signals, 'exit_decide', None)
-        if not (_dec(r, mode) if _dec else r['ready']):
-            return pro_hit
-        _ck = getattr(ai_signals, 'exit_checklist_text', None)
-        _sct = r.get('scenario_text') if r.get('verdict') == 'scenario' else ''
-        return ('ai_exit', f"🤖 Вихід ШІ: {r.get('verdict_ua') or ''}"
+        # 🧠 супровід за планом мозку графіка (кеш барів; немає → HOLD)
+        pro_d = self._ai_plan_follow(symbol, pos, current_price, ai_signals)
+        _sibm = getattr(ai_signals, '_sib', None)
+        if callable(_sibm):
+            ai_brain = _sibm('ai_brain')
+        else:                                 # старіший ai_signals без _sib
+            from detection import ai_brain
+        m = ai_brain.exit_merge(pos.get('side'), r, pro_d, mode, pos.get('ai_plan'), current_price)
+        pos['ai_exit'] = {'score': r['score'], 'parts': r['parts'], 'ready': m['close'],
+                          'hold': r.get('hold'), 'notes': ((r.get('flow_notes') or []) + m['notes'])[:8],
+                          'verdict': m['verdict'], 'verdict_ua': m['verdict_ua'],
+                          'groups': m['groups'], 'checklist': m['checklist'],
+                          'scenario': r.get('scenario'), 'scenarios': r.get('scenarios'),
+                          'anoms': len(anoms), 'ts': int(now), 'mode': mode,
+                          'plan': m['plan'], 'r': m['r'], 'peak_r': m['peak_r'],
+                          'data_ok': m['data_ok'],
+                          'plan_src': 'ai' if pos.get('ai_plan') else ('chart' if m['plan'] else None)}
+        if not m['close']:
+            return None
+        _sct = r.get('scenario_text') if m['verdict'] == 'scenario' else ''
+        pl = m['plan'] or {}
+        return ('ai_exit', f"🤖 Вихід ШІ: {m['verdict_ua']}"
                            + (f" · 🧩 {_sct}" if _sct else '')
-                           + f" · довідково бал {r['score']}"
-                           + (f" · {_ck(r)}" if _ck else '')
-                           + f" · {ai_signals.parts_text(r['parts'])}"
-                           + (f" · потік: {', '.join(r['flow_notes'][:4])}" if r['flow_notes'] else ''))
+                           + f" · {ai_brain.exit_groups_text(m)}"
+                           + (f" · R {m['r']} (пік {m['peak_r']}R)" if m['r'] is not None else '')
+                           + (f" · план: стоп {pl.get('stop')} · ціль {pl.get('target')}" if pl else '')
+                           + (f" · {'; '.join(m['notes'][:3])}" if m['notes'] else '')
+                           + (f" · потік: {', '.join(r['flow_notes'][:3])}" if r.get('flow_notes') else ''))
 
-    def _ai_pro_exit_reason(self, symbol: str, pos: Dict, current_price,
-                            ai_signals=None) -> Optional[tuple]:
-        """🧠 Професійний вихід ШІ: закриті 15m/1h/4h бари (кеш рушія ШІ —
-        монітор у мережу НЕ ходить), ризик-план від ATR/структури на вході,
-        підтверджений розворот 15m/1h, віддача прибутку, часовий стоп.
-        Немає надійних даних → HOLD (вихід не вигадуємо). Знімок рішення —
-        `pos['ai_pro']` (без повного аналізу: він важкий для /api/tm/state)."""
+    def _ai_plan_follow(self, symbol: str, pos: Dict, current_price,
+                        ai_signals=None) -> Optional[Dict]:
+        """🧠 Супровід угоди за ПЛАНОМ мозку графіка (частина «🤖 Вихід з угоди
+        ШІ», 17.11): закриті 15m/1h/4h бари з КЕШУ рушія ШІ — стоп від ATR /
+        структури на вході, підтверджений розворот 15m/1h, віддача прибутку,
+        часовий стоп. Немає даних / рушія → None (вихід не вигадуємо: працюють
+        аномалії і стоп плану угоди). Знімок — `pos['ai_pro']` (стисло)."""
         if ai_signals is None:
             from detection import ai_signals
         eng = ai_signals.get_ai_engine()
@@ -4719,13 +4723,7 @@ class TradeManager:
         slim = getattr(eng, '_pro_exit_slim', None)
         pos['ai_pro'] = dict(slim(d) if callable(slim) else
                              {k: d.get(k) for k in ('action', 'close', 'reason', 'explanation')})
-        if not d.get('close'):
-            return None
-        why = PRO_EXIT_REASON_UA.get(d.get('reason'), d.get('reason') or '')
-        return ('ai_pro_exit', f"🧠 Професійний вихід ШІ · {why}: "
-                               f"{d.get('explanation') or ''}"
-                               + (f" · R {d.get('r_multiple')}" if d.get('r_multiple') is not None else '')
-                               + (f" · пік {d.get('peak_r')}R" if d.get('peak_r') is not None else ''))
+        return d
 
     def _signal_exit_close(self, symbol: str, pos: Dict, current_price: float,
                            is_shadow: bool, hit: tuple) -> bool:
@@ -5957,8 +5955,13 @@ class TradeManager:
     def _take_origin_trace(self, symbol: str) -> Optional[str]:
         return self._pending_origin.pop((symbol or '').upper(), None)
 
-    def set_ai_professional_context(self, symbol: str, side: str, context: Dict) -> bool:
+    def set_ai_professional_context(self, symbol: str, side: str, context: Dict,
+                                    plan: Optional[Dict] = None) -> bool:
         """Зафіксувати знімок ШІ лише на вже відкритій угоді того самого боку.
+        `plan` (17.11, єдиний мозок) — план угоди сигналу ШІ (стоп / ціль / R);
+        лягає в `pos['ai_plan']`, і за ним «🤖 Вихід з угоди ШІ» судить стоп і
+        ціль. Лише на СВІЖІЙ угоді (≤ 5 хв) без уже зафіксованого плану: чужа
+        давня позиція того самого боку чужий план не отримує.
 
         Для відкладеної черги повертає False: застарілий контекст не переноситься
         на майбутній ордер. Сам сигнал уже має знімок у закритому AI-епізоді.
@@ -5972,10 +5975,19 @@ class TradeManager:
             for book in (self._positions, self._shadow_positions):
                 pos = (book or {}).get(sym)
                 if pos and str(pos.get('side') or '').upper() == side:
-                    pos['professional_entry'] = context
-                    plan = ((context.get('sides') or {}).get(side) or {}).get('risk_plan')
-                    if plan:
-                        pos['ai_professional_plan'] = plan
+                    try:
+                        fresh = time.time() - float(pos.get('opened_at') or 0) <= 300
+                    except (TypeError, ValueError):
+                        fresh = False
+                    if not fresh or pos.get('ai_plan') or pos.get('professional_entry'):
+                        continue
+                    if context:
+                        pos['professional_entry'] = context
+                        rp = ((context.get('sides') or {}).get(side) or {}).get('risk_plan')
+                        if rp:
+                            pos['ai_professional_plan'] = rp
+                    if isinstance(plan, dict) and plan.get('stop') and plan.get('target'):
+                        pos['ai_plan'] = dict(plan)
                     attached = True
         return attached
 
@@ -6785,8 +6797,8 @@ class TradeManager:
             'settings': {k: self._settings.get(k) for k in (
                 'use_spring_fired_exit', 'spring_fired_exit_dir', 'use_exh_exit',
                 'exh_exit_min', 'exh_exit_atr', 'exh_exit_min_profit',
-                'use_sbr_exit', 'sbr_exit_trail', 'use_ai_exit', 'ai_exit_mode',
-                'use_ai_professional_exit')},
+                'use_sbr_exit', 'sbr_exit_trail', 'use_ai_exit', 'ai_exit_mode')},
+            'ai_plan': pos.get('ai_plan'),
         }
         in_trade = [a for a in an if float(a.get('ts') or 0) >= float(oa or 0)]
         self.db.archive_research({
