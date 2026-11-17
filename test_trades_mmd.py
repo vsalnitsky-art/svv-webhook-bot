@@ -164,11 +164,10 @@ def test_route_only_reads():
 def _js(body):
     src = ''
     for f in ('function chargeColor(', 'function springTradeCellHTML(',
-              'function sbrTrailBadgeHTML(', 'function mmdAlertCellHTML(',
-              'function _mmdAlertCellCore(', 'function aiExitChipHTML(', 'function aiProChipHTML('):
+              'function mmdAlertCellHTML(', 'function aiExitChipHTML(', 'function aiProChipHTML('):
         a = _HTML.index(f)
         src += _HTML[a:_HTML.index('\n}', a) + 2] + '\n'
-    for c in ('const _MMD_ALERT', 'const _CHG_STOPS', 'const _AIX_ICON', 'const _AIX_COL'):
+    for c in ('const _CHG_STOPS', 'const _AIX_ICON', 'const _AIX_COL'):
         a = _HTML.index(c)
         e = _HTML.index(';\n', a) + 2
         src = _HTML[a:e] + '\n' + src
@@ -184,33 +183,30 @@ def _js(body):
 
 
 def test_js_cells():
-    """⚠️ 31.10: колонку 🔔 МММ-SBR замінено на 🌀 Заряд (на вході → зараз,
-    градієнт), а 🚨 показує ще й стан 🔔⏳ трейлу (тест переписано)."""
+    """⚠️ 17.11: колонка 🚨 = ЛИШЕ ШІ (🤖 вихід за аномаліями + 🧠 професійний
+    вихід). Показ 🔔 МММ-SBR («✓ OK» / «⚠ ПРОТИ» / «🔔 без сигналу» / трейл)
+    прибрано (тест переписано)."""
     out = _js(r"""
 const m = {alert:{level:'against', side:'SHORT', tf:'1H+4H', text:'ПРОТИ угоди: 🔔 МММ-SBR SHORT 1H+4H'}};
 console.log(springTradeCellHTML({side:'LONG', spring_open:30, spring:{charge:70, pot_long:50, label:'🌀 накручена'}}));
 console.log('|');
-console.log(mmdAlertCellHTML({mmd:m}));
+console.log(mmdAlertCellHTML({mmd:m, sbr_trail:{armed_px:100, stop_px:101, tf:'1H'}}));
 console.log('|');
-console.log(mmdAlertCellHTML({mmd:{alert:{level:'pre', side:'SHORT', tf:'4H', text:'до входу'}}}) + mmdAlertCellHTML({mmd:{alert:{level:'none', text:'немає'}}}));
+console.log(mmdAlertCellHTML({mmd:m, ai_exit:{verdict:'close', verdict_ua:'закрити', groups:{anom:true, price:true}},
+  ai_pro:{action:'HOLD', close:false, r_multiple:1.2, data_ok:true}}));
 console.log('|');
 console.log(mmdAlertCellHTML({}) + springTradeCellHTML({}));
-console.log('|');
-console.log(mmdAlertCellHTML({side:'LONG', current_price:102, mmd:m,
-  sbr_trail:{armed_px:100, best_px:103, stop_px:101, tf:'1H', sig_side:'SHORT', charge_ok:true, pot:55}}));
 """)
     p = out.split('|')
-    _check(len(p) == 5, out)
+    _check(len(p) == 4, out)
     _check('>30<' in p[0] and '>70<' in p[0] and '+40' in p[0] and 'linear-gradient' in p[0]
            and 'width:70%' in p[0] and 'left:calc(30%' in p[0], p[0])
-    _check('ПРОТИ 1H+4H' in p[1] and 'tm-mmd-alert-hot' in p[1] and '#dc2626' in p[1], p[1])
-    # 11.11: «⚑ ДО ВХОДУ» прибрано; 15.11: замість «—» — реальний стан SBR
-    _check('ДО ВХОДУ' not in p[2] and '>—<' not in p[2] and '▼ SHORT 4H' in p[2]
-           and '🔔 без сигналу' in p[2], p[2])
+    for bad in ('ПРОТИ', 'OK', '🔔', 'tm-mmd-alert-hot'):
+        _check(bad not in p[1] and bad not in p[2], f'SBR у 🚨 більше не показується: {bad}')
+    _check('>—<' in p[1], 'без даних ШІ → «—»')
+    _check('🤖⚠' in p[2] and '🧠+1.2R' in p[2] and '>—<' not in p[2], p[2])
     _check(p[3].count('>—<') == 2, 'немає даних → «—» в обох комірках')
-    _check('🔔⏳ 1H' in p[4] and '🛡101' in p[4] and '+2.00%' in p[4] and '🌀' in p[4]
-           and 'ПРОТИ' not in p[4].split('title=')[0], p[4])
-    print('✓ JS: 🌀 заряд (вхід → зараз, градієнт) + 🚨 ПРОТИ / (pre → бік SBR · none → без сигналу) / 🔔⏳ трейл')
+    print('✓ JS: 🌀 заряд + 🚨 лише ШІ (🤖 вердикт · 🧠 R), без 🔔 МММ-SBR')
 
 
 def test_blink_css_exists():

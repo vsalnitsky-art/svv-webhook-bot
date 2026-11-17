@@ -226,7 +226,7 @@ def test_trail_settings_and_ui():
     _check(d['sbr_exit_trail'] is False and d['sbr_trail_pct'] == 0.3
            and d['sbr_trail_charge_min'] == 40, 'дефолти')
     for k in ('id="tm-sbr-exit-trail"', 'id="tm-sbr-trail-pct"', 'id="tm-sbr-trail-charge"',
-              "'sbr_trail_exit': '🔔⏳ SBR трейл'", 'sbr_exit_trail:', 'function sbrTrailBadgeHTML('):
+              "'sbr_trail_exit': '🔔⏳ SBR трейл'", 'sbr_exit_trail:'):
         _check(k in _HTML, k)
     _check(_TMSRC.count("'sbr_trail_exit':") >= 2, 'підписи причини в TM')
     _check(_TMSRC.count('self._sbr_trail_tick(symbol, pos, current_price,') == 2,

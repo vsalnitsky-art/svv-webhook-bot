@@ -205,6 +205,10 @@ def test_new_settings_are_explicit_and_default_safe():
     for element in ('sm-ai-professional', 'sm-ai-require-model', 'sm-ai-learning',
                     'tm-use-ai-professional-exit'):
         _check(f'id="{element}"' in html, element)
+    # 17.11: «закривати:» належить 🤖 виходу — стоїть ОДРАЗУ за ним, до 🧠.
+    a, m, b = (html.index(f'id="{x}"') for x in
+               ('tm-use-ai-exit', 'tm-ai-exit-mode', 'tm-use-ai-professional-exit'))
+    _check(a < m < b, 'випадайка режиму — біля «🤖 Вихід з угоди ШІ», а не біля 🧠')
 
 
 def test_js_pro_chip_renders():
