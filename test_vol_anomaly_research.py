@@ -310,6 +310,45 @@ def test_ui_panel_and_routes():
     _check("vol_anomaly'" in models and "trade_research'" in models, 'таблиці БД')
 
 
+# ── 5. Хто в дослідженні + очистка (вимога 17.11) ────────────────────────
+def test_research_universe_is_charged_springs_and_open_trades():
+    now = 100_000.0
+    syms, roles, seen = va.research_universe(
+        {'BTCUSDT': [{}]}, {'SOLUSDT': 'wl', 'ARIAUSDT': 'scan'},
+        {'OLDUSDT': ['wl', now - 3600], 'GONEUSDT': ['scan', now - va.AFTER_CHARGE_SEC - 1]}, now)
+    _check(set(syms) == {'BTCUSDT', 'SOLUSDT', 'ARIAUSDT', 'OLDUSDT'}, f'учасники: {syms}')
+    _check(roles['BTCUSDT'] == 'exit' and roles['SOLUSDT'] == 'entry' and roles['OLDUSDT'] == 'after',
+           f'ролі: {roles}')
+    _check('GONEUSDT' not in seen and seen['ARIAUSDT'][0] == 'scan', 'розряд ведемо 24 год, далі забуваємо')
+    _check(va.research_universe({}, {}, {}, now)[0] == [], 'немає заряджених і угод → нікого')
+    _check('scope' not in va.DEFAULT_SETTINGS, 'вибору «WATCHLIST+угоди / лише угоди» більше немає')
+
+
+def test_monitor_universe_uses_charged_not_watchlist():
+    db = _DB()
+    m = va.VolAnomalyMonitor(db=db, md=_MD([]), get_watchlist=lambda: ['ETHUSDT', 'XRPUSDT'],
+                             get_trades=lambda: {'BTCUSDT': [{'book': 'R', 'side': 'LONG'}]},
+                             get_charged=lambda: {'SOLUSDT': 'wl'})
+    u = m.universe(1000.0)
+    _check(set(u) == {'BTCUSDT', 'SOLUSDT'}, f'WATCHLIST без заряду не бере участі: {u}')
+    st = m.state()['universe']
+    _check(st == {'entry': 1, 'after': 0, 'exit': 1, 'total': 2}, f'лічильники: {st}')
+
+
+def test_clear_button_deletes_everything():
+    js = _HTML[_HTML.index('async function vanomClear()'):]
+    js = js[:js.index('\n}\n') + 3]
+    _check("all: true" in js and 'days' not in js, 'кнопка чистить УСІ записи (період — лише для статистики)')
+    app = open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
+    _check("body.get('all')" in app and 'raise_errors=True' in app, 'маршрут: усі + помилка БД не ховається')
+    _check('id="vanom-scope"' not in _HTML and 'id="vanom-uni"' in _HTML, 'замість вибору монет — розклад учасників')
+
+
+def test_spring_tables_sort_by_charge_by_default():
+    for v in ("_sprSortCol = 'charge'", "_fsprSortCol = 'charge'", "_xsSortCol = 'charge'"):
+        _check(v in _HTML, f'сортування за замовчуванням: {v}')
+
+
 if __name__ == '__main__':
     fails = 0
     for k, v in list(globals().items()):

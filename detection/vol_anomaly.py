@@ -11,7 +11,7 @@ infosite/js/app.js, тест звіряє пороги): база = МЕДІАН
 відсотки IMB і колонка «Обсяг»).
 
 Що робить рушій:
-  • на закритті КОЖНОГО бару 15m і 1h — по монетах WATCHLIST + відкритих угод
+  • на закритті КОЖНОГО бару 15m і 1h — по монетах «🌀 заряджені» обох Пружин (+24 год розряду) і відкритих угод
     (один запит свічок; підсвічки — лише коли обсяг ≥ ×1.5, тобто рідко);
   • аномалію пише в таблицю `sob_vol_anomaly` з КОНТЕКСТОМ: тренд перед
     свічкою, рух самої свічки, відкриті угоди по монеті (бік, PnL у ту мить);
@@ -47,7 +47,15 @@ KINDS = ('absorb', 'climax', 'side', 'spike')
 KIND_UA = {'absorb': '🧽 Поглинання', 'climax': '🔥 Кульмінація',
            'side': '⚡ Перекіс', 'spike': '📈 Сплеск'}
 DB_SETTINGS = 'vol_anomaly_settings'
-DEFAULT_SETTINGS = {'enabled': True, 'scope': 'watchlist', 'keep_days': KEEP_DAYS}   # scope: watchlist | trades
+DEFAULT_SETTINGS = {'enabled': True, 'keep_days': KEEP_DAYS}
+# 🔬 Хто бере участь (вимога 17.11): монети зі статусом «🌀 заряджена» в
+# 🌀 Пружині WATCHLIST і 🔭 Пружині — скан біржі (дослідження ВІДКРИТТЯ) +
+# монети відкритих угод (дослідження ВИХОДУ). Заряд зник → монету ведемо ще
+# AFTER_CHARGE_SEC: саме тоді відбувається розряд, який і досліджуємо.
+AFTER_CHARGE_SEC = 24 * 3600
+DB_CHARGED = 'vol_anomaly_charged_v1'
+ROLE_UA = {'entry': 'заряджена (вхід)', 'after': 'після заряду (розряд)',
+           'exit': 'відкрита угода (вихід)'}
 BB_KLINE_URL = 'https://api.bybit.com/v5/market/kline'
 
 
@@ -273,13 +281,46 @@ def journey_events(rows: List[Dict], side: str = None, entry: float = None) -> L
     return out
 
 
+def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC):
+    """🔬 Монети дослідження. ЧИСТА.
+    trades  — {SYM: …} відкритих угод (вихід);
+    charged — {SYM: 'wl'|'scan'} монет зі статусом «🌀 заряджена» ЗАРАЗ (вхід);
+    seen    — {SYM: [src, коли востаннє заряджена]} (памʼять розряду).
+    → (список монет, {SYM: ролі через «+»}, оновлений seen). Заряд зник, а
+    угоди немає → монета лишається `keep_sec` (роль after), далі забувається."""
+    out_seen = {}
+    for S, v in (seen or {}).items():
+        try:
+            src, t = (v[0], float(v[1])) if isinstance(v, (list, tuple)) else ('wl', float(v))
+        except (TypeError, ValueError, IndexError):
+            continue
+        if now - t <= keep_sec:
+            out_seen[str(S).upper()] = [src, t]
+    for S, src in (charged or {}).items():
+        out_seen[str(S).upper()] = [src or 'wl', float(now)]
+    roles: Dict = {}
+    for S in (trades or {}):
+        roles.setdefault(str(S).upper(), []).append('exit')
+    cnow = {str(S).upper() for S in (charged or {})}
+    for S in out_seen:
+        roles.setdefault(S, []).append('entry' if S in cnow else 'after')
+    syms = list(roles.keys())
+    return syms, {S: '+'.join(r) for S, r in roles.items()}, out_seen
+
+
 # ───────────────────────── РУШІЙ ─────────────────────────
 class VolAnomalyMonitor:
-    def __init__(self, db=None, md=None, get_watchlist=None, get_trades=None):
+    def __init__(self, db=None, md=None, get_watchlist=None, get_trades=None,
+                 get_charged=None):
         self.db = db
         self._md = md
         self._get_watchlist = get_watchlist
         self._get_trades = get_trades
+        self._get_charged = get_charged
+        self._seen: Dict = {}            # SYM → [src, коли востаннє заряджена]
+        self._roles: Dict = {}           # SYM → роль у дослідженні (останній прохід)
+        self._seen_saved = 0.0
+        self._seen_keys = ()
         self._done: Dict = {}            # (SYM, tf) → bar_t, оброблений останнім
         self._tried: Dict = {}           # (SYM, tf) → час останньої спроби
         self._lock = threading.Lock()
@@ -296,6 +337,13 @@ class VolAnomalyMonitor:
             self._settings['keep_days'] = keep_days_norm(self._settings.get('keep_days'))
         except Exception:
             pass
+        try:
+            sv = (db.get_setting(DB_CHARGED, None) if db else None) or {}
+            if isinstance(sv, str):
+                sv = json.loads(sv)
+            self._seen = dict(sv.get('seen') or {}) if isinstance(sv, dict) else {}
+        except Exception:
+            self._seen = {}
 
     # налаштування
     def get_settings(self) -> Dict:
@@ -304,8 +352,6 @@ class VolAnomalyMonitor:
     def update_settings(self, patch: Dict) -> Dict:
         if 'enabled' in patch:
             self._settings['enabled'] = bool(patch['enabled'])
-        if patch.get('scope') in ('watchlist', 'trades'):
-            self._settings['scope'] = patch['scope']
         if 'keep_days' in patch:
             self._settings['keep_days'] = keep_days_norm(patch.get('keep_days'))
         try:
@@ -316,8 +362,13 @@ class VolAnomalyMonitor:
         return self.get_settings()
 
     def state(self) -> Dict:
+        rl = dict(self._roles)
+        uni = {'entry': sum(1 for r in rl.values() if 'entry' in r),
+               'after': sum(1 for r in rl.values() if 'after' in r),
+               'exit': sum(1 for r in rl.values() if 'exit' in r), 'total': len(rl)}
         return {'settings': self.get_settings(), 'stat': dict(self._stat),
-                'tfs': list(TFS), 'an': dict(AN)}
+                'tfs': list(TFS), 'an': dict(AN), 'universe': uni,
+                'after_sec': AFTER_CHARGE_SEC}
 
     # джерела
     def _md_get(self):
@@ -346,29 +397,51 @@ class VolAnomalyMonitor:
         except Exception:
             return {}
 
-    def universe(self) -> List[str]:
-        tr = list(self._trades().keys())
-        wl = []
-        if self._settings.get('scope') != 'trades':
+    def _charged_now(self) -> Dict:
+        """{SYM: 'wl'|'scan'} — монети зі статусом «🌀 заряджена» обох Пружин
+        (лише памʼять сканера і рушія 🔭; без мережі)."""
+        if self._get_charged:
             try:
-                if self._get_watchlist:
-                    wl = list(self._get_watchlist() or [])
-                else:
-                    from detection.smc_scanner import get_smc_scanner
-                    sc = get_smc_scanner()
-                    wl = list(sc.get_watchlist() or []) if sc else []
+                return dict(self._get_charged() or {})
             except Exception:
-                wl = []
-            # 🌀/🔭 монети «Пружини — скан біржі» (17.11): дослідження розряду
-            # заряджених монет потребує їхніх аномалій, а WATCHLIST їх не має.
+                return {}
+        out: Dict = {}
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            if sc is not None:
+                wl = list(self._get_watchlist() if self._get_watchlist else sc.get_watchlist() or [])
+                for S, r in (sc.spring_for(wl) or {}).items():
+                    if (r or {}).get('state') == 'charged':
+                        out[str(S).upper()] = 'wl'
+        except Exception:
+            pass
+        try:
+            import sys as _sys
+            m = _sys.modules.get('detection.spring_scan')
+            eng = m.get_spring_scan() if m and hasattr(m, 'get_spring_scan') else None
+            for r in (eng.rows() if eng else []):
+                if r.get('state') == 'charged' and r.get('bybit') is not False and r.get('symbol'):
+                    out.setdefault(str(r['symbol']).upper(), 'scan')
+        except Exception:
+            pass
+        return out
+
+    def universe(self, now: Optional[float] = None) -> List[str]:
+        """🔬 Заряджені монети обох Пружин (вхід) + ще AFTER_CHARGE_SEC після
+        втрати заряду (розряд) + відкриті угоди (вихід)."""
+        now = time.time() if now is None else now
+        syms, roles, seen = research_universe(self._trades(), self._charged_now(),
+                                              self._seen, now)
+        self._seen, self._roles = seen, roles
+        keys = tuple(sorted(seen))
+        if self.db and (keys != self._seen_keys or now - self._seen_saved >= 600):
             try:
-                import sys as _sys
-                _m = _sys.modules.get('detection.spring_scan')
-                if _m and hasattr(_m, 'signal_symbols'):
-                    wl = list(wl) + list(_m.signal_symbols(40) or [])
+                self.db.set_setting(DB_CHARGED, {'seen': seen})
+                self._seen_keys, self._seen_saved = keys, now
             except Exception:
                 pass
-        return list(dict.fromkeys(str(s).upper() for s in tr + wl if s))
+        return syms
 
     def _split(self, sym: str, tf: str, t_sec: int) -> Optional[float]:
         """Частка покупців свічки за підсвічками Bybit TF/10 або None."""
@@ -432,7 +505,9 @@ class VolAnomalyMonitor:
             'vol': r['v'], 'med': a.get('med'), 'price': r['c'],
             'bar_chg': round((r['c'] / r['o'] - 1) * 100, 3) if r['o'] > 0 else None,
             'pre_chg': pre,
-            'ctx': {'trades': self._trades().get(sym) or []},
+            'ctx': {'trades': self._trades().get(sym) or [],
+                    'role': self._roles.get(sym) or ('exit' if self._trades().get(sym) else ''),
+                    'src': (self._seen.get(sym) or [None])[0]},
         }
         try:
             if self.db and hasattr(self.db, 'add_vol_anomaly'):
@@ -465,7 +540,7 @@ class VolAnomalyMonitor:
         now = time.time() if now is None else now
         if not self._settings.get('enabled', True):
             return 0
-        syms = self.universe()
+        syms = self.universe(now)
         jobs = []
         for tf in TFS:
             bs = TF_SEC[tf]

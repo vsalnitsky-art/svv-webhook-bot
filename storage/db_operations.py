@@ -769,8 +769,10 @@ class DBOperations:
         finally:
             session.close()
 
-    def clear_vol_anomalies(self, days: int = None) -> int:
-        """🗑 Очистити аномалії обсягу: days=None — УСІ, інакше старші за N днів."""
+    def clear_vol_anomalies(self, days: int = None, raise_errors: bool = False) -> int:
+        """🗑 Очистити аномалії обсягу: days=None — УСІ, інакше старші за N днів.
+        raise_errors=True — помилку БД віддати викликачу (кнопка мусить казати
+        правду, а не «видалено 0»)."""
         import time as _t
         session = get_session()
         try:
@@ -779,11 +781,20 @@ class DBOperations:
                 q = q.filter(VolAnomaly.ts < _t.time() - max(0, int(days)) * 86400)
             n = q.delete(synchronize_session=False)
             session.commit()
-            return n
+            return int(n or 0)
         except Exception as e:
             session.rollback()
             print(f"[DB] clear_vol_anomalies: {e}")
+            if raise_errors:
+                raise
             return 0
+        finally:
+            session.close()
+
+    def count_vol_anomalies(self) -> int:
+        session = get_session()
+        try:
+            return int(session.query(VolAnomaly).count())
         finally:
             session.close()
 

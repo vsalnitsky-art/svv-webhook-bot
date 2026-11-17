@@ -634,7 +634,7 @@ def create_app():
         if not _auto_started.get('vol_anomaly'):
             _auto_started['vol_anomaly'] = True
             try:
-                # ⚠ Аномалії обсягу (16.11): закриття 15m / 1h, монети WATCHLIST +
+                # ⚠ Аномалії обсягу (16.11): закриття 15m / 1h, монети «🌀 заряджені» обох Пружин +
                 # відкритих угод → таблиця sob_vol_anomaly з наслідками (датасет).
                 from detection.vol_anomaly import init_vol_anomaly
                 init_vol_anomaly(db=get_db())
@@ -6396,13 +6396,21 @@ def register_api_routes(app):
         """🗑 Очистити дані аномалій обсягу: {days} — старші за N днів, без
         days — УСІ. Наслідки ще не дорахованих записів теж зникають."""
         body = request.get_json(silent=True) or {}
-        days = body.get('days')
+        days = None if body.get('all') else body.get('days')
         try:
             days = None if days in (None, '', 'all') else max(0, int(days))
         except (TypeError, ValueError):
             return jsonify({'ok': False, 'reason': 'некоректне число днів'})
-        n = get_db().clear_vol_anomalies(days)
-        return jsonify({'ok': True, 'deleted_rows': n, 'days': days})
+        try:
+            n = get_db().clear_vol_anomalies(days, raise_errors=True)
+        except Exception as e:
+            return jsonify({'ok': False, 'reason': f'БД: {e}'[:300]})
+        left = None
+        try:
+            left = get_db().count_vol_anomalies()
+        except Exception:
+            pass
+        return jsonify({'ok': True, 'deleted_rows': n, 'days': days, 'left': left})
 
     @app.route('/api/vol-anomaly/export')
     def api_vol_anomaly_export():

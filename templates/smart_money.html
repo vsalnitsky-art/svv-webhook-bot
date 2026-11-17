@@ -4953,7 +4953,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     </div>
     <div id="vanom-body" style="background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:10px 12px;margin-bottom:12px">
         <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:0.72rem;color:#8b93a7;margin-bottom:8px">
-            <span>Монети: <select id="vanom-scope" onchange="vanomSave()" style="background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;padding:2px 4px"><option value="watchlist">WATCHLIST + угоди</option><option value="trades">лише відкриті угоди</option></select></span>
+            <span id="vanom-uni" title="Хто бере участь у дослідженні: монети зі статусом «🌀 заряджена» в 🌀 Пружині WATCHLIST і 🔭 Пружині — скан біржі (дослідження ВІДКРИТТЯ), ще 24 год після втрати заряду (сам розряд) і монети відкритих угод (дослідження ВИХОДУ). Нічого налаштовувати не треба.">Монети: —</span>
             <span>Період: <select id="vanom-days" onchange="vanomLoad()" style="background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;padding:2px 4px"><option value="1">1 доба</option><option value="7">7 діб</option><option value="30" selected>30 діб</option><option value="0">усе</option></select></span>
             <span title="Скільки днів тримати аномалії в БД — рушій раз на добу видаляє старші (7…730)">Тримати <input type="number" id="vanom-keep" min="7" max="730" step="1" onchange="vanomSave()" style="width:56px;background:#141821;color:#dde3ee;border:1px solid #2b2f36;border-radius:4px;padding:2px 4px"> днів</span>
             <span id="vanom-st"></span>
@@ -4961,7 +4961,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <a class="vanom-btn" href="#" onclick="vanomExport('anom');return false" title="Усі аномалії з наслідками (CSV)">⬇ Аномалії CSV</a>
                 <a class="vanom-btn" href="#" onclick="vanomExport('rcsv');return false" title="Підсумки дослідження закритих угод (CSV)">⬇ Дослідження CSV</a>
                 <a class="vanom-btn" href="#" onclick="vanomExport('rjson');return false" title="ПОВНИЙ архів: контекст входу, події, зрізи, аномалії, підсумок (JSON)">⬇ Архів JSON</a>
-                <a class="vanom-btn vanom-btn-del" href="#" onclick="vanomClear();return false" title="Видалити записи аномалій обсягу з БД: старші за обраний період або всі. Дослідження угод і архів угод НЕ чіпаються.">🗑 Очистити дані</a>
+                <a class="vanom-btn vanom-btn-del" href="#" onclick="vanomClear();return false" title="Видалити ВСІ записи аномалій обсягу з БД (з підтвердженням). Дослідження угод, епізоди ШІ й архів угод НЕ чіпаються.">🗑 Очистити дані</a>
             </span>
         </div>
         <div style="overflow-x:auto"><table class="tm-table" id="vanom-table" style="width:100%">
@@ -6774,8 +6774,8 @@ async function vanomLoad() {
         if (!d || !d.ok) throw new Error((d && d.reason) || 'немає відповіді');
         const st = (d.state || {}).settings || {};
         const en = document.getElementById('vanom-enabled'); if (en) en.checked = st.enabled !== false;
-        const sc = document.getElementById('vanom-scope'); if (sc && st.scope) sc.value = st.scope;
         const kp = document.getElementById('vanom-keep'); if (kp && st.keep_days && document.activeElement !== kp) kp.value = st.keep_days;
+        _vanomUni((d.state || {}).universe);
         const s2 = (d.state || {}).stat || {};
         const el = document.getElementById('vanom-st');
         if (el) el.innerHTML = `записано за період: <b style="color:#cbd5e1">${d.total}</b>`
@@ -6787,11 +6787,10 @@ async function vanomLoad() {
     }
 }
 async function vanomSave() {
-    const en = document.getElementById('vanom-enabled'), sc = document.getElementById('vanom-scope');
+    const en = document.getElementById('vanom-enabled');
     try {
         await fetch('/api/vol-anomaly/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: !!(en && en.checked), scope: sc ? sc.value : 'watchlist',
-                                   keep_days: _vanomKeep() }) });
+            body: JSON.stringify({ enabled: !!(en && en.checked), keep_days: _vanomKeep() }) });
     } catch (e) {}
     vanomLoad();
 }
@@ -6799,21 +6798,27 @@ function _vanomKeep() {
     const v = parseInt((document.getElementById('vanom-keep') || {}).value, 10);
     return isFinite(v) ? Math.max(7, Math.min(730, v)) : 120;
 }
-// 🗑 Очистити дані аномалій обсягу: за обраний «Період» залишаємо свіже,
-// старше видаляємо; «усе» в періоді — видалити ВСІ записи.
+// 🔬 Хто зараз у дослідженні (бекенд: research_universe).
+function _vanomUni(u) {
+    const el = document.getElementById('vanom-uni');
+    if (!el) return;
+    if (!u) { el.textContent = 'Монети: —'; return; }
+    el.innerHTML = `Монети: <b style="color:#c4b5fd">🌀 заряджені ${u.entry || 0}</b>`
+        + ` · <span style="color:#fbbf24">💥 після заряду ${u.after || 0}</span>`
+        + ` · <span style="color:#38bdf8">💼 угоди ${u.exit || 0}</span>`
+        + ` <span style="color:#6b7280">(усього ${u.total || 0})</span>`;
+}
+// 🗑 Очистити дані аномалій обсягу — УСІ записи (період угорі стосується лише
+// статистики: «старші за 30 дн» на свіжому датасеті видаляли 0).
 async function vanomClear() {
-    const days = (document.getElementById('vanom-days') || {}).value || '30';
-    const all = (days === '0');
-    const msg = all ? '⚠️ Видалити ВСІ записи аномалій обсягу?\n\nСтатистика «розворот / продовження» почнеться з нуля.'
-        : `Видалити записи аномалій, старші за ${days} дн.?\n\nСвіжіші лишаються. Для повної очистки оберіть період «усе».`;
-    if (!confirm(msg)) return;
+    if (!confirm('⚠️ Видалити ВСІ записи аномалій обсягу?\n\nСтатистика «розворот / продовження» і калібровка 🤖 ШІ почнуться з нуля. Дослідження угод і епізоди ШІ НЕ чіпаються.')) return;
     try {
         const r = await fetch('/api/vol-anomaly/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(all ? {} : { days: parseInt(days, 10) }) });
+            body: JSON.stringify({ all: true }) });
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const d = await r.json();
         if (!d.ok) throw new Error(d.reason || 'відмова сервера');
-        alert(`✅ Видалено записів: ${(d.deleted_rows || 0).toLocaleString('uk-UA')}`);
+        alert(`✅ Видалено записів: ${(d.deleted_rows || 0).toLocaleString('uk-UA')}` + (d.left ? ` · лишилось ${d.left}` : ''));
     } catch (e) { alert('Очистка не вдалась: ' + (e.message || e)); }
     vanomLoad();
 }
@@ -6952,8 +6957,8 @@ const _PANEL_CLOSED_BY_DEFAULT = new Set(['vanom', 'tmgen', 'mmlist', 'mmnlist',
     fetch('/api/vol-anomaly/state?light=1').then(r => r.json()).then(d => {
         const st = ((d || {}).state || {}).settings || {};
         const en = document.getElementById('vanom-enabled'); if (en) en.checked = st.enabled !== false;
-        const sc = document.getElementById('vanom-scope'); if (sc && st.scope) sc.value = st.scope;
         const kp = document.getElementById('vanom-keep'); if (kp && st.keep_days) kp.value = st.keep_days;
+        _vanomUni(((d || {}).state || {}).universe);
     }).catch(() => {});
 })();
 
@@ -17738,7 +17743,7 @@ async function onEngineIndepToggle(event) {
 // ═══ 🌀 «ПРУЖИНА» — потенціал монет WATCHLIST (вимога 29.10) ═══════════════
 // Дані — `/api/spring/state` (лише читання памʼяті сканера). Поки гармошка
 // згорнута, сторінка нічого не опитує.
-let _sprErr = '', _sprRows = [], _sprMeta = {}, _sprDir = 'all', _sprSortCol = 'pot', _sprSortDir = -1;
+let _sprErr = '', _sprRows = [], _sprMeta = {}, _sprDir = 'all', _sprSortCol = 'charge', _sprSortDir = -1;   // деф. — «Заряд» ↓ (вимога 17.11)
 const _SPR_ORDER = {fired: 6, charged: 5, building: 4, cooling: 3, calm: 2, expansion: 1, flat: 1};
 const _SPR_COL = {fired: '#f472b6', charged: '#facc15', building: '#93c5fd', flat: '#6b7280',
                   expansion: '#fb923c', cooling: '#67e8f9', calm: '#8b93a7'};
@@ -18204,7 +18209,7 @@ setTimeout(() => { try { sprLoad(false); } catch (e) {} }, 1500);
 // (`/api/funding-spring/state`, лише читання памʼяті рушія). Рядки малює
 // спільний `_sprRowHTML` (той самий рендер, що в панелі 🌀 Пружина) + комірка
 // 💰 Funding. Поки гармошка згорнута — нічого не опитуємо.
-let _fsprRows = [], _fsprMeta = {}, _fsprDir = 'all', _fsprSortCol = 'pot', _fsprSortDir = -1;
+let _fsprRows = [], _fsprMeta = {}, _fsprDir = 'all', _fsprSortCol = 'charge', _fsprSortDir = -1;   // деф. — «Заряд» ↓
 function fsprSort(c) {
     if (_fsprSortCol === c) _fsprSortDir = -_fsprSortDir;
     else { _fsprSortCol = c; _fsprSortDir = c === 'symbol' ? 1 : -1; }
