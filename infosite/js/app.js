@@ -409,6 +409,45 @@
     keepCoinIcons(host, oldIcons);
   }
 
+  /* Live-оновлення лише другого рядка: назва, іконка, дзвоник і весь
+     перший рядок DOM не перестворюються та не перемальовуються. */
+  function renderQuotes() {
+    var host = $("#iw-list"); if (!host) return;
+    host.querySelectorAll(".iw-row[data-sym]").forEach(function (row) {
+      var sym = row.getAttribute("data-sym"), r = IW.rows[sym] || {}, px = livePx(sym);
+      var price = row.querySelector(".iw-price"), chgEl = row.querySelector(".iw-chg");
+      if (price) {
+        var pt = px ? fmtPrice(px) : "—", pc = "iw-price" + dirCls(sym);
+        if (price.textContent !== pt) price.textContent = pt;
+        if (price.className !== pc) price.className = pc;
+      }
+      var chg = r.chg24;
+      if (!chgEl && chg != null) {
+        chgEl = document.createElement("span"); chgEl.className = "iw-chg";
+        var quote = row.querySelector(".iw-quote"); if (quote) quote.appendChild(chgEl);
+      }
+      if (chgEl) {
+        var ct = chg == null ? "—" : (chg > 0 ? "+" : "") + Number(chg).toFixed(2) + "%";
+        var cc = "iw-chg" + (chg > 0 ? " up" : chg < 0 ? " dn" : "");
+        if (chgEl.textContent !== ct) chgEl.textContent = ct;
+        if (chgEl.className !== cc) chgEl.className = cc;
+        if (chg == null) chgEl.removeAttribute("title"); else chgEl.title = "Зміна ціни за ~24 год";
+      }
+    });
+    /* Живе сортування — переміщенням тих самих рядків, без innerHTML. */
+    if (IW_SORT === "price" || IW_SORT === "change") {
+      var rows = Array.prototype.slice.call(host.querySelectorAll(".iw-row[data-sym]")), previous = rows.slice();
+      rows.sort(function (a, b) {
+        var sa = a.getAttribute("data-sym"), sb = b.getAttribute("data-sym");
+        if (IW_SORT === "price") return (Number(livePx(sb)) || 0) - (Number(livePx(a)) || 0);
+        var av = Number((IW.rows[sa] || {}).chg24), bv = Number((IW.rows[sb] || {}).chg24);
+        return (isFinite(bv) ? bv : -Infinity) - (isFinite(av) ? av : -Infinity);
+      });
+      var changed = rows.some(function (row, i) { return row !== previous[i]; });
+      if (changed) rows.forEach(function (row) { host.appendChild(row); });
+    }
+  }
+
   var sortSelect = $("#iw-sort");
   if (sortSelect) {
     if (["default", "name", "price", "change"].indexOf(IW_SORT) < 0) IW_SORT = "default";
@@ -1395,12 +1434,21 @@
   function _lvTitleOff() { return !!(LQ && LQ.on && LQ.data); }
   function liqLevelTitles() { if (!IW.series) return; var c = IW.coin || {}; setShl(c.shl); setPoc(c.poc); if (IW.prim && IW.prim._req) IW.prim._req(); }
 
-  function renderHead() {
+  function renderHead(quotesOnly) {
     var h = $("#iw-head"), lg = $("#iw-legend");
     if (!h) return;
     var sym = IW.sel;
     if (!sym) { h.innerHTML = '<span class="iw-title">—</span>'; IW.layerLg = ""; if (lg) legendPaint(); return; }
     var c = IW.coin || {}, px = livePx(sym);
+    if (quotesOnly) {
+      var quote = h.querySelector(".iw-px");
+      if (quote) {
+        var qt = px ? fmtPrice(px) : "—", qc = "iw-px" + dirCls(sym);
+        if (quote.textContent !== qt) quote.textContent = qt;
+        if (quote.className !== qc) quote.className = qc;
+        return;
+      }
+    }
     /* OHLC-легенда переїхала у шапку графіка; SBR-бейджі 1H/4H видалені. */
     /* 17.11: OHLC-легенду НЕ перестворюємо — шапка перемальовується щосекунди
        (жива ціна), і порожній новий вузол легенди блимав «то є, то нема», доки
@@ -1547,7 +1595,7 @@
     try { IW.series.update(bar); } catch (e) { return; }
     volLive();
     var now = Date.now();
-    if (now - liveUiAt >= 1000) { liveUiAt = now; try { renderHead(); renderList(); } catch (e) {} }
+    if (now - liveUiAt >= 1000) { liveUiAt = now; try { renderHead(true); renderQuotes(); } catch (e) {} }
   }
 
   /* 📊 16.11 ОБСЯГ: ПОКУПЦІ / ПРОДАВЦІ В КОЖНІЙ СВІЧЦІ.
