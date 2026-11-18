@@ -91,6 +91,8 @@ def view(key: str, label: str, agg, st) -> Dict:
             'n_long': int(agg.get('n_long') or 0), 'n_short': int(agg.get('n_short') or 0),
             'fired_long': int(agg.get('fired_long') or 0),
             'fired_short': int(agg.get('fired_short') or 0),
+            # ⚡ напруженість пружини (вимога 18.11): середній заряд усіх монет
+            'tension': agg.get('tension'), 'charged_n': int(agg.get('charged_n') or 0),
             'since': (st or {}).get('since') if (st or {}).get('lean') == lean else None}
 
 

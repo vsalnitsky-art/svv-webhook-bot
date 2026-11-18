@@ -288,10 +288,11 @@ def is_dir_only(row: Dict) -> bool:
     `dir`): у статистику / калібровку дослідження вона не йде (вимога 17.11 —
     дослідження = заряджені монети + угоди)."""
     ctx = (row or {}).get('ctx')
-    return isinstance(ctx, dict) and ctx.get('role') == 'dir'
+    return isinstance(ctx, dict) and ctx.get('role') in ('dir', 'sub')
 
 
-def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC, extra=None):
+def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC, extra=None,
+                      subs=None):
     """🔬 Монети дослідження. ЧИСТА.
     trades  — {SYM: …} відкритих угод (вихід);
     charged — {SYM: 'wl'|'scan'} монет зі статусом «🌀 заряджена» ЗАРАЗ (вхід);
@@ -318,6 +319,10 @@ def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC, ext
     # роль `dir`, якщо в дослідженні їх ще немає.
     for S in (extra or ()):
         roles.setdefault(str(S).upper(), ['dir'])
+    # ⚠ монети особистих сповіщень «Аномалії обсягу» (вимога 18.11): роль `sub`
+    # (як і `dir`, у статистику дослідження не йде).
+    for S in (subs or ()):
+        roles.setdefault(str(S).upper(), ['sub'])
     syms = list(roles.keys())
     return syms, {S: '+'.join(r) for S, r in roles.items()}, out_seen
 
@@ -325,13 +330,14 @@ def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC, ext
 # ───────────────────────── РУШІЙ ─────────────────────────
 class VolAnomalyMonitor:
     def __init__(self, db=None, md=None, get_watchlist=None, get_trades=None,
-                 get_charged=None, get_dir_syms=None):
+                 get_charged=None, get_dir_syms=None, get_sub_syms=None):
         self.db = db
         self._md = md
         self._get_watchlist = get_watchlist
         self._get_trades = get_trades
         self._get_charged = get_charged
         self._get_dir_syms = get_dir_syms
+        self._get_sub_syms = get_sub_syms
         self._seen: Dict = {}            # SYM → [src, коли востаннє заряджена]
         self._roles: Dict = {}           # SYM → роль у дослідженні (останній прохід)
         self._seen_saved = 0.0
@@ -381,7 +387,8 @@ class VolAnomalyMonitor:
         uni = {'entry': sum(1 for r in rl.values() if 'entry' in r),
                'after': sum(1 for r in rl.values() if 'after' in r),
                'exit': sum(1 for r in rl.values() if 'exit' in r),
-               'dir': sum(1 for r in rl.values() if r == 'dir'), 'total': len(rl)}
+               'dir': sum(1 for r in rl.values() if r == 'dir'),
+               'sub': sum(1 for r in rl.values() if r == 'sub'), 'total': len(rl)}
         return {'settings': self.get_settings(), 'stat': dict(self._stat),
                 'tfs': list(TFS), 'an': dict(AN), 'universe': uni,
                 'after_sec': AFTER_CHARGE_SEC}
@@ -462,12 +469,30 @@ class VolAnomalyMonitor:
             pass
         return []
 
+    def _sub_syms(self) -> List[str]:
+        """⚠ Монети особистих сповіщень кабінету + ⏰ будильника (вимога 18.11)."""
+        if self._get_sub_syms:
+            try:
+                return list(self._get_sub_syms() or [])
+            except Exception:
+                return []
+        try:
+            import sys
+            ai = sys.modules.get('detection.ai_signals')
+            if ai is not None and hasattr(ai, 'anom_watch_symbols'):
+                return list(ai.anom_watch_symbols() or [])     # + монета ⏰ будильника
+            ip = sys.modules.get('web.info_portal')
+            return list(ip.anom_symbols() or []) if ip is not None else []
+        except Exception:
+            return []
+
     def universe(self, now: Optional[float] = None) -> List[str]:
         """🔬 Заряджені монети обох Пружин (вхід) + ще AFTER_CHARGE_SEC після
         втрати заряду (розряд) + відкриті угоди (вихід)."""
         now = time.time() if now is None else now
         syms, roles, seen = research_universe(self._trades(), self._charged_now(),
-                                              self._seen, now, extra=self._dir_syms())
+                                              self._seen, now, extra=self._dir_syms(),
+                                              subs=self._sub_syms())
         self._seen, self._roles = seen, roles
         keys = tuple(sorted(seen))
         if self.db and (keys != self._seen_keys or now - self._seen_saved >= 600):

@@ -514,6 +514,6 @@ def view(s: Optional[Dict]) -> Optional[Dict]:
         return None
     return {'key': s['key'], 'name': s['name'], 'side': s['side'], 'done': s['done'],
             'total': s['total'], 'ready': s['ready'], 'stale': s['stale'],
-            'broken': s['broken'],
+            'broken': s['broken'], 'last_t': s.get('last_t'),
             'stages': [{'label': x['label'], 'done': x['done'], 'why': x.get('why') or ''}
                        for x in s['stages']]}

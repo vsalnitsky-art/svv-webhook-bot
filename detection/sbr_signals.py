@@ -111,6 +111,10 @@ DEFAULT_SETTINGS = {
     # 🏦 Дія над головним тумблером Trade Manager (вимога 16.11): '' — не
     # чіпати · 'on' — увімкнути · 'off' — вимкнути. Деф. не чіпати.
     'alarm_tm': '',
+    # ⏰ ДЖЕРЕЛО будильника (вимога 18.11): 'sbr' — свіжий сигнал 🔔 SBR (як і
+    # було) · 'anom' — ⚠ «Аномалії обсягу» (готовий сценарій входу ШІ по монеті
+    # будильника, той самий сигнал, що й особисті сповіщення) · 'both'.
+    'alarm_src': 'sbr',
     'alarm_last': None,       # {at, symbol, side, tf, ok, note} — останнє спрацювання
 }
 
@@ -118,6 +122,28 @@ ALARM_TFS = ('any', '1h', '4h')                     # історичний `alar
 ALARM_TF_ALL = ALL_TFS                              # вибір у новому UI
 ALARM_SIDES = ('LONG', 'SHORT')
 ALARM_TM = ('', 'on', 'off')
+ALARM_SRC = ('sbr', 'anom', 'both')
+
+
+def alarm_src_of(settings) -> str:
+    """⏰ Джерело будильника. ЧИСТА. Невідоме → 'sbr' (стара поведінка)."""
+    v = str((settings or {}).get('alarm_src') or 'sbr').lower()
+    return v if v in ALARM_SRC else 'sbr'
+
+
+def alarm_anom_symbol(settings) -> Optional[str]:
+    """⏰ Монета, яку будильник чекає від ⚠ «Аномалій обсягу» (None — ні). ЧИСТА."""
+    s = settings or {}
+    if not s.get('alarm_on') or alarm_src_of(s) not in ('anom', 'both'):
+        return None
+    return alarm_norm_symbol(s.get('alarm_symbol'))
+
+
+def alarm_anom_match(settings, symbol, side) -> bool:
+    """⏰ Чи будить ⚠ сигнал «Аномалії обсягу» цієї монети й боку. ЧИСТА."""
+    S = alarm_anom_symbol(settings)
+    return bool(S) and str(symbol or '').upper() == S and \
+        str(side or '').upper() == str((settings or {}).get('alarm_side') or 'LONG').upper()
 
 
 def alarm_tfs_of(settings) -> tuple:
@@ -200,7 +226,7 @@ def alarm_match(settings, symbol, items):
     раніше — реакція швидша) або None. Будильник вимкнений / інша монета /
     інший бік / інший TF → None."""
     s = settings or {}
-    if not s.get('alarm_on'):
+    if not s.get('alarm_on') or alarm_src_of(s) not in ('sbr', 'both'):
         return None
     if str(symbol or '').upper() != alarm_norm_symbol(s.get('alarm_symbol')):
         return None
@@ -528,6 +554,7 @@ class SbrEngine:
         s['alarm_side'] = sd if sd in ALARM_SIDES else 'LONG'
         tm = str(s.get('alarm_tm') or '').lower()
         s['alarm_tm'] = tm if tm in ALARM_TM else ''
+        s['alarm_src'] = alarm_src_of(s)
         if not isinstance(s.get('alarm_last'), dict):
             s['alarm_last'] = None
 
@@ -564,7 +591,7 @@ class SbrEngine:
                 self._settings['tg_symbols'] = sorted(
                     {str(x).upper() for x in patch['tg_symbols'] if x})
             for k in ('alarm_on', 'alarm_symbol', 'alarm_tf', 'alarm_tfs', 'alarm_side',
-                      'alarm_tm'):
+                      'alarm_tm', 'alarm_src'):
                 if k in patch:
                     self._settings[k] = patch[k]
             if 'alarm_tf' in patch and 'alarm_tfs' not in patch:
@@ -763,7 +790,7 @@ class SbrEngine:
                 lst = out.setdefault(tf, [])
                 if sym not in lst:
                     lst.append(str(sym).upper())
-        if s.get('alarm_on'):
+        if s.get('alarm_on') and alarm_src_of(s) in ('sbr', 'both'):
             for tf in alarm_tfs_of(s):
                 add(tf, s['alarm_symbol'])
         if s.get('tg_enabled'):
@@ -962,6 +989,25 @@ class SbrEngine:
                 pass
 
 
+    def alarm_anom_symbol(self) -> Optional[str]:
+        """⏰ Монета, яку будильник чекає від ⚠ «Аномалій обсягу» (лише памʼять)."""
+        with self._lock:
+            return alarm_anom_symbol(self._settings)
+
+    def alarm_from_anom(self, S: str, side: str, scenario: str = '', price=None,
+                        now: Optional[float] = None) -> bool:
+        """⏰ ⚠ «Аномалії обсягу»: готовий сценарій входу по монеті будильника в
+        обраний бік → ТА САМА дія, що й на сигнал SBR (кнопка напрямку + Trade
+        Manager з перевіркою). → чи будильник спрацював."""
+        now = time.time() if now is None else now
+        with self._lock:
+            s = dict(self._settings)
+        if not alarm_anom_match(s, S, side):
+            return False
+        sig = {'side': str(side).upper(), 'scenario': scenario, 'price': price}
+        self._alarm_fire(str(S).upper(), 'anom', sig, now, s)
+        return True
+
     def _alarm_check(self, S: str, items: List[tuple], now: float, s: Dict) -> None:
         """⏰ Збіг → увімкнути головну кнопку напрямку + (за налаштуванням)
         увімкнути / вимкнути Trade Manager → 🧾 Лог + TG особисто адміну."""
@@ -969,6 +1015,13 @@ class SbrEngine:
         if not hit:
             return
         tf, sig = hit
+        self._alarm_fire(S, tf, sig, now, s)
+
+    def _alarm_fire(self, S: str, tf: str, sig: Dict, now: float, s: Dict) -> None:
+        """Спільна дія будильника для обох джерел. `tf` = TF сигналу SBR або
+        'anom' (⚠ «Аномалії обсягу»)."""
+        anom = tf == 'anom'
+        tf_lbl = '⚠ Аномалії' if anom else TF_LABEL.get(tf, tf)
         side = str(sig.get('side')).upper()
         try:
             from detection import direction_gate as _dg
@@ -983,7 +1036,8 @@ class SbrEngine:
         tm_res = None
         if act in ('on', 'off'):
             tm_res = (self._tm_switch or alarm_set_tm)(act == 'on')
-        last = {'at': now, 'symbol': S, 'side': side, 'tf': TF_LABEL.get(tf, tf),
+        last = {'at': now, 'symbol': S, 'side': side, 'tf': tf_lbl, 'src': 'anom' if anom else 'sbr',
+                'scenario': sig.get('scenario') if anom else None,
                 'ok': bool(ok) and (tm_res is None or bool(tm_res[0])), 'note': note,
                 'dir_ok': bool(ok), 'score': sig.get('score'), 'trigger': sig.get('trigger'),
                 'tm': act, 'tm_ok': None if tm_res is None else bool(tm_res[0]),
@@ -996,8 +1050,10 @@ class SbrEngine:
         tm_failed = bool(tm_res is not None and not tm_res[0])
         if ok and not dir_changed and not tm_changed and not tm_failed:
             return      # усе й так у потрібному стані — без рядка в лозі й без TG
-        txt = (f"⏰ Будильник SBR: {S} {side} {TF_LABEL.get(tf, tf)} "
-               f"(Score {float(sig.get('score') or 0):.2f}) → "
+        what = (f"{sig.get('scenario') or 'сценарій входу'}" if anom
+                else f"Score {float(sig.get('score') or 0):.2f}")
+        txt = (f"⏰ Будильник {'⚠ Аномалії' if anom else 'SBR'}: {S} {side} {'' if anom else tf_lbl + ' '}"
+               f"({what}) → "
                + (f"головну кнопку {side} {note}" if ok
                   else f"кнопку {side} НЕ увімкнено: {note}"))
         if tm_res is not None:
@@ -1033,13 +1089,21 @@ def _default_fetch(sym: str, tf: str, limit: int):
 def alarm_tg_text(S, side, tf, sig, ok=True, note='', tm=None, tm_act='') -> str:
     """⏰ Текст будильника для особистого чату: сигнал без рядка про кнопку."""
     sd = str(side or '').upper()
-    lines = [f"⏰ <b>Будильник SBR</b> · #{S} "
-             f"{'🟢' if sd == 'LONG' else '🔴'} <b>{sd}</b> "
-             f"<code>{TF_LABEL.get(tf, tf)}</code>"]
-    try:
-        lines.append(f"📊 Score <b>{float(sig.get('score') or 0):.2f}%</b>")
-    except Exception:
-        pass
+    if tf == 'anom':          # ⚠ «Аномалії обсягу» (вимога 18.11)
+        lines = [f"⏰ <b>Будильник ⚠ Аномалії</b> · #{S} "
+                 f"{'🟢' if sd == 'LONG' else '🔴'} <b>{sd}</b>"]
+        if sig.get('scenario'):
+            lines.append(f"🧩 {sig.get('scenario')}")
+        if sig.get('price'):
+            lines.append(f"💵 Ціна: <code>{fmt_price(sig.get('price'))}</code>")
+    else:
+        lines = [f"⏰ <b>Будильник SBR</b> · #{S} "
+                 f"{'🟢' if sd == 'LONG' else '🔴'} <b>{sd}</b> "
+                 f"<code>{TF_LABEL.get(tf, tf)}</code>"]
+        try:
+            lines.append(f"📊 Score <b>{float(sig.get('score') or 0):.2f}%</b>")
+        except Exception:
+            pass
     if sig.get('trigger') is not None:
         lines.append(f"🎯 Trigger: <code>{fmt_price(sig.get('trigger'))}</code>")
     if sig.get('sl') is not None:

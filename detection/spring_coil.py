@@ -493,10 +493,18 @@ def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING,
     phases = {'expansion': 0, 'cooling': 0, 'calm': 0}
     exp_up = exp_dn = 0
     cand = []
+    ch_sum = 0.0
+    n_charged = 0
     for sym, r in (recs or {}).items():
         if not isinstance(r, dict) or not r.get('ok', True):
             continue
         counted += 1
+        # ⚡ напруженість (вимога 18.11): середній заряд УСІХ монет пружини
+        try:
+            ch_sum += max(0.0, min(100.0, float(r.get('charge') or 0.0)))
+        except (TypeError, ValueError):
+            pass
+        n_charged += r.get('state') == 'charged'
         ph = r.get('phase')
         if ph in phases:
             phases[ph] += 1
@@ -552,6 +560,8 @@ def aggregate(recs: Dict[str, Dict], min_charge: float = BUILDING,
             'coins': n, 'total': base, 'need': need, 'enough': enough, 'n_long': n_l, 'n_short': n_s,
             'sum_long': round(sl, 1), 'sum_short': round(ss, 1),
             'prob_long': pl_, 'lean': lean, 'fired_long': f_l, 'fired_short': f_s,
+            'tension': round(ch_sum / counted, 1) if counted else None,
+            'charged_n': n_charged,
             'top_long': top['LONG'], 'top_short': top['SHORT']}
 
 

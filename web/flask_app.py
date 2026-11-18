@@ -4101,7 +4101,7 @@ def register_api_routes(app):
             data = request.get_json(silent=True) or {}
             patch = {k: data[k] for k in ('enabled', 'tg_enabled', 'tg_1h', 'tg_4h', 'tg_tfs',
                                           'alarm_on', 'alarm_symbol', 'alarm_tf',
-                                          'alarm_tfs', 'alarm_side', 'alarm_tm')
+                                          'alarm_tfs', 'alarm_side', 'alarm_tm', 'alarm_src')
                      if k in data}
             return jsonify({'ok': True, 'settings': eng.update_settings(patch)})
         except Exception as e:

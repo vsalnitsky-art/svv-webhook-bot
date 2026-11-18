@@ -1513,6 +1513,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .smcf-r .smcf-h { flex-direction:row-reverse; }
 .smcf-st { margin-left:auto; padding:2px 8px; border-radius:6px; font:800 0.68rem monospace; letter-spacing:.04em; }
 .smcf-r .smcf-st { margin-left:0; margin-right:auto; }
+.smcf-ten { padding:2px 7px; border-radius:6px; font:800 0.66rem monospace; border:1px solid rgba(148,163,184,.35); color:#cbd5e1; background:rgba(148,163,184,.08); }
+.smcf-grp { display:inline-flex; align-items:center; gap:6px; margin-left:auto; }
+.smcf-grp .smcf-st { margin:0; }
+.smcf-r .smcf-grp { margin-left:0; margin-right:auto; flex-direction:row-reverse; }
+.smcf-ten.mid { color:#fbbf24; border-color:rgba(251,191,36,.45); background:rgba(251,191,36,.08); }
+.smcf-ten.hi { color:#f472b6; border-color:rgba(244,114,182,.5); background:rgba(244,114,182,.1); }
 .smcf-st.up { color:#00e676; background:rgba(0,230,118,.12); border:1px solid rgba(0,230,118,.45); }
 .smcf-st.dn { color:#ff4d5e; background:rgba(255,61,61,.12); border:1px solid rgba(255,61,61,.45); }
 .smcf-st.flat { color:#cbd5e1; background:rgba(148,163,184,.1); border:1px solid rgba(148,163,184,.35); }
@@ -1587,14 +1593,17 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <!-- ⏰ БУДИЛЬНИК SBR (вимога 01.11): свіжий сигнал 🔔 SBR обраної
                  монети / TF / боку вмикає відповідну головну кнопку. -->
             <span class="sm-alarm" id="sbr-alarm-box"
-                  title="⏰ БУДИЛЬНИК: коли головні кнопки вимкнені, бот можна «розбудити» сигналом 🔔 SBR. Щойно на закритті бару прийде свіжий сигнал SBR обраної монети, на обраному TF (1H / 4H / будь-який) і в обраний бік — бот одразу УВІМКНЕ відповідну головну кнопку (LONG або SHORT; другу не чіпає). Головний тумблер вмикає/вимикає будильник повністю; поки він увімкнений, будильник працює постійно (кнопка вже увімкнена — нічого не робить). Подія пишеться в 🧾 Лог і особисто вам у головний Telegram-бот (не в групу). Монета будильника рахується рушієм SBR навіть поза WATCHLIST. ⚠️ Auto-gate (якщо увімкнений) може потім перемкнути кнопки за своїм вердиктом.">
-                <span class="sm-alarm-on">⏰ Будильник SBR</span>
+                  title="⏰ БУДИЛЬНИК: коли головні кнопки вимкнені, бот можна «розбудити» сигналом 🔔 SBR або ⚠ «Аномалії обсягу» (джерело — випадайка поруч). Щойно на закритті бару прийде свіжий сигнал SBR обраної монети, на обраному TF (1H / 4H / будь-який) і в обраний бік — бот одразу УВІМКНЕ відповідну головну кнопку (LONG або SHORT; другу не чіпає). Головний тумблер вмикає/вимикає будильник повністю; поки він увімкнений, будильник працює постійно (кнопка вже увімкнена — нічого не робить). Подія пишеться в 🧾 Лог і особисто вам у головний Telegram-бот (не в групу). Монета будильника рахується рушієм SBR навіть поза WATCHLIST. ⚠️ Auto-gate (якщо увімкнений) може потім перемкнути кнопки за своїм вердиктом.">
+                <span class="sm-alarm-on">⏰ Будильник</span>
                 <label class="tm-toggle-switch" title="ГОЛОВНИЙ ТУМБЛЕР будильника: увімкнено — будильник працює постійно (кожен відповідний сигнал SBR вмикає кнопку, якщо вона вимкнена); вимкнено — будильник не працює взагалі.">
                     <input type="checkbox" id="sbr-alarm-on" onchange="sbrSaveAlarm()">
                     <span class="slider"></span>
                 </label>
                 <input type="text" id="sbr-alarm-sym" class="sm-alarm-in" value="BTC" maxlength="20"
                        onchange="sbrSaveAlarm()" title="Монета (BTC = BTCUSDT)">
+                <select id="sbr-alarm-src" class="sm-alarm-in" onchange="sbrSaveAlarm()" title="Що будить будильник: 🔔 свіжий сигнал SBR (на обраних TF) · ⚠ «Аномалії обсягу» — готовий сценарій входу ШІ по цій монеті (комплекс реакцій обсягу склався, точка свіжа ≤ 2 свічки; той самий сигнал, що й особисті сповіщення в кабінеті) · або будь-який із двох.">
+                    <option value="sbr">🔔 SBR</option><option value="anom">⚠ Аномалії</option><option value="both">🔔+⚠</option>
+                </select>
                 <span class="sm-alarm-tfs" id="sbr-alarm-tfs" title="Таймфрейми сигналу: будить СВІЖИЙ сигнал на будь-якому з позначених TF. 15M / 30M / 45M / 1D рахуються лише для монети будильника (45M — із 15-хвилинних свічок, межі від 00:00 UTC, як у TradingView).">
                     <label><input type="checkbox" data-atf="15m" onchange="sbrSaveAlarm()">15M</label><label><input type="checkbox" data-atf="30m" onchange="sbrSaveAlarm()">30M</label><label><input type="checkbox" data-atf="45m" onchange="sbrSaveAlarm()">45M</label><label><input type="checkbox" data-atf="1h" onchange="sbrSaveAlarm()">1H</label><label><input type="checkbox" data-atf="4h" onchange="sbrSaveAlarm()">4H</label><label><input type="checkbox" data-atf="1d" onchange="sbrSaveAlarm()">1D</label>
                 </span>
@@ -18262,6 +18271,16 @@ setInterval(() => { try { sprLoad(false); } catch (e) {} }, 5000);
 
 // ⚖ Банер «SMC Forecast» (вимога 11.11) — показники рахує бот
 // (`/api/spring-banner`), ті самі, що бачить інфосайт.
+// ⚡ Напруженість пружини (вимога 18.11): середній заряд усіх монет 0-100,
+// пороги ті самі, що стани Пружини (⏳ ≥45 · 🌀 ≥65).
+function _smcfTension(b) {
+    const t = Number(b && b.tension);
+    if (!(b && b.tension != null && isFinite(t))) return '';
+    const lv = t >= 65 ? 'hi' : t >= 45 ? 'mid' : 'lo';
+    const tip = `⚡ Напруженість пружини: середній заряд усіх ${b.total || 0} монет — ${t.toFixed(1)}% `
+        + `(0 — спокій · 45 — заряджається · 65 — заряджена). Заряджених зараз: ${b.charged_n || 0}.`;
+    return `<span class="smcf-ten ${lv}" title="${tip}">⚡ ${Math.round(t)}%</span>`;
+}
 function _smcfSide(b, right) {
     if (!b) return '';
     const head = `<div class="smcf-h">${b.ex === 'binance' ? '🟡' : '⬛'} ${b.label || ''}`;
@@ -18273,7 +18292,7 @@ function _smcfSide(b, right) {
     const a = Math.max(0, pl - 7).toFixed(1), z = Math.min(100, pl + 7).toFixed(1);
     const grad = `linear-gradient(90deg,#00c853 0%,#00e676 ${a}%,#ff3d3d ${z}%,#ff1744 100%)`;
     const tip = `▲ LONG ${pl.toFixed(1)}% · ▼ SHORT ${ps.toFixed(1)}% · заряджених ${b.coins} з ${b.total} (потрібно ≥ ${b.need})`;
-    return head + `<span class="smcf-st ${st[1]}">${st[0]}</span></div>` +
+    return head + `<span class="smcf-grp">${_smcfTension(b)}<span class="smcf-st ${st[1]}">${st[0]}</span></span></div>` +
         `<div class="smcf-bar${dir ? '' : ' mute'}" title="${tip}" style="background:${grad}">` +
         `<em class="${pl >= ps ? 'win' : ''}">▲ ${Math.round(pl)}%</em><em class="${ps > pl ? 'win' : ''}">${Math.round(ps)}% ▼</em></div>`;
 }
@@ -21010,13 +21029,22 @@ function _sbrApplyAlarm(st) {
     });
     if (sd && act !== sd) sd.value = st.alarm_side || 'LONG';
     if (tmSel && act !== tmSel) tmSel.value = st.alarm_tm || '';
+    const srcSel = document.getElementById('sbr-alarm-src');
+    const src = ['sbr', 'anom', 'both'].indexOf(st.alarm_src) >= 0 ? st.alarm_src : 'sbr';
+    if (srcSel && act !== srcSel) srcSel.value = src;
+    // TF стосуються лише 🔔 SBR — для ⚠ «Аномалій» чипи гасимо (не діють)
+    const tfBox = document.getElementById('sbr-alarm-tfs');
+    if (tfBox) { tfBox.style.opacity = src === 'anom' ? '0.35' : ''; tfBox.style.pointerEvents = src === 'anom' ? 'none' : ''; }
     if (box) box.classList.toggle('armed', !!st.alarm_on);
     if (out) {
         const L = st.alarm_last;
         if (st.alarm_on) {
             out.style.color = '#fbbf24';
+            const _srcLbl = src === 'anom' ? '⚠ Аномалії' : (src === 'both'
+                ? '🔔 ' + tfs.map(x => x.toUpperCase()).join('/') + ' або ⚠ Аномалії'
+                : tfs.map(x => x.toUpperCase()).join('/'));
             out.textContent = '⏳ чекаю ' + _sbrAlarmShortSym(st.alarm_symbol) + ' ' + (st.alarm_side || 'LONG')
-                + ' ' + tfs.map(x => x.toUpperCase()).join('/')
+                + ' ' + _srcLbl
                 + ({on: ' · +TM ON', off: ' · +TM OFF'}[st.alarm_tm] || '');
         } else if (L && L.at) {
             const t = new Date(_srvToPc(L.at) * 1000);
@@ -21063,6 +21091,7 @@ async function sbrSaveAlarm() {
         alarm_tfs: tfs,
         alarm_side: (document.getElementById('sbr-alarm-side') || {}).value || 'LONG',
         alarm_tm: (document.getElementById('sbr-alarm-tm') || {}).value || '',
+        alarm_src: (document.getElementById('sbr-alarm-src') || {}).value || 'sbr',
     };
     try {
         const res = await fetch('/api/sbr/settings', {

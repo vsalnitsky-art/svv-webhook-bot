@@ -228,7 +228,7 @@
   var IW = { wl: [], sel: "", rows: {}, max: 20, sig: "", coin: null, chart: null, series: null,
              prim: null, pocLine: null, chartKey: "", universe: [],
              tf: "15m", ob_tf: "1h", vob_tf: "5m", hl_tf: "off", sbr_tf: "chart", poc_days: 7, poc_tf: "1h", show_imb: true, show_sbr: true, show_shl: true,
-             sbr: {}, tg_linked: true, bellOpen: "" };
+             sbr: {}, anom: [], tg_linked: true, bellOpen: "" };
   var SBR_TFS = ["15m", "30m", "45m", "1h", "4h", "1d"];   // TF особистих 🔔 підписок (17.11: усі TF рушія; сервер шле sbr_tfs)
   var SBR_MARK_PX = 14;                 // розмір позначки S/B на графіку (css px)
   /* 🔔 SBR на графіку — на ВСІХ TF графіка (вимога 16.11): «chart» = TF графіка. */
@@ -395,17 +395,21 @@
 
   function bellHTML(sym) {
     var tfs = IW.sbr[sym] || [];
-    var on = tfs.length > 0;
-    var lbl = on ? tfs.map(function (t) { return String(t).toUpperCase(); }).join("+") : "";
-    var tip = on ? "SBR-сигнали " + lbl + " по " + sym + " приходять вам у Telegram." : "Отримувати сигнали SBR по " + sym + " у Telegram";
+    var an = (IW.anom || []).indexOf(sym) >= 0;
+    var on = tfs.length > 0 || an;
+    var lbl = tfs.map(function (t) { return String(t).toUpperCase(); }).join("+") + (an ? (tfs.length ? "+" : "") + "⚠" : "");
+    var tip = on ? "У Telegram по " + sym + ": " + (tfs.length ? "SBR " + tfs.map(function (t) { return String(t).toUpperCase(); }).join("+") : "") +
+      (an ? (tfs.length ? " · " : "") + "⚠ Аномалії обсягу" : "") : "Отримувати сигнали по " + sym + " у Telegram";
     var menu = IW.bellOpen === sym
       ? '<div class="iw-bell-menu" data-bellmenu="' + esc(sym) + '">' +
           '<div class="t">🔔 SBR у Telegram · ' + esc(sym.replace(/USDT$/, "")) + "</div>" +
           '<div class="iw-bell-tfs">' + SBR_TFS.map(function (tf) {
             return '<label><input type="checkbox" data-belltf="' + tf + '"' + (tfs.indexOf(tf) >= 0 ? " checked" : "") + "> " + tf.toUpperCase() + "</label>";
           }).join("") + "</div>" +
+          '<div class="t t2">⚠ Аномалії обсягу</div>' +
+          '<label class="iw-bell-anom" title="Сигнал, найближчий до моменту входу: по монеті склався сценарій входу ШІ (комплекс реакцій обсягу — виснаження/поглинання/продовження — підтверджено, точка свіжа ≤ 2 свічки, а напрямок аномалій за 6 год не проти)."><input type="checkbox" data-bellanom="1"' + (an ? " checked" : "") + "> сценарій входу (LONG / SHORT)</label>" +
           (IW.tg_linked ? "" : '<div class="w">⚠️ Telegram не прив’язано — сигнали не дійдуть. <button class="tglink-btn" data-tglink="1">🔗 Привʼязати</button></div>') +
-          '<div class="n">Сигнал приходить у ваш особистий чат із ботом після закриття бару.</div></div>'
+          '<div class="n">Сигнали приходять у ваш особистий чат із ботом: SBR — після закриття бару, ⚠ — щойно склався сценарій входу.</div></div>'
       : "";
     return { btn: '<span class="iw-bell-wrap"><button type="button" class="iw-bell' + (on ? " on" : "") +
       '" data-bell="' + esc(sym) + '" title="' + esc(tip) + '">🔔' + (lbl ? "<small>" + esc(lbl) + "</small>" : "") + "</button></span>", menu: menu };
@@ -475,6 +479,7 @@
     if (typeof d.show_sbr === "boolean") IW.show_sbr = d.show_sbr;
     if (typeof d.show_shl === "boolean") IW.show_shl = d.show_shl;
     if (d.sbr && typeof d.sbr === "object") IW.sbr = d.sbr;
+    if (Array.isArray(d.anom)) IW.anom = d.anom.slice();
     if (Array.isArray(d.sbr_tfs) && d.sbr_tfs.length) SBR_TFS = d.sbr_tfs.slice();
     if (typeof d.tg_linked === "boolean") IW.tg_linked = d.tg_linked;
     renderList(); renderTfBar();
@@ -526,6 +531,14 @@
     if (e.target.closest("[data-bellmenu]")) { e.stopPropagation(); return; }
     if (IW.bellOpen) { IW.bellOpen = ""; renderList(); }
   }, true);
+
+  document.addEventListener("change", function (e) {
+    var ca = e.target && e.target.closest ? e.target.closest("[data-bellanom]") : null;
+    if (!ca) return;
+    var sym = ca.closest("[data-bellmenu]").getAttribute("data-bellmenu"), on = !!ca.checked;
+    IW.anom = (IW.anom || []).filter(function (x) { return x !== sym; }).concat(on ? [sym] : []);
+    saveMine({ anom: { symbol: sym, on: on } }).then(function () { IW.bellOpen = sym; renderList(); refreshNotify(); });
+  });
 
   document.addEventListener("change", function (e) {
     var cb = e.target && e.target.closest ? e.target.closest("[data-belltf]") : null;
@@ -2323,6 +2336,16 @@
       var f = tiles[i].parentNode; f.classList.remove("flip"); void f.offsetWidth; f.classList.add("flip");
     }
   }
+  // ⚡ Напруженість пружини (вимога 18.11): середній заряд усіх монет 0-100,
+  // пороги — стани Пружини (⏳ ≥45 · 🌀 ≥65). Рахує бот (`tension`).
+  function spbTension(b) {
+    var t = Number(b && b.tension);
+    if (!b || b.tension == null || !isFinite(t)) return "";
+    var lv = t >= 65 ? "hi" : t >= 45 ? "mid" : "lo";
+    var tip = "Напруженість пружини: середній заряд усіх " + (b.total || 0) + " монет — " + t.toFixed(1) +
+      "% (0 — спокій · 45 — заряджається · 65 — заряджена). Заряджених зараз: " + (b.charged_n || 0) + ".";
+    return '<span class="spb-ten ' + lv + '" title="' + esc(tip) + '">⚡ ' + Math.round(t) + "%</span>";
+  }
   function spbSide(b) {
     var icon = SPB_ICON[b.ex] || "", head = '<div class="spb-h">' + icon + '<span class="spb-lab">' + esc(b.label) + "</span>";
     if (!b.ok) return head + '</div><div class="spb-empty muted">ще немає даних</div>';
@@ -2340,7 +2363,7 @@
     var longLabel = '<em class="r' + (pl >= ps ? " win" : "") + '">' + Math.round(pl) + "% ▲</em>", shortLabel = '<em class="l' + (ps > pl ? " win" : "") + '">▼ ' + Math.round(ps) + "%</em>";
     if (!right) { longLabel = '<em class="l' + (pl >= ps ? " win" : "") + '">▲ ' + Math.round(pl) + "%</em>"; shortLabel = '<em class="r' + (ps > pl ? " win" : "") + '">' + Math.round(ps) + "% ▼</em>"; }
     var labels = innerLong ? (right ? longLabel + shortLabel : shortLabel + longLabel) : (right ? shortLabel + longLabel : longLabel + shortLabel);
-    return head + '<span class="spb-st ' + st[1] + '">' + st[0] + "</span></div>" +
+    return head + '<span class="spb-grp">' + spbTension(b) + '<span class="spb-st ' + st[1] + '">' + st[0] + "</span></span></div>" +
       '<div class="spb-bar' + (dir ? "" : " mute") + '" title="' + esc(tip) + '" style="background:' + grad + '">' + labels + "</div>";
   }
   function spbRender(d) {

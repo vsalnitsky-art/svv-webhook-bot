@@ -1330,6 +1330,17 @@ def sbr_norm(raw, wl=None):
     return out
 
 
+def anom_norm(raw, wl=None):
+    """ЧИСТА: [SYM…] — особисті ⚠ сповіщення «Аномалії обсягу» (вимога 18.11).
+    Лише валідні монети списку (якщо `wl` задано), без дублів."""
+    out = []
+    for k in (raw or []) if isinstance(raw, (list, tuple)) else []:
+        S = norm_symbol(k)
+        if valid_symbol(S) and (wl is None or S in wl) and S not in out:
+            out.append(S)
+    return out
+
+
 def user_info(prefs, uni, dfl=None):
     dfl = dfl or {'tf': '15m', 'ob_tf': '1h', 'vob_tf': '5m'}
     info = (prefs or {}).get('info') or {}
@@ -1354,7 +1365,9 @@ def user_info(prefs, uni, dfl=None):
             'poc_days': poc_norm(info.get('poc_days'), info.get('poc_tf'))[0],
             'poc_tf': poc_norm(info.get('poc_days'), info.get('poc_tf'))[1],
             # 🔔 особисті SBR-сповіщення в Telegram (вимога 09.11)
-            'sbr': sbr_norm(info.get('sbr'), wl)}
+            'sbr': sbr_norm(info.get('sbr'), wl),
+            # ⚠ особисті сповіщення «Аномалії обсягу» (вимога 18.11)
+            'anom': anom_norm(info.get('anom'), wl)}
 
 
 def apply_change(cur, body, uni):
@@ -1410,6 +1423,12 @@ def apply_change(cur, body, uni):
             else:
                 sbr.pop(S, None)
     out['sbr'] = sbr_norm(sbr, wl)               # прибрана монета → і підписка
+    anom = list(cur.get('anom') or [])
+    if isinstance(body.get('anom'), dict):       # {symbol, on}
+        S = norm_symbol(body['anom'].get('symbol'))
+        if S in wl:
+            anom = [x for x in anom if x != S] + ([S] if body['anom'].get('on') else [])
+    out['anom'] = anom_norm(anom, wl)
     out['wl'], out['sel'] = wl, sel
     return out, err
 
@@ -1421,6 +1440,7 @@ def apply_change(cur, body, uni):
 # кабінеті, у групі і в особистому чаті — один і той самий.
 SUBS_TTL = 30.0
 SUBS_EXTRA_MAX = 300           # стеля монет поза WATCHLIST бота, які веде рушій
+ANOM_SUB_MAX = 60              # стеля монет ⚠ сповіщень (рушій ШІ тягне їх 1h-бари)
 _subs = {'at': 0.0, 'data': []}
 _subs_lock = threading.Lock()
 
@@ -1515,6 +1535,72 @@ def sbr_personal_send(symbol, items):
                     bad += 1
             except Exception:
                 bad += 1
+    return ok, bad
+
+
+# ── ⚠ Особисті сповіщення «Аномалії обсягу» (вимога 18.11) ──────────────
+# Користувач у кабінеті вмикає ⚠ біля монети → коли по ній СКЛАВСЯ сценарій
+# входу ШІ (комплекс реакцій обсягу, точка свіжа), повідомлення йде ЙОМУ в
+# особистий чат. Рахує рушій ШІ (`ai_signals`), монети підписок ведуть монітор
+# аномалій і рушій навіть поза Пружинами.
+_asubs = {'at': 0.0, 'data': []}
+
+
+def anom_subs(force=False):
+    """[(chat_id, [SYM…])] активних користувачів (кеш 30с)."""
+    now = time.time()
+    with _subs_lock:
+        if not force and now - _asubs['at'] < SUBS_TTL:
+            return _asubs['data']
+    try:
+        from web.auth import info_anom_subscribers
+        data = info_anom_subscribers()
+    except Exception:
+        data = []
+    with _subs_lock:
+        _asubs['at'], _asubs['data'] = now, data
+    return data
+
+
+def anom_subs_invalidate():
+    with _subs_lock:
+        _asubs['at'] = 0.0
+
+
+def anom_symbols(subs=None):
+    """ЧИСТА над підписками: монети ⚠ сповіщень (без дублів, стеля)."""
+    out = []
+    for _c, sub in (anom_subs() if subs is None else subs) or []:
+        for S in anom_norm(sub):
+            if S not in out:
+                out.append(S)
+    return out[:ANOM_SUB_MAX]
+
+
+def anom_recipients(subs, symbol):
+    """ЧИСТА: [chat_id…] — хто підписаний на ⚠ по цій монеті."""
+    S = norm_symbol(symbol)
+    return [str(c) for c, sub in (subs or []) if S in anom_norm(sub)]
+
+
+def anom_personal_send(symbol, text):
+    """Розіслати ⚠ сигнал монети підписникам. → (надіслано, помилок)."""
+    rc = anom_recipients(anom_subs(), symbol)
+    if not rc:
+        return 0, 0
+    try:
+        from web.tg_bot import tg_send
+    except Exception:
+        return 0, len(rc)
+    ok = bad = 0
+    for chat in rc:
+        try:
+            if tg_send(chat, '👤 <i>Ваш сигнал з кабінету</i>\n' + text):
+                ok += 1
+            else:
+                bad += 1
+        except Exception:
+            bad += 1
     return ok, bad
 
 
@@ -2286,6 +2372,7 @@ def register_info_portal(app):
             prefs['info'] = cur
             _update_user(u.id, prefs=json.dumps(prefs)[:20000])
             sbr_subs_invalidate()
+            anom_subs_invalidate()
         return jsonify({'ok': not err, 'error': err, 'max': IWL_MAX, 'universe_n': len(uni),
                         'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
                         'sbr_tfs': list(SBR_SUB_TFS), **cur})

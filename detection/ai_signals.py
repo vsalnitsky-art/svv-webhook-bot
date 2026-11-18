@@ -853,8 +853,108 @@ def _spring_rows():
         return []
 
 
+# ── ⚠ ОСОБИСТІ СПОВІЩЕННЯ «АНОМАЛІЇ ОБСЯГУ» (вимога 18.11) ────────────────
+# Дослівно: «оповіщення в телеграм по вибору монети, сигнал стосовно "Аномалії
+# обсягів"… максимально близько до моменту для входу в угоду». Найближча до
+# входу точка, яку бот уміє визначити, — ГОТОВИЙ сценарій входу ШІ (E1–E4:
+# комплекс реакцій обсягу склався, останній етап ≤ 2 свічки тому, без вето).
+# Той самий `entry_score`/`entry_decide`, що й 🤖 сигнал ШІ — другого правила
+# немає. Ворота бота (МММ, Пружини…) тут НЕ діють: це підказка людині.
+ANOM_SUB_COOLDOWN = 3600       # одна монета й бік — не частіше раз на годину
+ANOM_SENT_KEEP = 48 * 3600
+
+
+def anom_pick(rl: Dict, rs: Dict, adir: Optional[Dict] = None):
+    """ЧИСТА: (бік, результат entry_score) або (None, причина). Готовий
+    сценарій лише в ОДИН бік (обидва → суперечливо, тиша) і ⚠ напрямок за
+    аномаліями (6 год) не проти нього."""
+    ready = [r for r in (rl, rs) if r and entry_decide(r)]
+    if not ready:
+        return None, 'сценарію входу немає'
+    if len(ready) > 1:
+        return None, 'сценарії в обидва боки — суперечливо'
+    r = ready[0]
+    side = r.get('side')
+    if adir and adir.get('state') == 'dir' and adir.get('dir') and adir['dir'] != side:
+        return None, f"аномалії 6 год показують рух {adir['dir']}, а сценарій {side}"
+    return side, r
+
+
+def anom_tg_text(symbol: str, side: str, r: Dict, price=None, adir: Optional[Dict] = None) -> str:
+    """Текст Telegram: бік, монета, сценарій, етапи, ціна, напрямок аномалій."""
+    sc = (r or {}).get('scenario') or {}
+    emo = '🟢' if side == 'LONG' else '🔴'
+    out = [f"⚠️ <b>Аномалії обсягу</b> · {emo} <b>{side}</b>",
+           f"<b>#{symbol}</b> · {sc.get('name') or 'сценарій входу'}"]
+    for st in (sc.get('stages') or [])[:5]:
+        out.append(('✓ ' if st.get('done') else '· ') + str(st.get('label') or ''))
+    try:
+        if price:
+            from detection.sbr_signals import fmt_price
+            out.append(f"💵 Ціна: <code>{fmt_price(float(price))}</code>")
+    except Exception:
+        pass
+    if adir and adir.get('state') == 'dir' and adir.get('dir'):
+        out.append(f"🧭 Аномалії 6 год: {'▲' if adir['dir'] == 'LONG' else '▼'} {adir['dir']}")
+    return '\n'.join(out)
+
+
+def _alarm_engine():
+    import sys
+    m = sys.modules.get('detection.sbr_signals')
+    try:
+        return m.get_sbr_engine() if m is not None else None
+    except Exception:
+        return None
+
+
+def anom_watch_symbols() -> List[str]:
+    """⚠ Монети, по яких шукаємо сигнал «Аномалії обсягу»: особисті підписки
+    кабінету + монета ⏰ будильника (джерело ⚠). Їх ведуть монітор аномалій і
+    рушій ШІ навіть поза Пружинами."""
+    import sys
+    out: List[str] = []
+    ip = sys.modules.get('web.info_portal')
+    try:
+        out = [str(x).upper() for x in (ip.anom_symbols() or [])] if ip is not None else []
+    except Exception:
+        out = []
+    eng = _alarm_engine()
+    try:
+        a = eng.alarm_anom_symbol() if eng is not None else None
+    except Exception:
+        a = None
+    if a and a not in out:
+        out.append(a)
+    return out
+
+
+_anom_sub_default = anom_watch_symbols
+
+
+def _anom_alarm_default(symbol, side, scenario, price, now):
+    eng = _alarm_engine()
+    if eng is None or not hasattr(eng, 'alarm_from_anom'):
+        return False
+    return bool(eng.alarm_from_anom(symbol, side, scenario, price, now))
+
+
+def _anom_send_default(symbol, text):
+    import sys
+    ip = sys.modules.get('web.info_portal')
+    if ip is None:
+        return 0, 0
+    return ip.anom_personal_send(symbol, text)
+
+
 class AiEngine:
-    def __init__(self, db=None, md=None, scanner=None, tm=None, clock=time.time):
+    def __init__(self, db=None, md=None, scanner=None, tm=None, clock=time.time,
+                 anom_subs=None, anom_send=None, anom_alarm=None):
+        self._anom_subs = anom_subs or _anom_sub_default
+        self._anom_send = anom_send or _anom_send_default
+        self._anom_alarm = anom_alarm or _anom_alarm_default
+        self._anom_sent: Dict[str, float] = {}   # 'S|side|key|last_t' → коли надіслано
+        self._anom_last: Dict[str, float] = {}   # 'S|side' → останнє надсилання
         self.db = db
         self._md = md
         self._sc = scanner
@@ -1188,11 +1288,16 @@ class AiEngine:
         else:
             self._pro_open_syms = set()
         sc = self._scn()
-        if sc is None or not (sc.get_settings() or {}).get('spring_enabled', True):
+        spring_on = sc is not None and bool((sc.get_settings() or {}).get('spring_enabled', True))
+        try:
+            subs = [str(x).upper() for x in (self._anom_subs() or [])]
+        except Exception:
+            subs = []
+        if not spring_on and not subs:
             return 0
         self._refresh_cal(now)
         min_charge = float(s.get('ai_min_charge') or 65)
-        cand = self.candidates(min_charge)
+        cand = self.candidates(min_charge) if spring_on else {}
         anoms: Dict[str, List[Dict]] = {}
         try:
             look = max(ANOM_LOOK_SEC, DIR_LOOK_SEC,
@@ -1209,16 +1314,19 @@ class AiEngine:
         def load(S):
             try:
                 live = self._fetch_live(S, now)
-                self._pro_market(S, now)      # графік 15m/1h/4h — у тому самому пулі
+                if S in cand:                 # графік 15m/1h/4h — лише кандидатам мозку
+                    self._pro_market(S, now)
                 return S, live
             except Exception as e:
                 self._stat['errors'] += 1
                 self._stat['last_err'] = f'{S}: {e}'[:200]
                 return S, (None, None)
 
+        pool = list(cand.keys()) + [S for S in subs if S not in cand]
         with ThreadPoolExecutor(max_workers=WORKERS) as ex:
-            lives = dict(ex.map(load, list(cand.keys())))
+            lives = dict(ex.map(load, pool))
         view = {}
+        scored = {}
         for S, (rec0, src) in cand.items():
             rec, vw = lives.get(S) or (None, None)
             rec = rec or rec0 or {}
@@ -1229,6 +1337,7 @@ class AiEngine:
             lv, ch = scanner_context(self._scn(), S)
             el = entry_score('LONG', rec, vw, al, now, self._cal, lv, ch, charged)
             es = entry_score('SHORT', rec, vw, al, now, self._cal, lv, ch, charged)
+            scored[S] = (el, es, rec, vw)
             ep = self._eps.get(S)
             if ep is None and charged:
                 ep = self._eps[S] = episode_new(S, now, rec, vw, src)
@@ -1267,6 +1376,10 @@ class AiEngine:
                 why = episode_done(ep, now, charged)
                 if why:
                     self._close_episode(S, ep, now, why)
+        try:
+            self._anom_personal(subs, scored, lives, anoms, now)
+        except Exception as e:
+            self._stat['last_err'] = f'⚠ особисті: {e}'[:200]
         with self._lock:
             self._view = view
         self._pro_prune(view.keys())
@@ -1356,6 +1469,66 @@ class AiEngine:
         _ev(ep, now, 'signal', side=side, px=px, score=sc_res['score'])
         self._stat['signals'] += 1
 
+    def _anom_personal(self, subs, scored, lives, anoms, now) -> int:
+        """⚠ Особисті сповіщення: монета з підписки, сценарій входу ГОТОВИЙ →
+        одне повідомлення підписникам (той самий сценарій не повторюється,
+        монета+бік — не частіше раз на `ANOM_SUB_COOLDOWN`)."""
+        sent = 0
+        for k in [k for k, t in self._anom_sent.items() if now - t > ANOM_SENT_KEEP]:
+            self._anom_sent.pop(k, None)
+        for S in subs:
+            if S in scored:
+                el, es, rec, vw = scored[S]
+            else:
+                rec, vw = lives.get(S) or (None, None)
+                rec = rec or {}
+                al = anoms.get(S) or []
+                if not al:
+                    continue
+                lv, ch = scanner_context(self._scn(), S)
+                charged = rec.get('state') == 'charged'
+                el = entry_score('LONG', rec, vw, al, now, self._cal, lv, ch, charged)
+                es = entry_score('SHORT', rec, vw, al, now, self._cal, lv, ch, charged)
+            adir = self.anomaly_dir(S)
+            side, r = anom_pick(el, es, adir)
+            if not side:
+                continue
+            sc = r.get('scenario') or {}
+            key = f"{S}|{side}|{sc.get('key')}|{int(float(sc.get('last_t') or 0))}"
+            if key in self._anom_sent:
+                continue
+            self._anom_sent[key] = now
+            self._dirty = True
+            px = _px(vw, rec)
+            # ⏰ будильник (вимога 18.11): той самий сигнал — на КОЖЕН новий
+            # сценарій (дія ідемпотентна: усе вже в потрібному стані → тиша).
+            try:
+                self._anom_alarm(S, side, sc.get('name') or '', px, now)
+            except Exception as e:
+                self._stat['last_err'] = f'⚠ будильник {S}: {e}'[:200]
+            if now - self._anom_last.get(f'{S}|{side}', 0) < ANOM_SUB_COOLDOWN:
+                continue
+            text = anom_tg_text(S, side, r, px, adir)
+            try:
+                ok, bad = self._anom_send(S, text)
+            except Exception as e:
+                ok, bad = 0, 1
+                self._stat['last_err'] = f'⚠ TG {S}: {e}'[:200]
+            if not ok and not bad:
+                continue                  # підписників немає (монета лише будильника)
+            self._anom_last[f'{S}|{side}'] = now
+            if ok:
+                sent += 1
+                self._stat['anom_sent'] = self._stat.get('anom_sent', 0) + ok
+            try:
+                from detection.activity_log import log_activity
+                log_activity(S, 'signal', f"⚠ Аномалії обсягу {side} · {sc.get('name') or ''} · "
+                             f"👤 особисто: {ok}" + (f' · не доставлено {bad}' if bad else ''),
+                             side=side, source='ANOM')
+            except Exception:
+                pass
+        return sent
+
     def _close_episode(self, S, ep, now, why):
         self._eps.pop(S, None)
         ep['ended_at'] = int(now)
@@ -1375,7 +1548,8 @@ class AiEngine:
         if not self.db:
             return
         try:
-            self.db.set_setting(DB_STATE, {'eps': self._eps})
+            self.db.set_setting(DB_STATE, {'eps': self._eps, 'anom_sent': self._anom_sent,
+                                           'anom_last': self._anom_last})
         except Exception:
             pass
 
@@ -1389,6 +1563,11 @@ class AiEngine:
             eps = st.get('eps') or {}
             if isinstance(eps, dict):
                 self._eps = {str(k).upper(): v for k, v in eps.items() if isinstance(v, dict)}
+            for k, attr in (('anom_sent', '_anom_sent'), ('anom_last', '_anom_last')):
+                v = st.get(k)
+                if isinstance(v, dict):
+                    setattr(self, attr, {str(a): float(b) for a, b in v.items()
+                                         if isinstance(b, (int, float))})
         except Exception:
             self._eps = {}
         try:

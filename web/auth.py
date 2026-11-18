@@ -462,6 +462,30 @@ def info_sbr_subscribers():
         s.close()
 
 
+def info_anom_subscribers():
+    """⚠ Особисті сповіщення «Аномалії обсягу» з кабінету (вимога 18.11):
+    [(chat_id, [SYM…])] — ЛИШЕ АКТИВНІ користувачі з привʼязаним Telegram
+    (те саме правило доступу, що й для 🔔 SBR)."""
+    s = get_session()
+    try:
+        out = []
+        for u in s.query(User).filter(User.telegram_chat_id.isnot(None)).all():
+            if not _is_active(u):
+                continue
+            try:
+                prefs = json.loads(u.prefs or '{}')
+            except Exception:
+                prefs = {}
+            sub = ((prefs.get('info') or {}).get('anom')) or []
+            if isinstance(sub, list) and sub:
+                out.append((str(u.telegram_chat_id), list(sub)))
+        return out
+    except Exception:
+        return []
+    finally:
+        s.close()
+
+
 def is_blocked(u):
     """ЧИСТА від I/O: акаунт ЗАБЛОКОВАНО (не плутати з «очікує схвалення»):
     вимкнено адміністратором · строк доступу минув · схвалення знято після
