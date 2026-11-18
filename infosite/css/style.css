@@ -459,3 +459,21 @@ body{font-size:15px}
 .va-ohlc{display:grid;grid-template-columns:1fr 1fr;gap:2px 9px;margin-top:7px;color:var(--txt-dim);font:500 9px/1.4 var(--mono);font-variant-numeric:tabular-nums}
 .va-note{margin-top:7px;padding-top:7px;border-top:1px solid var(--line);color:var(--txt-dim);font-size:9.5px;line-height:1.45}
 @media(max-width:520px){.vol-an-tip{width:246px;padding:9px 10px}.va-note{font-size:9px}}
+
+
+/* v223: фірмові іконки монет у Watchlist і шапці графіка */
+.coin-ic{position:relative;display:inline-grid;place-items:center;width:24px;height:24px;flex:0 0 24px;isolation:isolate;pointer-events:none}
+.coin-ic:before{content:"";position:absolute;inset:-2px;border:1px solid transparent;border-top-color:color-mix(in srgb,var(--accent-2) 72%,transparent);border-right-color:color-mix(in srgb,var(--accent-2) 22%,transparent);border-radius:50%;animation:coinOrbit 4.8s linear infinite;animation-delay:var(--coin-delay);opacity:.72}
+.coin-ic img{display:block;width:20px;height:20px;border-radius:50%;object-fit:contain;filter:drop-shadow(0 0 5px color-mix(in srgb,var(--accent-2) 18%,transparent));animation:coinFloat 3.6s ease-in-out infinite;animation-delay:var(--coin-delay);transition:filter .2s ease}
+.iw-sym{align-items:center;gap:5px;min-width:0}
+.iw-sym b{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.iw-sym small{flex:none;margin-left:0}
+.iw-row:hover .coin-ic img{filter:drop-shadow(0 0 7px color-mix(in srgb,var(--accent-2) 40%,transparent)) brightness(1.12)}
+.iw-row.sel .coin-ic:before{border-top-color:var(--bybit);border-right-color:color-mix(in srgb,var(--bybit) 35%,transparent);opacity:1}
+.iw-head>.coin-ic-head{margin-right:-6px}
+.coin-ic-head{width:32px;height:32px;flex-basis:32px}
+.coin-ic-head:before{inset:-2px;border-top-color:var(--bybit);opacity:.9}
+.coin-ic-head img{width:26px;height:26px;filter:drop-shadow(0 0 7px rgba(240,185,11,.2))}
+@keyframes coinOrbit{to{transform:rotate(360deg)}}
+@keyframes coinFloat{0%,100%{transform:translateY(0) scale(1)}50%{transform:translateY(-1px) scale(1.045)}}
+@media(max-width:1080px){.iw-sym{gap:4px}.coin-ic{width:22px;height:22px;flex-basis:22px}.coin-ic img{width:18px;height:18px}.iw-head>.coin-ic-head{width:30px;height:30px;flex-basis:30px}.iw-head>.coin-ic-head img{width:25px;height:25px}}

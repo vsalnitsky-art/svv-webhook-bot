@@ -73,6 +73,26 @@
     });
   }
 
+  /* SpotHQ Cryptocurrency Icons: SVG за тикером; невідомі / нові монети
+     автоматично отримують локальний generic без битих зображень. */
+  function coinIcon(sym, extra) {
+    var s = String(sym || "").toUpperCase().replace(/\.P$/, "");
+    var m = s.match(/^(.*?)(USDT|USDC|USD)$/), base = m && m[1] ? m[1] : s;
+    base = base.replace(/^(?:1000000|100000|10000|1000|1M|1K)(?=[A-Z])/, "");
+    if (base === "XBT") base = "BTC";
+    var key = base.toLowerCase().replace(/[^a-z0-9]/g, "");
+    var src = key ? "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/svg/color/" + key + ".svg" : "img/coin-generic.svg";
+    var seed = 0; for (var i = 0; i < s.length; i++) seed = (seed + s.charCodeAt(i) * (i + 3)) % 37;
+    return '<span class="coin-ic' + (extra ? " " + esc(extra) : "") + '" data-coin="' + esc(s) + '" aria-hidden="true" style="--coin-delay:-' + (seed / 10).toFixed(1) + 's">' +
+      '<img src="' + src + '" alt="" loading="eager" decoding="async" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src=\'img/coin-generic.svg\'"></span>';
+  }
+  function keepCoinIcons(host, old) {
+    host.querySelectorAll(".coin-ic[data-coin]").forEach(function (el) {
+      var prev = old[el.getAttribute("data-coin")];
+      if (prev) el.parentNode.replaceChild(prev, el);
+    });
+  }
+
   function tvSym(sym, inBot) {
     var s = String(sym || "").toUpperCase();
     var url = "https://ru.tradingview.com/chart/?symbol=BYBIT:" + s + ".P";
@@ -367,6 +387,8 @@
       host.innerHTML = '<div class="iw-empty">Список порожній — додайте монету вище.</div>';
       return;
     }
+    var oldIcons = {};
+    host.querySelectorAll(".coin-ic[data-coin]").forEach(function (el) { oldIcons[el.getAttribute("data-coin")] = el; });
     var sorted = IW.wl.slice();
     if (IW_SORT === "name") sorted.sort(function (a, b) { return a.localeCompare(b); });
     if (IW_SORT === "price") sorted.sort(function (a, b) { return (Number(livePx(b)) || 0) - (Number(livePx(a)) || 0); });
@@ -379,11 +401,12 @@
         : '<span class="iw-chg ' + (chg > 0 ? "up" : (chg < 0 ? "dn" : "")) + '" title="Зміна ціни за ~24 год">' +
           (chg > 0 ? "+" : "") + Number(chg).toFixed(2) + "%</span>";
       return '<div class="iw-row' + (sym === IW.sel ? " sel" : "") + '" data-sym="' + esc(sym) + '">' +
-        '<div class="iw-main"><span class="iw-sym' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '"><b class="' + (r.src && r.src !== "ext" ? "in-bot" : "") + '">' + esc(sym.replace(/USDT$/, "")) + '</b><small>USDT</small>' + ext + "</span>" +
+        '<div class="iw-main"><span class="iw-sym' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + coinIcon(sym) + '<b class="' + (r.src && r.src !== "ext" ? "in-bot" : "") + '">' + esc(sym.replace(/USDT$/, "")) + '</b><small>USDT</small>' + ext + "</span>" +
         '<span class="iw-quote"><span class="iw-price' + dirCls(sym) + '">' + (livePx(sym) ? fmtPrice(livePx(sym)) : "—") + "</span>" + chgHtml + '</span></div>' +
         bell.btn + '<button class="iw-del" data-del="' + esc(sym) + '" title="Прибрати зі списку">×</button>' + bell.menu +
         (r.err ? '<div class="iw-err" title="' + esc(r.err) + '">⚠ ' + esc(r.err) + "</div>" : "") + "</div>";
     }).join("");
+    keepCoinIcons(host, oldIcons);
   }
 
   var sortSelect = $("#iw-sort");
@@ -1386,10 +1409,15 @@
     var headHtml = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym, !!(c.src && c.src !== "ext")) + "</span>" +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" + pdBadge(c.pd) + pocBadge(c.poc, c.poc_state) +
       (c.src === "ext" ? '<span class="bdg warn ext-badge" title="Outside the bot\'s WATCHLIST">🛰 NOT IN BOT</span>' : "");
-    var keepLg = document.getElementById("tv-ohlc");
-    if (h._headSig !== headHtml || !keepLg || keepLg.parentNode !== h) {
+    var keepLg = document.getElementById("tv-ohlc"), keepCoin = document.getElementById("iw-head-coin");
+    if (h._headSig !== headHtml || !keepLg || keepLg.parentNode !== h || !keepCoin || keepCoin.parentNode !== h) {
       h.innerHTML = headHtml;
       h._headSig = headHtml;
+      if (!keepCoin || keepCoin.getAttribute("data-coin") !== sym) {
+        var coinWrap = document.createElement("span");
+        coinWrap.innerHTML = coinIcon(sym, "coin-ic-head"); keepCoin = coinWrap.firstChild; keepCoin.id = "iw-head-coin";
+      }
+      h.insertBefore(keepCoin, h.firstChild);
       if (!keepLg) {
         keepLg = document.createElement("span");
         keepLg.className = "tv-ohlc"; keepLg.id = "tv-ohlc";
