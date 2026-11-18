@@ -1705,6 +1705,55 @@
     var gap = (h >= 8 && hb > 1 && h - hb > 1) ? 1 : 0;
     return { h: h, buy: hb, sell: h - hb - gap, gap: gap };
   }
+  /* Анімація лише тоді, коли у видимій області справді є аномалії.
+     Новий обʼєкт останнього рядка гарантовано інвалідовує полотно серії,
+     не змінюючи жодного значення обсягу чи розкладу покупців / продавців. */
+  function volAnFrame(now) {
+    VOL.raf = 0;
+    if (!VOL.on || !VOL.anom || !VOL.anVisible || !VOL.series || VOL.plain || document.hidden) return;
+    if (!VOL.anFrame || now - VOL.anFrame >= 40) {
+      VOL.anFrame = now;
+      var last = VOL.rows[VOL.rows.length - 1];
+      if (!last) return;
+      try { VOL.series.update(Object.assign({}, last)); } catch (e) { return; }
+    }
+    if (!VOL.raf) VOL.raf = requestAnimationFrame(volAnFrame);
+  }
+  function volAnimate() {
+    if (VOL.raf || !VOL.on || !VOL.anom || !VOL.anVisible || !VOL.series || VOL.plain || document.hidden || !window.requestAnimationFrame) return;
+    VOL.raf = requestAnimationFrame(volAnFrame);
+  }
+  document.addEventListener("visibilitychange", function () { if (!document.hidden) volAnimate(); });
+  function volAnMarker(ctx, cx, top, col, a, idx, hr, vr, now) {
+    var cy = top - Math.round(11 * vr), phase = ((now / 1500) + idx * 0.173) % 1;
+    var rot = now / 620 + idx * 0.71, pulse = 1 + Math.sin(now / 170 + idx) * 0.12;
+    ctx.save();
+    /* Хвиля реакції: мʼяко розходиться й зникає, не обводячи стовпчик. */
+    ctx.globalAlpha = (1 - phase) * 0.52;
+    ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, 0.85 * hr);
+    ctx.beginPath(); ctx.arc(cx, cy, (3.2 + phase * 8.5) * hr, 0, Math.PI * 2); ctx.stroke();
+    /* Обертова дуга — спокійний «радар» навколо ядра. */
+    ctx.globalAlpha = 0.82; ctx.lineWidth = Math.max(1, 1.05 * hr); ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(cx, cy, 5.2 * hr, rot, rot + Math.PI * 0.82); ctx.stroke();
+    if (a.k === "absorb" || a.k === "climax") {
+      ctx.globalAlpha = 0.42;
+      ctx.beginPath(); ctx.arc(cx, cy, 7.1 * hr, -rot * 0.72, -rot * 0.72 + Math.PI * 0.55); ctx.stroke();
+    }
+    /* Три іскри підіймаються з різним зсувом фази. */
+    for (var j = 0; j < 3; j++) {
+      var p = ((now / 1150) + idx * 0.11 + j / 3) % 1;
+      var sx = cx + Math.sin(rot * 0.35 + j * 2.1) * (2.2 + j * 0.6) * hr;
+      var sy = cy - (3 + p * 10) * vr;
+      ctx.globalAlpha = Math.sin(p * Math.PI) * 0.78; ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(sx, sy, Math.max(0.65, (1.05 - p * 0.45) * hr), 0, Math.PI * 2); ctx.fill();
+    }
+    /* Діамантове ядро з легким світінням у кольорі типу аномалії. */
+    ctx.translate(cx, cy); ctx.rotate(Math.PI / 4);
+    ctx.globalAlpha = 1; ctx.fillStyle = col; ctx.shadowColor = col; ctx.shadowBlur = 6 * hr;
+    var sz = (a.k === "climax" ? 2.7 : 2.35) * hr * pulse;
+    ctx.fillRect(-sz, -sz, sz * 2, sz * 2);
+    ctx.restore();
+  }
   function VolRenderer() { this.d = null; }
   VolRenderer.prototype.update = function (d) { this.d = d; };
   VolRenderer.prototype.draw = function (target, toY) {
@@ -1741,22 +1790,18 @@
         if (g.sell > 0) { ctx.fillStyle = "rgba(" + VOL_DN + "," + (up ? ".30" : ".80") + ")"; ctx.fillRect(x, y0 - g.h, w, g.sell); }
         if (g.buy > 0) { ctx.fillStyle = "rgba(" + VOL_UP + "," + (up ? ".80" : ".30") + ")"; ctx.fillRect(x, y0 - g.buy, w, g.buy); }
       }
+      VOL.anVisible = false;
       if (!VOL.anom) return;
-      /* ⚠ Позначки аномалій — над стовпчиком: кружок кольору типу + тонка рамка. */
-      var rad = Math.max(2, Math.round(2.6 * hr));
+      var now = window.performance && performance.now ? performance.now() : Date.now();
       for (var k = from; k < to; k++) {
         var bb = d.bars[k], rr = bb.originalData, a = rr.an;
         if (!a || !(Number(rr.value) > 0)) continue;
         var yk = toY(Number(rr.value)); if (yk == null) continue;
-        var top = Math.min(Math.round(yk * vr), y0 - 1), cx = Math.round(bb.x * hr), col = volAnColor(a);
-        if (a.k === "absorb" || a.k === "climax") {
-          ctx.strokeStyle = col; ctx.lineWidth = Math.max(1, Math.round(hr));
-          ctx.strokeRect(cx - half - 0.5, top - 0.5, w + 1, y0 - top + 1);
-        }
-        ctx.beginPath(); ctx.arc(cx, top - rad - Math.round(3 * vr), rad, 0, Math.PI * 2);
-        ctx.fillStyle = col; ctx.fill();
-        ctx.lineWidth = Math.max(1, Math.round(hr)); ctx.strokeStyle = "rgba(0,0,0,.55)"; ctx.stroke();
+        var top = Math.min(Math.round(yk * vr), y0 - 1), cx = Math.round(bb.x * hr);
+        VOL.anVisible = true;
+        volAnMarker(ctx, cx, top, volAnColor(a), a, k, hr, vr, now);
       }
+      volAnimate();
     });
   };
   function VolPane() { this.r = new VolRenderer(); }
@@ -1766,11 +1811,51 @@
   VolPane.prototype.update = function (data) { this.r.update(data); };
   VolPane.prototype.defaultOptions = function () { return Object.assign({}, window.LightweightCharts.customSeriesDefaultOptions || {}); };
 
+  function volAnHit(p) {
+    if (!VOL.on || !VOL.anom || VOL.plain || !p || p.time == null || !p.point || !VOL.series || !IW.chart) return null;
+    var r = VOL.idx[p.time];
+    if (!r || !r.an) return null;
+    var x = IW.chart.timeScale().timeToCoordinate(p.time), y = VOL.series.priceToCoordinate(Number(r.value));
+    if (x == null || y == null) return null;
+    var cy = y - 11;
+    if (Math.abs(p.point.x - x) > 13 || Math.abs(p.point.y - cy) > 17) return null;
+    return { r: r, x: x, y: cy };
+  }
+  function volAnTipHTML(r) {
+    var a = r.an, txt = volAnText(a), bp = r.buy == null ? null : Math.round(r.buy * 100);
+    var h = '<div class="va-head"><i style="background:' + volAnColor(a) + '"></i><b>' + esc(txt[0]) + "</b></div>" +
+      '<div class="va-time">' + esc(locFull(r.time)) + ' · обсяг ' + esc(fmtVol(r.value, 3)) + ' · ×' + a.rv.toFixed(2) + "</div>";
+    if (bp != null) h += '<div class="va-split"><span class="va-up">▲ Покупці ' + bp + '%</span><span class="va-dn">▼ Продавці ' + (100 - bp) + '%</span></div>';
+    var o = (IW.coin && IW.coin.ohlc) || [], bar = null;
+    for (var i = 0; i < o.length; i++) if (o[i].time === r.time) { bar = o[i]; break; }
+    if (bar) h += '<div class="va-ohlc"><span>O ' + esc(fmtPrice(bar.open)) + '</span><span>H ' + esc(fmtPrice(bar.high)) + '</span><span>L ' + esc(fmtPrice(bar.low)) + '</span><span>C ' + esc(fmtPrice(bar.close)) + "</span></div>";
+    return h + '<div class="va-note">' + esc(txt[1]) + "</div>";
+  }
+  function volAnHover(p) {
+    var box = $("#iw-box"), tip = $("#vol-an-tip");
+    if (!box) return;
+    if (!tip) {
+      tip = document.createElement("div"); tip.id = "vol-an-tip"; tip.className = "vol-an-tip";
+      tip.setAttribute("role", "tooltip"); tip.style.display = "none"; box.appendChild(tip);
+    }
+    var hit = volAnHit(p);
+    if (!hit) { tip.style.display = "none"; return; }
+    tip.innerHTML = volAnTipHTML(hit.r); tip.style.borderColor = volAnColor(hit.r.an);
+    tip.style.display = "block"; tip.style.visibility = "hidden";
+    var bw = box.clientWidth, bh = box.clientHeight, tw = tip.offsetWidth, th = tip.offsetHeight;
+    var left = hit.x + 16;
+    if (left + tw > bw - 8) left = hit.x - tw - 16;
+    left = Math.max(8, Math.min(left, bw - tw - 8));
+    var top = hit.y - th - 15;
+    if (top < 8) top = hit.y + 19;
+    top = Math.max(8, Math.min(top, bh - th - 8));
+    tip.style.left = Math.round(left) + "px"; tip.style.top = Math.round(top) + "px"; tip.style.visibility = "visible";
+  }
   function volEnsure() {
     if (!IW.chart) return;
     if (VOL.chart !== IW.chart) {
       VOL.chart = IW.chart; VOL.series = null; VOL.hover = null;
-      IW.chart.subscribeCrosshairMove(function (p) { VOL.hover = (p && p.time != null && p.point) ? p.time : null; volLegend(); });
+      IW.chart.subscribeCrosshairMove(function (p) { VOL.hover = (p && p.time != null && p.point) ? p.time : null; volAnHover(p); volLegend(); });
       if (IW.chart.subscribeDblClick) IW.chart.subscribeDblClick(volDbl);
     }
     if (VOL.on && !VOL.series) {
@@ -1789,7 +1874,9 @@
     for (var i = 0; i < o.length; i++) { var r = volRow(o[i], VOL.srv, VOL.base, VOL.tape); rows.push(r); idx[r.time] = r; }
     volMarkAnomalies(rows, 0);
     VOL.rows = rows; VOL.idx = idx;
+    VOL.anVisible = rows.some(function (r) { return !!r.an; });
     try { VOL.series.setData(rows); } catch (e) { console.error("[vol]", e); }
+    volAnimate();
   }
   /* Нові дані сервера: розклад історії + оцінка живої свічки. */
   function volApply(c) {

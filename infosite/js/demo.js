@@ -20,6 +20,9 @@
       out.push({time:end-(n-1-i)*step,open:open,high:high,low:low,close:close,volume:800+rnd()*3200+Math.abs(close-open)/open*140000});prev=close;
     }
     var target=base,ratio=target/out[out.length-1].close;out=out.map(function(b,i){var k=1+(ratio-1)*i/(out.length-1);return{time:b.time,open:b.open*k,high:b.high*k,low:b.low*k,close:b.close*k,volume:b.volume}});
+    /* Гарантована кульмінація для перевірки маркера та його картки в demo-режимі. */
+    var ai=out.length-28,ref=out.slice(ai-20,ai).map(function(b){return b.volume}).sort(function(a,b){return a-b});
+    if(ai>20&&ref.length)out[ai].volume=ref[Math.floor(ref.length/2)]*4.5;
     return out;
   }
   function coin(q){
