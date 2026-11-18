@@ -181,7 +181,11 @@ def _price_holds(d, price, lvl, tol=HOLD_TOL_PCT) -> Optional[bool]:
 def _finish(key, names, side, stages, now, broken='', fresh_bars=None):
     n = sum(1 for s in stages if s['done'])
     complete = n == len(stages) and not broken
-    last_t = max((s['t'] for s in stages if s['t'] is not None), default=None)
+    # 🐞 18.11: свіжість — за ПОДІЯМИ, а не за станом. Етап-стан («🌀 пружина
+    # заряджена», t = now) робив будь-який старий сценарій «свіжим» назавжди
+    # (кейс AVAX/TRUMP: імпульс 8 год тому → сигнал щопівгодини).
+    last_t = max((s['t'] for s in stages if s['t'] is not None and not s.get('state')),
+                 default=None)
     ready, stale = False, False
     if complete:
         if fresh_bars is None:
@@ -252,6 +256,7 @@ def _e1(items, d, ctx, choch, now):
 def _e2(items, d, ctx, choch, now):
     side = 'LONG' if d == 'up' else 'SHORT'
     s1 = _st('charged', '🌀 пружина заряджена', t=now if ctx.get('charged') else None)
+    s1['state'] = True              # стан, а не подія — у свіжість не входить
     imp = next((it for it in items if it.get('dir') == d and (
         it.get('role') == 'start' or it.get('kind') == 'spike')), None)
     imp_t = _f(imp['t']) if imp else None
@@ -373,10 +378,27 @@ def match_entry(items: List[Dict], side: str, ctx: Optional[Dict] = None,
     its = _sorted(items, now - SCEN_LOOK_SEC if now else None)
     out = []
     for key, fn in (('E1', _e1), ('E2', _e2), ('E3', _e3), ('E4', _e4)):
-        st, br = fn(its, d, ctx, choch, now)
-        out.append(_finish(key, ENTRY_NAMES, str(side).upper(), st, now, br,
-                           fresh_bars=ENTRY_FRESH_BARS))
+        out.append(_entry_anchored(key, fn, its, d, ctx, choch, now, str(side).upper()))
     return out
+
+
+def _entry_anchored(key, fn, its, d, ctx, choch, now, side):
+    """🐞 18.11: сценарій чіпляється за ПЕРШУ (найстарішу) реакцію вікна, тож
+    старий завершений-і-запізнілий ланцюг затуляв свіжий. Пробуємо якорі від
+    НАЙНОВІШОГО: перший готовий (свіжий, незламаний) — він; немає — як раніше,
+    від початку вікна (прогрес / злам для показу)."""
+    st, br = fn(its, d, ctx, choch, now)
+    full = _finish(key, ENTRY_NAMES, side, st, now, br, fresh_bars=ENTRY_FRESH_BARS)
+    if full['ready']:
+        return full
+    for i in range(len(its) - 1, 0, -1):
+        if its[i].get('dir') != d and key != 'E4':
+            continue
+        st, br = fn(its[i:], d, ctx, choch, now)
+        r = _finish(key, ENTRY_NAMES, side, st, now, br, fresh_bars=ENTRY_FRESH_BARS)
+        if r['ready']:
+            return r
+    return full
 
 
 # ───────────────────────── ВИХІД ─────────────────────────

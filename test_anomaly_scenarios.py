@@ -185,6 +185,29 @@ def test_catalog_matches_code_and_page():
            'сторінка: довідник правил, сценарії LONG/SHORT, рішення')
 
 
+def test_e2_old_impulse_is_not_a_fresh_entry_point_1811():
+    """🐞 18.11 (кейс AVAX/TRUMP): етап «🌀 заряджена» (t = now) робив свіжим
+    будь-який старий ланцюг — сигнал ішов щопівгодини по імпульсу 8-год давності."""
+    ctx = {'charged': True}
+    old = [_an('spike', 8 * H, tf='15m', bar_dir='up', o1=0.3, price=95.0),
+           _an('side', 3 * H, tf='15m', hint='up', price=96.0)]
+    e = _get(S.match_entry(_items(old), 'LONG', ctx, None, NOW), 'E2')
+    _check(e['complete'] and not e['ready'] and e['stale'], f'запізно, а не точка входу: {e}')
+    _check(e['last_t'] is not None and e['last_t'] < NOW - 2 * H,
+           'свіжість — за останньою ПОДІЄЮ, не за станом пружини')
+
+
+def test_newer_chain_is_not_shadowed_by_an_older_stale_one_1811():
+    """Сценарій чіплявся за найстарішу реакцію вікна — свіжий ланцюг губився."""
+    ctx = {'charged': True}
+    an = [_an('spike', 9 * H, tf='15m', bar_dir='up', o1=0.3, price=95.0),
+          _an('side', 8 * H, tf='15m', hint='up', price=95.5),
+          _an('spike', 1200, tf='15m', bar_dir='up', o1=0.3, price=97.0),
+          _an('side', 300, tf='15m', hint='up', price=97.5)]
+    e = _get(S.match_entry(_items(an), 'LONG', ctx, None, NOW), 'E2')
+    _check(e['ready'] and e['last_t'] >= NOW - 1200, f'свіжий ланцюг: {S.stages_text(e)}')
+
+
 if __name__ == '__main__':
     fails = 0
     for name, fn in [(k, v) for k, v in list(globals().items()) if k.startswith('test_') and callable(v)]:
