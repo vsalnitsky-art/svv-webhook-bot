@@ -412,7 +412,8 @@
           '<div class="n">Сигнали приходять у ваш особистий чат із ботом: SBR — після закриття бару, ⚠ — щойно склався сценарій входу.</div></div>'
       : "";
     return { btn: '<span class="iw-bell-wrap"><button type="button" class="iw-bell' + (on ? " on" : "") +
-      '" data-bell="' + esc(sym) + '" title="' + esc(tip) + '">🔔' + (lbl ? "<small>" + esc(lbl) + "</small>" : "") + "</button></span>", menu: menu };
+      '" data-bell="' + esc(sym) + '" title="' + esc(tip) + '"><svg class="iw-bell-ic" aria-hidden="true"><use href="#i-bell"/></svg>' +
+      (lbl ? "<small>" + esc(lbl) + "</small>" : "") + "</button></span>", menu: menu };
   }
 
   var TF_LAST_KEY = "vsv_tf_last";
@@ -2342,9 +2343,12 @@
     var t = Number(b && b.tension);
     if (!b || b.tension == null || !isFinite(t)) return "";
     var lv = t >= 65 ? "hi" : t >= 45 ? "mid" : "lo";
+    var n = Math.max(0, Math.min(100, Math.round(t)));
     var tip = "Напруженість пружини: середній заряд усіх " + (b.total || 0) + " монет — " + t.toFixed(1) +
       "% (0 — спокій · 45 — заряджається · 65 — заряджена). Заряджених зараз: " + (b.charged_n || 0) + ".";
-    return '<span class="spb-ten ' + lv + '" title="' + esc(tip) + '">⚡ ' + Math.round(t) + "%</span>";
+    return '<span class="spb-ready ' + lv + '" title="' + esc(tip) + '" role="img" aria-label="Readiness ' + n + ' percent">' +
+      '<span class="spb-ready-ring" style="--p:' + n + '"><b>' + n + '<i>%</i></b></span>' +
+      '<small>READINESS</small></span>';
   }
   function spbSide(b) {
     var icon = SPB_ICON[b.ex] || "", head = '<div class="spb-h">' + icon + '<span class="spb-lab">' + esc(b.label) + "</span>";
