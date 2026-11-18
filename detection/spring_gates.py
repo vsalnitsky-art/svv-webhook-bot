@@ -12,6 +12,16 @@
   той самий напрямок. ⚖ / замало заряджених → відмова.
 «Невідомо» ≠ «за напрямком»: монети немає в таблиці → відмова.
 Жодного I/O — дані подає сканер.
+
+🧭 НАПРЯМОК — ЗА ⚠ АНОМАЛІЯМИ (вимога 18.11, ЗАМІЩУЄ «вкладка таблиці»).
+Дослівно: «напрямок руху, який пропонує таблиця пружин, часто не встигає
+оновитись і суперечить… орієнтуватись саме по показниках аномалії, в яку
+сторону відбувались певні рухи ціни». Пружина відповідає за «накручена / в
+таблиці», а БІК дає `ai_signals.anomaly_direction` (`adir`):
+• `dir` LONG/SHORT → бік воріт;
+• `mixed` (рухи в обидва боки близькі за силою) → відмова, напрямку немає;
+• `weak` / `none` (аномалії мовчать) або `adir` недоступний → фолбек на
+  вкладку Пружини (позначено в чипі «вкладка»).
 """
 from typing import Dict, Optional, Tuple
 
@@ -43,6 +53,22 @@ def tab_side(rec: Optional[Dict]) -> Optional[str]:
     return None
 
 
+def dir_of(rec: Optional[Dict], adir: Optional[Dict] = None) -> Tuple[Optional[str], str, str]:
+    """→ (бік, джерело, підпис). Джерело: 'anom' (за аномаліями) · 'mixed'
+    (аномалії суперечливі — боку немає) · 'tab' (аномалії мовчать → вкладка)."""
+    if isinstance(adir, dict):
+        st = adir.get('state')
+        if st == 'dir' and adir.get('dir') in SIDES:
+            return adir['dir'], 'anom', f"аномалії {adir['dir']}"
+        if st == 'mixed':
+            return None, 'mixed', (f"аномалії суперечливі ▲{_f(adir.get('up')):.2f}"
+                                   f"/▼{_f(adir.get('dn')):.2f}")
+    t = tab_side(rec)
+    quiet = 'аномалій немає' if (isinstance(adir, dict) and adir.get('state') == 'none') \
+        else ('аномалії слабкі' if isinstance(adir, dict) else 'аномалії недоступні')
+    return t, 'tab', f'{quiet} → вкладка {t or "⚖"}'
+
+
 def banner_side(agg: Optional[Dict]) -> Optional[str]:
     """Напрям банера «Куди накручено»: лише коли заряджених достатньо."""
     if not isinstance(agg, dict) or agg.get('enough') is False:
@@ -51,7 +77,8 @@ def banner_side(agg: Optional[Dict]) -> Optional[str]:
     return d if d in SIDES else None
 
 
-def passes_gates(rec: Optional[Dict], settings: Dict, potential=None) -> Tuple[bool, Optional[str], str]:
+def passes_gates(rec: Optional[Dict], settings: Dict, potential=None,
+                 adir: Optional[Dict] = None) -> Tuple[bool, Optional[str], str]:
     """Монета 🌀 WATCHLIST «проходить ворота» → (ok, бік, причина).
 
     Бік = вкладка монети; далі КОЖНІ увімкнені ворота «Пружини» мусять
@@ -59,9 +86,11 @@ def passes_gates(rec: Optional[Dict], settings: Dict, potential=None) -> Tuple[b
     і заряд ≥ порогу (`spring_charge_gate_enabled`). `potential(rec, side)` —
     `spring_coil.potential` (враховує вистріл); без нього — сирий pot_*."""
     s = settings or {}
-    side = tab_side(rec)
+    if not isinstance(rec, dict) or rec.get('ok') is False:
+        return False, None, 'немає запису'
+    side, _src, lbl = dir_of(rec, adir)
     if side is None:
-        return False, None, 'без напрямку'
+        return False, None, lbl
     if s.get('spring_gate_enabled', True):
         need = _f(s.get('spring_min_pot', 40))
         pot = potential(rec, side) if potential else None
@@ -101,13 +130,15 @@ def scan_member(row: Optional[Dict], wl_rec: Optional[Dict], min_charge) -> Tupl
 
 
 def book_decide(tag: str, rec: Optional[Dict], banner: Optional[str], side: str,
-                need_banner: bool = False, src: str = '') -> Tuple[bool, bool, str, str]:
-    """(applies, ok, chip, reason) воріт однієї «Пружини»."""
+                need_banner: bool = False, src: str = '',
+                adir: Optional[Dict] = None) -> Tuple[bool, bool, str, str]:
+    """(applies, ok, chip, reason) воріт однієї «Пружини». Монета мусить бути в
+    таблиці (запис Пружини), а БІК — за ⚠ аномаліями (`dir_of`)."""
     side = str(side or '').upper()
     name = NAME.get(tag, tag)
     if side not in SIDES:
         return (False, True, '', '')
-    cs = tab_side(rec)
+    cs, how, lbl = dir_of(rec, adir)
     bn = f' · банер {banner or "⚖"}' if need_banner else ''
     where = f' · {src}' if src and src != 'скан' else ''
     if rec is None:
@@ -117,12 +148,17 @@ def book_decide(tag: str, rec: Optional[Dict], banner: Optional[str], side: str,
         return (True, False, f'{tag}[немає в таблиці{bn}]:✗',
                 f'{name}: монети немає в таблиці (сигнал {side} відхилено)')
     if cs != side:
-        return (True, False, f'{tag}[вкладка {cs or "⚖"}{bn}{where}]:✗',
-                f'{name}: монета у вкладці {cs or "⚖ без напрямку"}, а сигнал {side}')
+        if how == 'anom':
+            why = f'{name}: ⚠ аномалії обсягу показують рух {cs}, а сигнал {side}'
+        elif how == 'mixed':
+            why = f'{name}: {lbl} — напрямку немає, сигнал {side} відхилено'
+        else:
+            why = f'{name}: {lbl.replace("вкладка", "монета у вкладці")}, а сигнал {side}'
+        return (True, False, f'{tag}[{lbl}{bn}{where}]:✗', why)
     if need_banner and banner != side:
-        return (True, False, f'{tag}[вкладка {cs}{bn}{where}]:✗',
+        return (True, False, f'{tag}[{lbl}{bn}{where}]:✗',
                 f'{name}: банер «Куди накручено» {banner or "⚖"}, а сигнал {side}')
-    return (True, True, f'{tag}[вкладка {cs}{bn}{where}]:✓', '')
+    return (True, True, f'{tag}[{lbl}{bn}{where}]:✓', '')
 
 
 def banner_only_decide(tag: str, banner: Optional[str], side: str) -> Tuple[bool, bool, str, str]:

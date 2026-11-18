@@ -314,6 +314,54 @@ def read_anomalies(anoms: List[Dict], now: float, levels=None, choch: Optional[D
     return out
 
 
+# 🧭 НАПРЯМОК ЗА ⚠ АНОМАЛІЯМИ (вимога 18.11) — для воріт «Через Пружину».
+# Дослівно: «напрямок руху, який пропонує таблиця пружин, часто не встигає
+# оновитись і суперечить… на напрямок потрібно орієнтуватись саме по показниках
+# аномалії, а саме в яку сторону відбувались певні рухи ціни».
+# Пружина рахується по ЗАКРИТИХ 1h-барах (раз на годину), тож її бік відстає;
+# аномалії пишуться на кожному закритті 15m/1h. Читання — ТЕ САМЕ
+# `read_anomalies`, що й вхід ШІ (рівні, підтвердження, вік, калібровка).
+DIR_LOOK_SEC = 6 * 3600        # рухи за останні 6 год (старші важать менше)
+DIR_MIN = 0.3                  # сила бокового свідчення (= ANOM_GATE виходу)
+DIR_MARGIN = 0.15              # перевага над протилежним боком
+DIR_TTL = 120                  # кеш рушія вважається свіжим
+
+
+def anomaly_direction(anoms: List[Dict], now: float, levels=None,
+                      choch: Optional[Dict] = None, cal: Optional[Dict] = None,
+                      look: float = DIR_LOOK_SEC) -> Dict:
+    """→ {'dir': LONG|SHORT|None, 'state': dir|mixed|weak|none, 'up', 'dn',
+    'margin', 'n', 'notes'}. Сила боку = max(розворот, 🔥→🧽, 0.8·старт) +
+    0.5·продовження (як `entry_score`). Напрямок — лише коли переможець ≥
+    DIR_MIN і випереджає інший бік на DIR_MARGIN; обидва сильні й близькі →
+    `mixed` (суперечливі рухи), слабкі → `weak`, аномалій немає → `none`."""
+    rd = read_anomalies(anoms, now, levels, choch, _cal_part(cal, 'entry'), look=look)
+    sc = {}
+    for d in ('up', 'dn'):
+        x = rd[d]
+        sc[d] = round(_c(max(x['rev'], x['combo'], 0.8 * x['start']) + 0.5 * x['cont']), 3)
+    n = len(rd['items'])
+    win = 'up' if sc['up'] >= sc['dn'] else 'dn'
+    lose = 'dn' if win == 'up' else 'up'
+    margin = round(sc[win] - sc[lose], 3)
+    if not n:
+        state, dr = 'none', None
+    elif sc[win] >= DIR_MIN and margin >= DIR_MARGIN:
+        state, dr = 'dir', ('LONG' if win == 'up' else 'SHORT')
+    elif sc[win] >= DIR_MIN:
+        state, dr = 'mixed', None
+    else:
+        state, dr = 'weak', None
+    notes = [('▲ ' + t) for t in rd['up']['notes'][:3]] + [('▼ ' + t) for t in rd['dn']['notes'][:3]]
+    last = max((x['t'] for x in rd['items']), default=None)
+    return {'dir': dr, 'state': state, 'up': sc['up'], 'dn': sc['dn'], 'margin': margin,
+            'n': n, 'notes': notes, 'last_t': last}
+
+
+ADIR_UA = {'dir': 'напрямок', 'mixed': 'суперечливі рухи', 'weak': 'слабкі рухи',
+           'none': 'аномалій немає'}
+
+
 def levels_of(vw: Optional[Dict], extra=None) -> List:
     """Рівні для «на рівні»: межі 24-год коробки живого бару + додаткові
     (OB, High/Low, POC — їх дає той, хто має доступ до сканера)."""
@@ -826,6 +874,8 @@ class AiEngine:
         self._learning_state: Dict = {'status': 'not_run'}
         self._cal: Dict = {}
         self._cal_at = 0.0
+        self._adir: Dict[str, Dict] = {}       # 🧭 напрямок за аномаліями (усі монети)
+        self._adir_at = 0.0
         self._stat = {'last_at': 0, 'coins': 0, 'signals': 0, 'episodes_closed': 0,
                       'errors': 0, 'last_err': ''}
         self._dirty = False
@@ -1058,6 +1108,33 @@ class AiEngine:
         except Exception as e:
             self._stat['last_err'] = f'калібровка: {e}'[:200]
 
+    def _refresh_adir(self, anoms: Dict[str, List[Dict]], now: float) -> None:
+        """🧭 Напрямок за аномаліями для КОЖНОЇ монети з рядками аномалій (ті самі
+        рядки, що читає такт; лише памʼять сканера для рівнів / CHoCH)."""
+        out = {}
+        for S, al in (anoms or {}).items():
+            if not S:
+                continue
+            try:
+                lv, ch = scanner_context(self._scn(), S)
+                out[str(S).upper()] = anomaly_direction(al, now, lv, ch, self._cal)
+            except Exception as e:
+                self._stat['last_err'] = f'напрямок аномалій {S}: {e}'[:200]
+        with self._lock:
+            self._adir, self._adir_at = out, now
+
+    def anomaly_dir(self, symbol: str) -> Optional[Dict]:
+        """🧭 Напрямок за аномаліями (кеш такту). Кеш застарів (рушій стоїть) →
+        None: ворота тоді йдуть за вкладкою Пружини, а не за старими рухами.
+        Свіжий кеш без рядків монети → `state: none` («аномалій немає»)."""
+        now = self._clock()
+        with self._lock:
+            if not self._adir_at or now - self._adir_at > DIR_TTL:
+                return None
+            r = self._adir.get(str(symbol or '').upper())
+        return dict(r) if r else {'dir': None, 'state': 'none', 'up': 0.0, 'dn': 0.0,
+                                  'margin': 0.0, 'n': 0, 'notes': [], 'last_t': None}
+
     def candidates(self, min_charge: float) -> Dict[str, tuple]:
         """{S: (запис Пружини, джерело)} — заряджені монети обох Пружин +
         монети з відкритим епізодом (ведемо до наслідку)."""
@@ -1118,12 +1195,14 @@ class AiEngine:
         cand = self.candidates(min_charge)
         anoms: Dict[str, List[Dict]] = {}
         try:
-            look = max(ANOM_LOOK_SEC, getattr(_scen(), 'SCEN_LOOK_SEC', ANOM_LOOK_SEC))
+            look = max(ANOM_LOOK_SEC, DIR_LOOK_SEC,
+                       getattr(_scen(), 'SCEN_LOOK_SEC', ANOM_LOOK_SEC))
             for a in (self.db.get_vol_anomalies(since=now - look, limit=20000)
                       if self.db else []) or []:
                 anoms.setdefault(a.get('symbol'), []).append(a)
         except Exception:
             pass
+        self._refresh_adir(anoms, now)
 
         brain = _sib('ai_brain')
 

@@ -3219,9 +3219,18 @@ def register_api_routes(app):
                         queues = ff._mm_queue_map() or {}
             except Exception:
                 pass
+            _ad = None
+            try:
+                from detection.smc_scanner import get_smc_scanner
+                _sc = get_smc_scanner()
+                _ad = getattr(_sc, '_anom_dir', None) if _sc is not None else None
+            except Exception:
+                _ad = None
             for r in (st.get('result') or {}).get('rows') or []:
                 r['trade_side'] = sides.get(r.get('symbol'))
                 r['queues'] = list(queues.get(r.get('symbol')) or [])
+                if callable(_ad):
+                    r['adir'] = _adir_slim(_ad(r.get('symbol')))
             st['server_now'] = time.time()
             return jsonify(st)
         except Exception as e:
@@ -3980,6 +3989,13 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)[:200]})
 
+    def _adir_slim(a):
+        """🧭 Напрямок за ⚠ аномаліями для рядка таблиці Пружини (ТЕ САМЕ, за
+        чим судять ворота «Через Пружину»)."""
+        if not isinstance(a, dict):
+            return None
+        return {k: a.get(k) for k in ('dir', 'state', 'up', 'dn', 'n', 'notes', 'last_t')}
+
     @app.route('/api/spring/state')
     def api_spring_state():
         """🌀 «Пружина» по монетах WATCHLIST (лише ЧИТАННЯ памʼяті сканера):
@@ -4044,6 +4060,7 @@ def register_api_routes(app):
                 row['gate_ok'] = bool(_gp.get('ok'))
                 row['gate_side'] = _gp.get('side')
                 row['gate_why'] = _gp.get('why') or ''
+                row['adir'] = _adir_slim(_gp.get('adir'))
                 rows.append(row)
             rows.sort(key=lambda x: -max(x.get('pot_long') or 0, x.get('pot_short') or 0))
             wl = len(sc.get_watchlist() or []) if sc is not None else 0

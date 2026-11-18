@@ -332,7 +332,8 @@ def test_monitor_universe_uses_charged_not_watchlist():
     u = m.universe(1000.0)
     _check(set(u) == {'BTCUSDT', 'SOLUSDT'}, f'WATCHLIST без заряду не бере участі: {u}')
     st = m.state()['universe']
-    _check(st == {'entry': 1, 'after': 0, 'exit': 1, 'total': 2}, f'лічильники: {st}')
+    # 18.11: + 'dir' — монети лише для напрямку воріт «Через Пружину-WL» (тут ворота вимкнені)
+    _check(st == {'entry': 1, 'after': 0, 'exit': 1, 'dir': 0, 'total': 2}, f'лічильники: {st}')
 
 
 def test_clear_button_deletes_everything():

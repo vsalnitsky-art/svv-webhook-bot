@@ -2653,7 +2653,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-mms-gate-banner" onchange="updateMmGate()">
                         за банером МММ-SBR
                     </label>
-                    <label class="sm-checkbox" title="🌀 Ворота «Через Пружину-WL» (вимога 10.11): сигнал LONG проходить, лише якщо монета стоїть у вкладці 🟢 LONG таблиці 🌀 Пружина (WATCHLIST) — потенціал LONG більший за SHORT і стан не «без заряду»; SHORT — у вкладці 🔴 SHORT. Без напрямку / протилежна вкладка / монети немає в таблиці → сигнал не пропускаємо (причина — у 🧾 Лозі). Незалежні від інших воріт і від «🚦 потенціал ≥» / «🔋 заряд ≥» самої Пружини. Діє на ВСІ сигнали сканера і на 🔁 повторній перевірці Черги-4. Вимкнена Пружина → умова не діє. ✋ Ручний сигнал її не проходить. ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="🌀 Ворота «Через Пружину-WL»: монета з таблиці 🌀 Пружина (WATCHLIST), а НАПРЯМОК — за ⚠ аномаліями обсягу (вимога 18.11): у який бік ішли рухи ціни за останні 6 год (поглинання, кульмінації, зміна ініціативи, продовження — те саме читання, що в 🤖 ШІ). Аномалії за LONG → проходить лише LONG-сигнал, за SHORT → лише SHORT; рухи в обидва боки (⇄) → сигнал відхиляється. Аномалії мовчать → береться вкладка таблиці (потенціал LONG/SHORT). Поки ворота увімкнені, аномалії ведуться для ВСІХ монет WATCHLIST (у статистику дослідження вони не йдуть). Напрямок аномалій видно значком ⚠▲/⚠▼ у колонці «Напрямок». ВИМК (дефолт).">
                         <input type="checkbox" id="sm-sprw-gate" onchange="updateMmGate()">
                         🌀 Через Пружину-WL
                     </label>
@@ -2661,7 +2661,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-sprw-gate-banner" onchange="updateMmGate()">
                         за банером Пружини-WL
                     </label>
-                    <label class="sm-checkbox" title="🔭 Ворота «Через Пружину-скан» (вимога 10.11): сигнал проходить, лише якщо монета у вкладці свого боку таблиці 🔭 Пружина — скан біржі. ⚠ Монети WATCHLIST у таблицю скану НЕ потрапляють (вони вже в 🌀 Пружині), тож для них «у таблиці скану» = пройшла б її відбір: 🌀 заряджена і заряд ≥ фільтра скану (за тим самим записом бота). Інакше → сигнал не пропускаємо. Рушій скану не піднято → умова не діє. ВИМК (дефолт).">
+                    <label class="sm-checkbox" title="🔭 Ворота «Через Пружину-скан»: монета з таблиці 🔭 Пружина — скан біржі (монети WATCHLIST — за відбором скану: 🌀 заряджена і заряд ≥ фільтра), а НАПРЯМОК — за ⚠ аномаліями обсягу (вимога 18.11): у який бік ішли рухи ціни за останні 6 год. Рухи в обидва боки (⇄) → відмова; аномалії мовчать → вкладка таблиці. Напрямок аномалій — значок ⚠▲/⚠▼ у колонці «Напрямок». ВИМК (дефолт).">
                         <input type="checkbox" id="sm-sprx-gate" onchange="updateMmGate()">
                         🔭 Через Пружину-скан
                     </label>
@@ -6815,6 +6815,7 @@ function _vanomUni(u) {
     el.innerHTML = `Монети: <b style="color:#c4b5fd">🌀 заряджені ${u.entry || 0}</b>`
         + ` · <span style="color:#fbbf24">💥 після заряду ${u.after || 0}</span>`
         + ` · <span style="color:#38bdf8">💼 угоди ${u.exit || 0}</span>`
+        + (u.dir ? ` · <span style="color:#94a3b8" title="Монети WATCHLIST, по яких аномалії ведуться ЛИШЕ для напрямку воріт «Через Пружину-WL» — у статистику дослідження не йдуть">🧭 напрямок ${u.dir}</span>` : '')
         + ` <span style="color:#6b7280">(усього ${u.total || 0})</span>`;
 }
 // 🗑 Очистити дані аномалій обсягу — УСІ записи (період угорі стосується лише
@@ -18025,8 +18026,29 @@ function sprRender() {
         const h = _sprRowHTML(r, minPot, mode, '', r.gate_ok ? 'background:rgba(74,222,128,0.07);' : '')
             .replace(/<\/tr>$/, _xsOpenCell(r, 'sprOpen') + '</tr>');
         // ✅ кант і позначка — ЛІВОРУЧ від назви монети (у першій комірці)
-        return r.gate_ok ? h.replace('<td style="white-space:nowrap">', `<td style="white-space:nowrap;box-shadow:inset 3px 0 0 ${r.gate_side === 'LONG' ? '#4ade80' : '#f87171'}" title="Проходить ворота «Пружини» у бік ${r.gate_side}: потенціал і заряд ≥ порогів увімкнених воріт. Ця монета — у «Рекомендовані ботом» на інфосайті.">`) : h;
+        return r.gate_ok ? h.replace('<td style="white-space:nowrap">', `<td style="white-space:nowrap;box-shadow:inset 3px 0 0 ${r.gate_side === 'LONG' ? '#4ade80' : '#f87171'}" title="Проходить ворота «Пружини» у бік ${r.gate_side} (бік — за ⚠ аномаліями обсягу, а коли вони мовчать — за вкладкою): потенціал і заряд ≥ порогів увімкнених воріт. Ця монета — у «Рекомендовані ботом» на інфосайті.">`) : h;
     }).join('');
+}
+// 🧭 Напрямок за ⚠ АНОМАЛІЯМИ (вимога 18.11) — за ним, а не за напрямком
+// Пружини, судять ворота «Через Пружину». Значок поруч із напрямком Пружини:
+// ⚠▲/⚠▼ — бік рухів; ⇄ — рухи суперечливі (воротам напрямку немає); сіре
+// «⚠ —» — аномалії мовчать (ворота беруть вкладку). Розбіжність із Пружиною —
+// бурштинова рамка.
+function _sprAdirChip(a, springDir) {
+    if (!a) return '';
+    const tip = ('🧭 Напрямок за ⚠ аномаліями обсягу (за ним судять ворота «Через Пружину»): '
+        + (a.state === 'dir' ? a.dir : a.state === 'mixed' ? 'рухи в обидва боки — напрямку немає'
+           : a.state === 'weak' ? 'рухи слабкі → ворота беруть вкладку Пружини'
+           : 'аномалій за 6 год немає → ворота беруть вкладку Пружини')
+        + ` · сила ▲${Number(a.up || 0).toFixed(2)} / ▼${Number(a.dn || 0).toFixed(2)} · аномалій ${a.n || 0}`
+        + ((a.notes || []).length ? '\n' + a.notes.join('\n') : '')).replace(/"/g, '&quot;');
+    let txt, col;
+    if (a.state === 'dir') { txt = a.dir === 'LONG' ? '⚠▲' : '⚠▼'; col = a.dir === 'LONG' ? '#4ade80' : '#f87171'; }
+    else if (a.state === 'mixed') { txt = '⚠⇄'; col = '#fbbf24'; }
+    else { txt = '⚠—'; col = '#4b5563'; }
+    const clash = a.state === 'dir' && springDir && springDir !== a.dir;
+    return ` <span title="${tip}" style="display:inline-block;margin-left:4px;padding:0 3px;border-radius:3px;font-size:0.68rem;color:${col};`
+        + `border:1px solid ${clash ? '#fbbf24' : 'transparent'}">${txt}</span>`;
 }
 // 🌀 Рядок таблиці «Пружини» — ОДИН рендер на дві таблиці (🌀 Пружина і
 // 💰 Funding — Пружина). `extra` — додаткові комірки одразу за монетою.
@@ -18044,6 +18066,7 @@ function _sprRowHTML(r, minPot, mode, extra, trStyle) {
         : st === 'flat' ? `<span style="color:#4b5563" title="Заряду немає — напрямок не визначаємо (сирий нахил ${Number(r.bias || 0).toFixed(2)})">—</span>`
         : '<span style="color:#8b93a7">⚖</span>';
     const fired = r.fired ? ` · ${r.fired.side} ${r.fired.bars_ago === 0 ? 'щойно' : r.fired.bars_ago + ' бар тому'}` : '';
+    const adir = _sprAdirChip(r.adir, r.dir);
     const p = r.parts || {};
     const tip = `Заряд ${chg}: TTM ${Math.round((p.ttm || 0) * 100)} · ATR ${Math.round((p.atr || 0) * 100)} · коробка ${Math.round((p.box || 0) * 100)} · обʼєм ${Math.round((p.dry || 0) * 100)} · тривалість ${Math.round((p.dur || 0) * 100)}`
         + ` | напрямок ${Number(r.bias || 0).toFixed(2)}: позиція ${Number(p.pos || 0).toFixed(2)} · структура ${Number(p.struct || 0).toFixed(2)} · тренд ${Number(p.trend || 0).toFixed(2)} · моментум ${Number(p.mom || 0).toFixed(2)}`
@@ -18056,7 +18079,7 @@ function _sprRowHTML(r, minPot, mode, extra, trStyle) {
         + `<td style="white-space:nowrap;color:${col};font-weight:600" title="${_sprPhaseTip(r)}">${stLabel}<span style="color:#8b93a7;font-weight:400">${fired}</span></td>`
         + `<td style="white-space:nowrap"><span style="display:inline-block;width:28px;text-align:right;font-family:monospace;color:${col}">${chg}</span>`
         + `<span style="display:inline-block;width:56px;height:6px;margin-left:6px;border-radius:3px;background:rgba(255,255,255,0.08);overflow:hidden;vertical-align:middle"><span style="display:block;height:100%;width:${chg}%;background:${col}"></span></span></td>`
-        + `<td style="white-space:nowrap;font-family:monospace">${d}</td>`
+        + `<td style="white-space:nowrap;font-family:monospace">${d}${adir}</td>`
         + _sprTugCell(r) + _sprMoveCell(r)
         + _sprPotCell(r.pot_long, 'LONG', minPot, mode, st === 'flat')
         + _sprPotCell(r.pot_short, 'SHORT', minPot, mode, st === 'flat')

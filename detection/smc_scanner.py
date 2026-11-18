@@ -4090,6 +4090,20 @@ class SMCScanner:
         self._spring_agg_c = (now, agg)
         return agg
 
+    def _anom_dir(self, symbol: str) -> Optional[Dict]:
+        """🧭 Напрямок за ⚠ аномаліями (вимога 18.11) — кеш рушія ШІ (той самий
+        екземпляр, що веде flask_app; лише памʼять). Немає рушія → None
+        (ворота «Пружини» тоді йдуть за вкладкою)."""
+        import sys as _sys
+        m = _sys.modules.get('detection.ai_signals')
+        eng = m.get_ai_engine() if m is not None and hasattr(m, 'get_ai_engine') else None
+        if eng is None or not hasattr(eng, 'anomaly_dir'):
+            return None
+        try:
+            return eng.anomaly_dir(symbol)
+        except Exception:
+            return None
+
     def spring_pass_map(self) -> Dict[str, Dict]:
         """🌀 Монети WATCHLIST, що ПРОХОДЯТЬ ворота «Пружини» у бік своєї вкладки
         → {SYM: {'side', 'ok', 'why'}} (виділення в таблиці і «Рекомендовані»)."""
@@ -4101,8 +4115,12 @@ class SMCScanner:
         s = getattr(self, '_settings', None) or {}
         out = {}
         for S, rec in self.spring_for().items():
-            ok, side, why = sg.passes_gates(rec, s, getattr(sc, 'potential', None))
-            out[S] = {'ok': ok, 'side': side, 'why': why}
+            ad = self._anom_dir(S)
+            try:
+                ok, side, why = sg.passes_gates(rec, s, getattr(sc, 'potential', None), ad)
+            except TypeError:                 # старіший spring_gates без adir
+                ok, side, why = sg.passes_gates(rec, s, getattr(sc, 'potential', None))
+            out[S] = {'ok': ok, 'side': side, 'why': why, 'adir': ad}
         return out
 
     def _spring_book_gates(self, symbol: str, side: str):
@@ -4161,10 +4179,12 @@ class SMCScanner:
                 xs_on = False
             else:
                 wl_on = False
+        _gad = getattr(self, '_anom_dir', None)
+        ad = _gad(S) if callable(_gad) else None
         if wl_on:
             bn = sg.banner_side(self.spring_banner()) if s.get('sprw_gate_banner') else None
             out.append(sg.book_decide(sg.TAG_WL, wl_rec, bn, side,
-                                      bool(s.get('sprw_gate_banner'))))
+                                      bool(s.get('sprw_gate_banner')), adir=ad))
         if xs_on:
             # ⚠️ Той самий екземпляр, що веде flask_app (не копія модуля):
             # рушій скану не піднято → умова не діє.
@@ -4178,7 +4198,7 @@ class SMCScanner:
                 bn = (sg.banner_side(eng.banner_agg()) if s.get('sprx_gate_banner')
                       and hasattr(eng, 'banner_agg') else None)
                 out.append(sg.book_decide(sg.TAG_XS, rec, bn, side,
-                                          bool(s.get('sprx_gate_banner')), src))
+                                          bool(s.get('sprx_gate_banner')), src, adir=ad))
         return out
 
     def spring_for(self, symbols=None) -> Dict[str, Dict]:

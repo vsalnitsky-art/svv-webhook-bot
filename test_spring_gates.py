@@ -342,7 +342,7 @@ def test_rec_table_layout():
 
 def test_gate_mark_is_left_of_the_coin():
     i = HTML.index('r.gate_ok ? h.replace(')
-    seg = HTML[i:i + 600]
+    seg = HTML[i:HTML.index("}).join('')", i)]   # до кінця рендера (не фіксовані 600 символів)
     assert "h.replace('<td style=\"white-space:nowrap\">'" in seg
     assert 'spr-gate-ok' not in seg and '✅' not in seg, 'без квадрата ✅ — лише кант (вимога 10.11)'
     assert '▲' not in seg and '▼' not in seg, 'без трикутників — напрямок показує кант'

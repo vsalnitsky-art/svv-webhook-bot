@@ -202,6 +202,8 @@ def stats(rows: List[Dict]) -> List[Dict]:
     ціна пішла в бік підказки (для 🧽 / ⚡), середній рух через 4 / 8 свічок."""
     acc: Dict = {}
     for r in rows or []:
+        if is_dir_only(r):
+            continue                       # 🧭 лише для напрямку воріт — не дослідження
         key = (r.get('kind'), r.get('tf'))
         a = acc.setdefault(key, {'kind': key[0], 'tf': key[1], 'n': 0, 'done': 0,
                                  'rev': 0, 'cont': 0, 'hint_ok': 0, 'hint_n': 0,
@@ -281,7 +283,15 @@ def journey_events(rows: List[Dict], side: str = None, entry: float = None) -> L
     return out
 
 
-def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC):
+def is_dir_only(row: Dict) -> bool:
+    """Аномалія монети, яку вели ЛИШЕ заради 🧭 напрямку воріт «Пружини» (роль
+    `dir`): у статистику / калібровку дослідження вона не йде (вимога 17.11 —
+    дослідження = заряджені монети + угоди)."""
+    ctx = (row or {}).get('ctx')
+    return isinstance(ctx, dict) and ctx.get('role') == 'dir'
+
+
+def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC, extra=None):
     """🔬 Монети дослідження. ЧИСТА.
     trades  — {SYM: …} відкритих угод (вихід);
     charged — {SYM: 'wl'|'scan'} монет зі статусом «🌀 заряджена» ЗАРАЗ (вхід);
@@ -304,6 +314,10 @@ def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC):
     cnow = {str(S).upper() for S in (charged or {})}
     for S in out_seen:
         roles.setdefault(S, []).append('entry' if S in cnow else 'after')
+    # 🧭 монети, по яких потрібен лише НАПРЯМОК воріт «Пружини» (вимога 18.11):
+    # роль `dir`, якщо в дослідженні їх ще немає.
+    for S in (extra or ()):
+        roles.setdefault(str(S).upper(), ['dir'])
     syms = list(roles.keys())
     return syms, {S: '+'.join(r) for S, r in roles.items()}, out_seen
 
@@ -311,12 +325,13 @@ def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC):
 # ───────────────────────── РУШІЙ ─────────────────────────
 class VolAnomalyMonitor:
     def __init__(self, db=None, md=None, get_watchlist=None, get_trades=None,
-                 get_charged=None):
+                 get_charged=None, get_dir_syms=None):
         self.db = db
         self._md = md
         self._get_watchlist = get_watchlist
         self._get_trades = get_trades
         self._get_charged = get_charged
+        self._get_dir_syms = get_dir_syms
         self._seen: Dict = {}            # SYM → [src, коли востаннє заряджена]
         self._roles: Dict = {}           # SYM → роль у дослідженні (останній прохід)
         self._seen_saved = 0.0
@@ -365,7 +380,8 @@ class VolAnomalyMonitor:
         rl = dict(self._roles)
         uni = {'entry': sum(1 for r in rl.values() if 'entry' in r),
                'after': sum(1 for r in rl.values() if 'after' in r),
-               'exit': sum(1 for r in rl.values() if 'exit' in r), 'total': len(rl)}
+               'exit': sum(1 for r in rl.values() if 'exit' in r),
+               'dir': sum(1 for r in rl.values() if r == 'dir'), 'total': len(rl)}
         return {'settings': self.get_settings(), 'stat': dict(self._stat),
                 'tfs': list(TFS), 'an': dict(AN), 'universe': uni,
                 'after_sec': AFTER_CHARGE_SEC}
@@ -427,12 +443,31 @@ class VolAnomalyMonitor:
             pass
         return out
 
+    def _dir_syms(self) -> List[str]:
+        """🧭 Монети WATCHLIST, по яких ворота «Через Пружину-WL» судять напрямок
+        за аномаліями — лише коли ці ворота УВІМКНЕНІ (інакше зайвих запитів
+        до біржі не робимо)."""
+        if self._get_dir_syms:
+            try:
+                return list(self._get_dir_syms() or [])
+            except Exception:
+                return []
+        try:
+            from detection.smc_scanner import get_smc_scanner
+            sc = get_smc_scanner()
+            st = (sc.get_settings() or {}) if sc is not None else {}
+            if st.get('sprw_gate_enabled') and st.get('spring_enabled', True):
+                return list(self._get_watchlist() if self._get_watchlist else sc.get_watchlist() or [])
+        except Exception:
+            pass
+        return []
+
     def universe(self, now: Optional[float] = None) -> List[str]:
         """🔬 Заряджені монети обох Пружин (вхід) + ще AFTER_CHARGE_SEC після
         втрати заряду (розряд) + відкриті угоди (вихід)."""
         now = time.time() if now is None else now
         syms, roles, seen = research_universe(self._trades(), self._charged_now(),
-                                              self._seen, now)
+                                              self._seen, now, extra=self._dir_syms())
         self._seen, self._roles = seen, roles
         keys = tuple(sorted(seen))
         if self.db and (keys != self._seen_keys or now - self._seen_saved >= 600):
