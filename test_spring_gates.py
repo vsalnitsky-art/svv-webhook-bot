@@ -331,8 +331,8 @@ def test_rec_table_layout():
         assert gone not in head, gone
     assert 'SL' in head and 'ЦІЛЬ' in head
     cols = re.findall(r'<th[^>]*>([^<]*)</th>', head)
-    # 11.11: дві групи 1H / 15m — «Заряд» закриває рядок групових заголовків
-    assert 'Заряд' in cols and cols.count('SL') == 2, cols
+    # 22.11: «Заряд» прибрано (VSV SIGNALS — лише рекомендації ШІ), дві групи 1H / 15m
+    assert 'Заряд' not in cols and cols.count('SL') == 2, cols
     # 11.11: 🎯 TP спільний для обох груп — одна колонка перед групами
     assert cols.count('ЦІЛЬ') == 1 and cols.index('ЦІЛЬ') < cols.index('SL'), cols
     assert 'rec-foot' not in IDX

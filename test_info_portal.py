@@ -973,7 +973,7 @@ def test_rec_two_groups_and_single_timer():
     blk = html[html.index('id="spb-card"'):html.index('id="rec-card"')]
     assert blk.count('class="spb-tm"') == 1 and blk.index('spb-title') < blk.index('spb-tm')
     tb = html[html.index('id="rec-tbl"'):]
-    assert '1H · OB 1H' in tb and '15m · OB 15m' in tb and 'colspan="9"' in tb
+    assert '1H · OB 1H' in tb and '15m · OB 15m' in tb and 'colspan="8"' in tb
     head = tb[:tb.index('</thead>')]
     assert head.count('tpc') == 1 and 'ЦІЛЬ' in head, 'ціль спільна — одна колонка'
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()

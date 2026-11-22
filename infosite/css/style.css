@@ -485,3 +485,16 @@ body{font-size:15px}
 .rec-ai.on{opacity:1;padding:1px 5px 1px 2px;border:1px solid rgba(245,180,60,.55);border-radius:5px;background:rgba(245,180,60,.10)}
 .rec-ai.on b{font-size:9px;letter-spacing:.5px;color:#f5b43c}
 .rec-row.ai-pick td:first-child{box-shadow:inset 3px 0 0 #f5b43c}
+
+/* 22.11: VSV SIGNALS — у ширину екрана, «ВХІД» у сталому слоті */
+#rec-tbl{table-layout:fixed;width:100%}
+#rec-tbl td,#rec-tbl th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rec-wrap{overflow-x:hidden}
+.rec-symw{display:flex;align-items:center;gap:4px;min-width:0}
+.rec-sym{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.rec-ai-slot{flex:0 0 66px;display:inline-flex;justify-content:flex-end}
+.rec-ai-slot .rec-ai{margin-right:0}
+.rec-ic .exchange-logo{width:14px;height:14px;vertical-align:middle}
+#rec-tbl .rec-path{display:flex;align-items:center;gap:5px;min-width:0}
+#rec-tbl .rec-path .bar{flex:1 1 auto;width:auto;min-width:24px;max-width:110px}
+#rec-tbl .rec-prob{width:clamp(20px,3.5vw,50px)}

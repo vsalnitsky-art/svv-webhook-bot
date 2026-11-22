@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=227">
+  <link rel="stylesheet" href="css/style.css?v=228">
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true">
@@ -192,13 +192,14 @@
 
     <section class="card rec-card" id="rec-card" style="display:none">
       <div class="pp-head">
-        <span class="rec-badge">VSV SIGNALS</span><span class="pp-title">Рекомендовані ботом</span>
+        <span class="rec-badge">VSV SIGNALS</span>
         <div class="pp-period" id="rec-tabs"><button type="button" data-d="all">Всі (0)</button><button type="button" data-d="LONG">LONG (0)</button><button type="button" data-d="SHORT">SHORT (0)</button></div>
         <span class="pp-note muted" id="rec-note"></span>
       </div>
       <div class="pp-wrap rec-wrap"><table class="pp-tbl" id="rec-tbl">
-        <thead><tr class="rec-gh"><th rowspan="2">Монета</th><th rowspan="2">Напрямок</th><th rowspan="2" class="r">СИЛА СИГНАЛУ</th><th rowspan="2" class="r tpc">ЦІЛЬ</th><th colspan="2" class="c g1 gs">1H · OB 1H</th><th colspan="2" class="c g15 gs">15m · OB 15m→5m</th><th rowspan="2" class="r">Заряд</th></tr><tr class="rec-sh"><th class="r g1 gs">SL</th><th class="c g1">Хід</th><th class="r g15 gs">SL</th><th class="c g15">Хід</th></tr></thead>
-        <tbody><tr><td colspan="9" class="muted">Завантаження…</td></tr></tbody>
+        <colgroup><col style="width:19%"><col style="width:9%"><col style="width:12%"><col style="width:14%"><col style="width:12%"><col style="width:11%"><col style="width:12%"><col style="width:11%"></colgroup>
+        <thead><tr class="rec-gh"><th rowspan="2">Монета</th><th rowspan="2">Напрямок</th><th rowspan="2" class="r">СИЛА СИГНАЛУ</th><th rowspan="2" class="r tpc">ЦІЛЬ</th><th colspan="2" class="c g1 gs">1H · OB 1H</th><th colspan="2" class="c g15 gs">15m · OB 15m→5m</th></tr><tr class="rec-sh"><th class="r g1 gs">SL</th><th class="c g1">Хід</th><th class="r g15 gs">SL</th><th class="c g15">Хід</th></tr></thead>
+        <tbody><tr><td colspan="8" class="muted">Завантаження…</td></tr></tbody>
       </table></div>
     </section>
 
@@ -236,7 +237,7 @@
   <script src="js/vendor/lightweight-charts.js"></script>
   <script src="js/config.js?v=76"></script>
   <script src="js/demo.js?v=4"></script>
-  <script src="js/app.js?v=238"></script>
+  <script src="js/app.js?v=239"></script>
   <script src="js/chart-pro.js?v=213"></script>
   <script src="js/chart-tools.js?v=212"></script>
   <script src="js/ui.js?v=201"></script>

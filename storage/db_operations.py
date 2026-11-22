@@ -950,10 +950,15 @@ class DBOperations:
         d = 86400
         ep_all = now - int(episode_days) * d
         # Без сигналу — лише ті, що НЕ підпадуть під загальне правило (без подвійного рахунку)
-        _run('episodes', lambda se: se.query(AiEpisode).filter(
-            AiEpisode.ended_at < now - int(episode_nosignal_days) * d,
-            AiEpisode.ended_at >= ep_all, AiEpisode.signal_side.is_(None)))
-        _run('episodes', lambda se: se.query(AiEpisode).filter(AiEpisode.ended_at < ep_all))
+        def _nosig(se):
+            q = se.query(AiEpisode).filter(
+                AiEpisode.ended_at < now - int(episode_nosignal_days) * d,
+                AiEpisode.signal_side.is_(None))
+            # нижня межа — лише коли загальне правило за датою діє (0 = вимкнено)
+            return q.filter(AiEpisode.ended_at >= ep_all) if int(episode_days) > 0 else q
+        _run('episodes', _nosig)
+        if int(episode_days) > 0:        # 0 = вимкнено (епізоди із сигналом чистить якість)
+            _run('episodes', lambda se: se.query(AiEpisode).filter(AiEpisode.ended_at < ep_all))
         done_cut = now - int(anom_done_days) * d
         for role in ('dir', 'sub'):
             _run('anomalies', lambda se, r=role: se.query(VolAnomaly).filter(
@@ -964,9 +969,56 @@ class DBOperations:
         _run('research', lambda se: se.query(TradeResearch).filter(
             TradeResearch.closed_at < now - int(research_other_days) * d,
             ~TradeResearch.opened_by.like('ai%')))
-        _run('research', lambda se: se.query(TradeResearch).filter(
-            TradeResearch.closed_at < now - int(research_ai_days) * d,
-            TradeResearch.opened_by.like('ai%')))
+        if int(research_ai_days) > 0:    # 0 = вимкнено (угоди ШІ чистить якість)
+            _run('research', lambda se: se.query(TradeResearch).filter(
+                TradeResearch.closed_at < now - int(research_ai_days) * d,
+                TradeResearch.opened_by.like('ai%')))
+        return out
+
+    def ai_learning_brief(self, limit: int = 20000) -> Dict:
+        """Стислий перелік РЕЗУЛЬТАТІВ навчання ШІ для відбору найгірших (22.11):
+        дослідження угод ШІ і епізоди із сигналом — лише числа, без JSON."""
+        out = {'research': [], 'episodes': []}
+        session = get_session()
+        try:
+            for r in (session.query(TradeResearch.id, TradeResearch.symbol, TradeResearch.closed_at,
+                                    TradeResearch.pnl_pct, TradeResearch.peak_pnl_pct,
+                                    TradeResearch.mae_pnl_pct)
+                      .filter(TradeResearch.opened_by.like('ai%'))
+                      .order_by(TradeResearch.closed_at.desc()).limit(int(limit))):
+                out['research'].append({'id': r[0], 'sym': r[1], 't': r[2], 'pnl': r[3],
+                                        'peak': r[4], 'mae': r[5]})
+            for r in (session.query(AiEpisode.id, AiEpisode.symbol, AiEpisode.ended_at,
+                                    AiEpisode.signal_side, AiEpisode.sig_best_pct,
+                                    AiEpisode.sig_worst_pct, AiEpisode.sig_end_pct)
+                      .filter(AiEpisode.signal_side.isnot(None))
+                      .order_by(AiEpisode.ended_at.desc()).limit(int(limit))):
+                out['episodes'].append({'id': r[0], 'sym': r[1], 't': r[2], 'side': r[3],
+                                        'best': r[4], 'worst': r[5], 'end': r[6]})
+        except Exception as e:
+            print(f"[DB] ai_learning_brief: {e}")
+        finally:
+            session.close()
+        return out
+
+    def delete_learning_ids(self, research_ids=(), episode_ids=()) -> Dict:
+        """Видалити позначені записи навчання за id (кожна таблиця — своя транзакція)."""
+        out = {'research': 0, 'episodes': 0}
+        for key, model, ids in (('research', TradeResearch, list(research_ids or ())),
+                                ('episodes', AiEpisode, list(episode_ids or ()))):
+            if not ids:
+                continue
+            session = get_session()
+            try:
+                for i in range(0, len(ids), 500):
+                    out[key] += int(session.query(model).filter(model.id.in_(ids[i:i + 500]))
+                                    .delete(synchronize_session=False) or 0)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                print(f"[DB] delete_learning_ids {key}: {e}")
+            finally:
+                session.close()
         return out
 
     # === READINESS STRATEGY LOG (Готовність) ===

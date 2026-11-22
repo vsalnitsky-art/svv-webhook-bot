@@ -184,15 +184,17 @@ def test_cleanup_on_sqlite():
     se.commit(); se.close()
     db = DBOperations.__new__(DBOperations)
     dry = DBOperations.cleanup_ai_learning(db, NOW, dry=True, **A.CLEANUP_RULES)
-    _check(dry == {'episodes': 2, 'anomalies': 2, 'research': 2}, f'позначено: {dry}')
+    # 22.11: дата — лише для сміття (без сигналу / 🧭 dir / не-ШІ угоди / відпрацьовані
+    # аномалії); сигнальні епізоди і дослідження угод ШІ чистяться за ЯКІСТЮ, не за датою.
+    _check(dry == {'episodes': 1, 'anomalies': 2, 'research': 1}, f'позначено: {dry}')
     se = get_session()
     _check(se.query(AiEpisode).count() == 3, 'dry нічого не видаляє'); se.close()
     res = DBOperations.cleanup_ai_learning(db, NOW, **A.CLEANUP_RULES)
     _check(res == dry, f'видалено те, що позначено: {res}')
     se = get_session()
-    _check({x.symbol for x in se.query(AiEpisode)} == {'B'}
+    _check({x.symbol for x in se.query(AiEpisode)} == {'B', 'C'}
            and {x.symbol for x in se.query(VolAnomaly)} == {'B'}
-           and {x.symbol for x in se.query(TradeResearch)} == {'B'}, 'лишилось потрібне')
+           and {x.symbol for x in se.query(TradeResearch)} == {'B', 'C'}, 'лишилось потрібне')
     se.close()
 
 
@@ -229,6 +231,99 @@ def test_brand_icon_everywhere():
     _check('def rec_ai_merge' in _IP, 'вибір ШІ для «Рекомендовані ботом»')
     _check("'🤖 <b>VSV·AI</b>'" in open(os.path.join(_ROOT, 'detection', 'ai_signals.py'), encoding='utf-8').read(),
            'TG ⚠ аномалій теж марковано')
+
+
+
+# ── 22.11 (друга правка): очистка за ЯКІСТЮ, головний тумблер, VSV SIGNALS ──
+def test_etalon_prune_drops_worst_not_oldest():
+    old_good = {'sym': 'OLD', 'side': 'LONG', 'r': 3.0, 'capture': 0.8, 'feat': _feat(0.2), 't': NOW - 300 * 86400}
+    new_bad = {'sym': 'NEW', 'side': 'LONG', 'r': 1.5, 'capture': 0.1, 'feat': _feat(0.9), 't': NOW}
+    plan = A.etalon_prune_plan([old_good, new_bad], 'good', keep=1)
+    _check([i for i, _ in plan] == [1], f'старий, але відмінний лишається; свіжий слабкий — геть: {plan}')
+    twin = dict(old_good, sym='TWIN', r=2.0, t=NOW)
+    plan = A.etalon_prune_plan([old_good, twin], 'good', keep=10)
+    _check([i for i, _ in plan] == [1] and 'дубль' in plan[0][1], f'дубль гіршого входу: {plan}')
+    _check(A.etalon_quality({'r': -2.0}, 'anti') > A.etalon_quality({'r': -0.6}, 'anti'),
+           'антибаза: глибший збиток — цінніший урок')
+
+
+def test_learning_prune_keeps_informative_and_protected():
+    rows = [{'id': 1, 'sym': 'A', 't': NOW, 'pnl': 0.05, 'peak': 0.1, 'mae': 0.05},
+            {'id': 2, 'sym': 'B', 't': NOW - 90 * 86400, 'pnl': 4.0, 'peak': 6.0, 'mae': 1.0},
+            {'id': 3, 'sym': 'C', 't': NOW - 1, 'pnl': 0.0, 'peak': 0.0, 'mae': 0.0}]
+    _check(A.learning_prune_plan(rows, 'research', keep=1) == [1, 3], 'нудні геть, показовий лишається')
+    _check(sorted(A.learning_prune_plan(rows, 'research', keep=1, protected={('C', int(NOW - 1))})) == [1, 2],
+           'запис еталона захищено')
+    _check(A.learning_prune_plan(rows, 'research', keep=5) == [], 'у межах ліміту — нічого')
+
+
+def test_heartbeat_tells_what_ai_is_doing():
+    view = {'XUSDT': {'symbol': 'XUSDT', 'src': 'wl', 'ready': True, 'best': 'LONG',
+                      'pick': {'side': 'LONG', 'scenario': {'key': 'E2', 'ready': True}}},
+            'YUSDT': {'symbol': 'YUSDT', 'src': 'scan', 'ready': False, 'best': 'SHORT',
+                      'pick': {'side': 'SHORT', 'scenario': {'key': 'E2', 'done': 2, 'total': 3}}}}
+    txt, key = A.ai_heartbeat_text(view, {'enabled': True}, {}, 0, 0)
+    _check('перебрано 2' in txt and 'X ▲ E2' in txt and 'Y ▼ E2 2/3' in txt, txt)
+    _check(key == ('X ▲ E2',), f'ключ змін — набір готових точок: {key}')
+    _check('ai_scan' in _HTML and "SOLO_EVENTS = new Set(['ob_new', 'ai_scan'])" in _HTML,
+           'огляд ШІ — окремим рядком у 🧾 Лозі')
+    _check("_SOLO = {'ob_new', 'ai_scan'}" in open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read(),
+           'експорт логу розуміє те саме')
+
+
+def test_readiness_names_the_blocker():
+    s = dict(A.AI_DEFAULTS, enabled=True, book='auto')
+    r = A.ai_readiness(s, spring_on=False, tm_on=True, test_mode=True)
+    _check(r['state'] == 'blocked' and 'Пружина' in r['text'], r)
+    r = A.ai_readiness(s, True, False, False)
+    _check(r['state'] == 'blocked' and 'Test Mode' in r['text'], r)
+    _check(A.ai_readiness(dict(s, book='paper'), True, True, False)['state'] == 'blocked', 'paper без Test Mode')
+    _check(A.ai_readiness(s, True, False, True, coins=7)['state'] == 'watching', 'auto → paper')
+    _check(A.ai_readiness(s, True, True, True, coins=7, ready=2)['state'] == 'ready', 'є точки')
+    _check(A.ai_readiness(dict(s, max_open=2), True, True, True, open_n=2)['state'] == 'full', 'ліміт')
+    _check(A.ai_readiness(dict(s, enabled=False), True, True, True)['state'] == 'off', 'вимкнено')
+
+
+def test_master_toggle_on_the_main_bar():
+    _check('id="ai-master-box"' in _HTML and 'id="ai-master-on"' in _HTML, 'тумблер у рядку Trade Direction')
+    _check(_HTML.index('id="ai-master-box"') < _HTML.index('id="sbr-alarm-box"'), 'поруч із будильником')
+    _check("function aiMasterToggle(el)" in _HTML and "ck.checked = !!el.checked; aipSave()" in _HTML,
+           'той самий шлях збереження, що й панель')
+    _check("aiMasterRender(a, d.readiness)" in _HTML and "/api/ai/state?light=1" in _HTML, 'стан і перешкоди')
+    fa = open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
+    _check("request.args.get('light')" in fa and "'readiness': eng.readiness()" in fa, 'легкий стан без БД')
+
+
+def test_vsv_signals_only_ai_with_exchange():
+    import ast
+    tree = ast.parse(_IP)
+    fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'rec_ai_only')
+    ns = {}
+    exec(compile(ast.Module([fn], []), 'rec_ai_only', 'exec'), ns)
+    rows = [{'symbol': 'A', 'side': 'LONG', 'src': 'wl', 'ai': {'ready': True}},
+            {'symbol': 'B', 'side': 'SHORT', 'src': 'scan', 'ai': {'ready': True}},
+            {'symbol': 'C', 'side': 'LONG', 'src': 'wl', 'ai': {'ready': False}},
+            {'symbol': 'D', 'side': 'LONG', 'src': 'wl'},
+            {'symbol': 'E', 'side': 'SHORT', 'src': 'ai', 'ai': {'ready': True, 'src': 'scan'}}]
+    out = ns['rec_ai_only'](rows, 'binance')
+    _check([(r['symbol'], r['ex']) for r in out] == [('A', 'bybit'), ('B', 'binance'), ('E', 'binance')], out)
+    idx = open(os.path.join(_ROOT, 'infosite', 'index.html'), encoding='utf-8').read()
+    _check('VSV SIGNALS' in idx and 'Рекомендовані ботом</span>' not in idx, 'у шапці лише VSV SIGNALS')
+    head = idx[idx.index('id="rec-tbl"'):idx.index('</table>', idx.index('id="rec-tbl"'))]
+    _check('Заряд' not in head and 'colspan="8"' in head, 'без колонки «Заряд»')
+    rr = _JS[_JS.index('function recRow(r)'):_JS.index('function recRender()')]
+    _check('SPB_ICON[ex]' in rr and 'chCell' not in rr and 'rec-ai-slot' in rr, 'біржа замість ШІ🌀, слот «ВХІД»')
+    css = open(os.path.join(_ROOT, 'infosite', 'css', 'style.css'), encoding='utf-8').read().replace(' ', '')
+    _check('#rec-tbl{table-layout:fixed;width:100%}' in css and '.rec-ai-slot{flex:0066px' in css, 'у ширину екрана')
+
+
+def test_scenario_view_carries_signal_price_and_time():
+    S = _load('detection.anomaly_scenarios', 'detection/anomaly_scenarios.py')
+    src = open(os.path.join(_ROOT, 'detection', 'anomaly_scenarios.py'), encoding='utf-8').read()
+    _check("'last_px'" in src and "'px': _f((it or {}).get('price'))" in src, 'ціна реакції на етапі')
+    _check('sc.last_px' in _HTML and 'function _aiEventT(c)' in _HTML and 'table-layout:fixed' in _HTML,
+           'таблиця ШІ: ціна і час сигналу, два рядки, сортування за появою')
+    _check(hasattr(S, 'view'), 'view')
 
 
 if __name__ == '__main__':

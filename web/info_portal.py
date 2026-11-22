@@ -2056,6 +2056,24 @@ def rec_ai_merge(rows, ai_map, ai_recs=None):
     return rows
 
 
+def rec_ai_only(rows, scan_ex=None):
+    """ЧИСТА (вимога 22.11): «VSV SIGNALS» = ЛИШЕ угоди, рекомендовані ШІ —
+    готова точка входу (`ai.ready`). Кожен рядок отримує біржу джерела `ex`:
+    🌀 WATCHLIST → bybit (бари бота), 🔭 скан → біржа скану."""
+    sx = str(scan_ex or 'binance').lower()
+    out = []
+    for r in rows or []:
+        a = r.get('ai') or {}
+        if not a.get('ready') or r.get('side') not in ('LONG', 'SHORT'):
+            continue
+        src = r.get('src')
+        if src == 'ai':
+            src = 'scan' if a.get('src') == 'scan' else 'wl'
+        r['ex'] = 'bybit' if src == 'wl' else sx
+        out.append(r)
+    return out
+
+
 def rec_prob(row):
     """ЧИСТА: ймовірність у бік рядка (%), None — немає даних. Сортування
     таблиці «Рекомендовані ботом» — за нею (вимога 10.11)."""
@@ -2285,8 +2303,11 @@ def recommended_payload(now=None):
                 ai_recs = {}
             rows = rec_ai_merge(rows, amap, ai_recs)
             ai_n = sum(1 for r in rows if (r.get('ai') or {}).get('ready'))
+        else:
+            rows = []
     except Exception:
-        pass
+        rows = []
+    rows = rec_ai_only(rows, scan_meta.get('exchange'))
     ffs = {}
     try:
         from detection.fuel_filter import get_fuel_filter

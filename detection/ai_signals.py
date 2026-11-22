@@ -68,21 +68,30 @@ ETALON_FALLBACK_PNL = 1.5      # «відмінна» без стопа план
 FEAT_KEYS = ('charge', 'pot', 'prob', 'lean', 'break', 'impulse', 'flow', 'conf', 'rr')
 CLEANUP_EVERY_SEC = 6 * 3600
 CLEANUP_MARK_SEC = 3600        # 🏷 позначення «на видалення» — раз на годину (лише підрахунок)
-CLEANUP_RULES = {'episode_nosignal_days': 7, 'episode_days': 45,
+CLEANUP_RULES = {'episode_nosignal_days': 7, 'episode_days': 0,
                  'anom_aux_days': 2, 'research_other_days': 30,
-                 'research_ai_days': 60, 'anom_done_days': 60}
+                 'research_ai_days': 0, 'anom_done_days': 60}
+# 🏆🧠 РЕЗУЛЬТАТИ навчання (еталони, антибаза, дослідження угод ШІ, епізоди із
+# сигналом) чистяться НЕ за датою, а за ЯКІСТЮ (вимога 22.11): мозок спершу
+# оцінює всі записи, позначає найгірші й дублі кращих і видаляє лише їх, коли
+# база переповнена. Службові дані (без результату) — за датою, як і раніше.
+ETALON_KEEP = 240              # м'яка стеля бази: вище — позначаємо найслабші
+ETALON_DUP_DIST = 0.04         # майже той самий вхід — лишається кращий із двох
+RESEARCH_AI_KEEP = 600         # дослідження угод ШІ: тримаємо найінформативніші
+EPISODE_SIG_KEEP = 2000        # епізоди із сигналом ШІ: тримаємо найінформативніші
 CLEANUP_RULES_UA = [
-    'епізоди заряду без сигналу ШІ — старші за 7 днів',
-    'усі епізоди — старші за 45 днів (навчання їх уже спожило)',
+    'епізоди заряду без сигналу ШІ — старші за 7 днів (результату в них немає)',
     'допоміжні аномалії (🧭 напрямок / 👤 підписки) — старші за 2 дні',
-    'аномалії з повним наслідком — старші за 60 днів',
+    'аномалії з повним наслідком — старші за 60 днів (калібровка бере 30)',
     'дослідження угод НЕ ШІ — старші за 30 днів',
-    'дослідження угод ШІ — старші за 60 днів (стислий запис уже в базі еталонів)',
-    'еталони й антибаза — старші за 180 днів (ринок змінився)',
+    '🏆 еталони: дубль кращого входу і найслабші, коли базу переповнено (> %d)' % ETALON_KEEP,
+    '❌ антибаза: дубль глибшого уроку і найменш збиткові, коли базу переповнено (> %d)' % ETALON_KEEP,
+    '🔬 дослідження угод ШІ: найменш показові, коли їх > %d (угоди з еталонів захищені)' % RESEARCH_AI_KEEP,
+    '📈 епізоди із сигналом: найменш показові, коли їх > %d' % EPISODE_SIG_KEEP,
 ]
-ETALON_MAX_AGE_DAYS = 180
 OPEN_WINDOW_SEC = 1800
 BLOCK_LOG_GAP = 900            # однакова відмова ШІ в лог — не частіше раз на 15 хв
+HEARTBEAT_SEC = 900            # 🤖 «огляд» ШІ в 🧾 Лог — раз на 15 хв або на зміну точок входу
 
 
 def ai_settings_norm(raw: Optional[Dict]) -> Dict:
@@ -457,6 +466,168 @@ def etalon_plan(plan: Optional[Dict], side: str, eb: Optional[Dict]) -> Optional
     out.update({'target': round(new_t, 10), 'reward_pct': round(rw, 3), 'target_src': 'etalon',
                 'target_prev': tgt, 'net_rr': round(float(eb['tp_r']), 2)})
     return out
+
+
+def etalon_quality(e: Dict, kind: str = 'good') -> float:
+    """Якість запису бази. Еталон: результат у R (без плану — % / 1.5) + половина
+    взятої частки піку. Антибаза: що глибший збиток, то цінніший урок. ЧИСТА."""
+    r = (e or {}).get('r')
+    pnl = (e or {}).get('pnl')
+    if isinstance(r, (int, float)):
+        base = float(r)
+    elif isinstance(pnl, (int, float)):
+        base = float(pnl) / ETALON_FALLBACK_PNL
+    else:
+        base = 0.0
+    if kind == 'good':
+        cap = (e or {}).get('capture')
+        return round(base + 0.5 * (float(cap) if isinstance(cap, (int, float)) else 0.0), 4)
+    return round(-base, 4)
+
+
+def etalon_prune_plan(base: List[Dict], kind: str = 'good', keep: int = ETALON_KEEP,
+                      dup: float = ETALON_DUP_DIST) -> List[tuple]:
+    """🏷 Що позначити на видалення в базі: (index, причина). Спершу оцінка ВСІХ
+    записів, потім (1) дубль кращого — майже той самий вхід того самого боку,
+    лишається якісніший; (2) база понад `keep` — найслабші. Дата не важить. ЧИСТА."""
+    rows = list(base or [])
+    q = [etalon_quality(e, kind) for e in rows]
+    order = sorted(range(len(rows)), key=lambda i: (-q[i], -float(rows[i].get('t') or 0)))
+    kept, out = [], []
+    for i in order:
+        e = rows[i]
+        twin = None
+        for j in kept:
+            if rows[j].get('side') != e.get('side'):
+                continue
+            d = feat_distance(e.get('feat') or {}, rows[j].get('feat') or {})
+            if d is not None and d < dup:
+                twin = j
+                break
+        if twin is not None:
+            out.append((i, f"дубль кращого входу {rows[twin].get('sym') or ''} "
+                           f"(якість {q[twin]} > {q[i]})"))
+        else:
+            kept.append(i)
+    if len(kept) > keep:
+        for i in kept[keep:]:
+            out.append((i, f'найслабший у переповненій базі (якість {q[i]})'))
+    return sorted(out)
+
+
+def learning_info(row: Dict, kind: str) -> float:
+    """Показовість результату для навчання: що сильніший рух (у будь-який бік) і
+    що більший розрив пік ↔ підсумок, то більше вчить. ЧИСТА."""
+    def _a(v):
+        return abs(float(v)) if isinstance(v, (int, float)) else 0.0
+    if kind == 'research':
+        pnl, peak = row.get('pnl'), row.get('peak')
+        give = max(0.0, float(peak) - float(pnl)) if isinstance(peak, (int, float)) and isinstance(pnl, (int, float)) else 0.0
+        return round(_a(pnl) + 0.5 * give + 0.5 * _a(row.get('mae')), 4)
+    return round(max(_a(row.get('best')), _a(row.get('worst'))) + _a(row.get('end')), 4)
+
+
+def learning_prune_plan(rows: List[Dict], kind: str, keep: int, protected=()) -> List[int]:
+    """id найменш показових записів понад `keep` (захищені — ніколи). ЧИСТА."""
+    prot = set(protected or ())
+    free = [r for r in (rows or []) if (r.get('sym'), int(float(r.get('t') or 0))) not in prot]
+    room = max(0, int(keep) - (len(rows or []) - len(free)))
+    if len(free) <= room:
+        return []
+    free.sort(key=lambda r: (-learning_info(r, kind), -float(r.get('t') or 0)))
+    return [r['id'] for r in free[room:] if r.get('id') is not None]
+
+
+def ai_readiness(s: Dict, spring_on: bool, tm_on: bool, test_mode: bool,
+                 coins: int = 0, ready: int = 0, open_n: int = 0) -> Dict:
+    """🤖 ГОЛОВНИЙ ТУМБЛЕР ШІ (22.11): чи може ШІ ЗАРАЗ відкривати угоди і що
+    саме заважає. ЧИСТА функція. → {state, blockers[], book_ua, text}.
+    state: off (тумблер вимкнено) · blocked (є перешкода) · watching (працює,
+    точок входу немає) · ready (є готова точка) · full (ліміт угод ШІ)."""
+    s = s or {}
+    bl = []
+    if not spring_on:
+        bl.append('🌀 Пружина вимкнена — немає заряджених монет')
+    book = str(s.get('book') or 'auto')
+    if book == 'real' and not tm_on:
+        bl.append('книга «реальна», а Trade Manager вимкнено')
+    if book == 'paper' and not test_mode:
+        bl.append('книга «paper», а Test Mode вимкнено')
+    if book == 'auto' and not tm_on and not test_mode:
+        bl.append('Trade Manager і Test Mode вимкнені — книги немає')
+    if not (s.get('allow_long', True) or s.get('allow_short', True)):
+        bl.append('обидва напрямки ШІ вимкнені')
+    if not (s.get('scenarios') or []):
+        bl.append('не обрано жодного сценарію')
+    book_ua = {'real': '🏦 реальна', 'paper': '🧪 paper'}.get(
+        book, '📒 авто (' + ('реальна/paper' if tm_on else ('paper' if test_mode else '—')) + ')')
+    mx = int(s.get('max_open') or 0)
+    if not s.get('enabled'):
+        st = 'off'
+    elif bl:
+        st = 'blocked'
+    elif mx and open_n >= mx:
+        st = 'full'
+    elif ready:
+        st = 'ready'
+    else:
+        st = 'watching'
+    txt = {'off': 'вимкнено — угод ШІ не буде',
+           'blocked': 'не може відкривати: ' + '; '.join(bl),
+           'full': f'ліміт угод ШІ ({open_n}/{mx})',
+           'ready': f'готових точок входу: {ready}',
+           'watching': f'перебирає {coins} заряджених — точки входу ще немає'}[st]
+    return {'state': st, 'blockers': bl, 'book_ua': book_ua, 'text': txt,
+            'coins': int(coins or 0), 'ready': int(ready or 0), 'open_n': int(open_n or 0),
+            'max_open': mx}
+
+
+def ai_heartbeat_text(view: Dict, s: Dict, etalon: Dict, open_n: int = 0,
+                      opens_30m: int = 0) -> tuple:
+    """🤖 Рядок «огляду» ШІ для 🧾 Логу (вимога 22.11: «по логу не зрозуміло, чи
+    взагалі відбувається перебір варіантів»): скільки монет перебрано, точки
+    входу, що формується, хто відсіяв, стан мозку еталонів. → (текст, ключ
+    змін — набір готових точок). ЧИСТА."""
+    rows = list((view or {}).values())
+    n_wl = sum(1 for r in rows if r.get('src') != 'scan')
+    ready, forming, brain_no, et_no = [], [], 0, 0
+    for r in rows:
+        p = r.get('pick') or {}
+        sc = p.get('scenario') or {}
+        side = r.get('best') or p.get('side')
+        arrow = '▲' if side == 'LONG' else '▼'
+        name = str(r.get('symbol') or '').replace('USDT', '')
+        if r.get('ready'):
+            ready.append(f"{name} {arrow} {sc.get('key') or ''}".strip())
+            continue
+        if sc.get('ready') and not (r.get('brain') or {}).get('ok', True):
+            brain_no += 1
+        eb = r.get('etalon') or {}
+        if sc.get('ready') and eb.get('mature') and eb.get('verdict') == 'skip':
+            et_no += 1
+        if sc.get('done') and not sc.get('broken') and not sc.get('stale'):
+            forming.append((sc.get('done', 0) / max(1, sc.get('total') or 1),
+                            f"{name} {arrow} {sc.get('key') or ''} {sc.get('done')}/{sc.get('total')}"))
+    forming.sort(key=lambda x: -x[0])
+    parts = [f"перебрано {len(rows)} монет (🌀 {n_wl} · 🔭 {len(rows) - n_wl})"]
+    parts.append(('✅ точки входу: ' + ', '.join(ready[:6])) if ready else '✅ точок входу немає')
+    if forming:
+        parts.append('⏳ формується: ' + ', '.join(t for _, t in forming[:5])
+                     + (f' (+{len(forming) - 5})' if len(forming) > 5 else ''))
+    if brain_no:
+        parts.append(f'🧠 мозок графіка відсіяв {brain_no}')
+    if et_no:
+        parts.append(f'🏆🧠 мозок еталонів відсіяв {et_no}')
+    et = etalon or {}
+    parts.append('🏆🧠 мозок еталонів ' + ('вирішує' if et.get('mature') else
+                 f"вчиться 🏆 {et.get('n', 0)}/{et.get('need_good', ETALON_MATURE_GOOD)} · "
+                 f"❌ {et.get('anti_n', 0)}/{et.get('need_anti', ETALON_MATURE_ANTI)}"))
+    scen = ', '.join((s or {}).get('scenarios') or ['E2'])
+    if (s or {}).get('enabled'):
+        parts.append(f'угоди ШІ: відкрито {open_n} (за 30 хв {opens_30m}) · сценарії {scen}')
+    else:
+        parts.append('⏸ ШІ ВИМКНЕНО — лише нагляд, угоди не відкриває')
+    return '🤖 ШІ · огляд: ' + ' · '.join(parts), tuple(sorted(ready))
 
 
 def ai_rank(view: Dict, sim: Optional[float]) -> float:
@@ -1434,6 +1605,8 @@ class AiEngine:
         self._ai_block: Dict[str, list] = {}      # 'S|side' → [причина, час] (анти-флуд логу)
         self._cleanup_at = 0.0
         self._cleanup_mark: Dict = {}
+        self._hb_at = 0.0
+        self._hb_key: tuple = ()
         self._cleanup_stat: Dict = {}
         self._load()
         self._load_etalon()
@@ -1788,6 +1961,10 @@ class AiEngine:
         except Exception:
             subs = []
         if not spring_on and not subs:
+            if s.get('enabled') and now - self._hb_at >= HEARTBEAT_SEC:
+                self._hb_at = now
+                self._ai_log('', 'ai_scan', '🤖 ШІ · огляд: 🌀 Пружина вимкнена — '
+                             'немає заряджених монет для перебору, угод ШІ не буде')
             return 0
         self._refresh_cal(now)
         min_charge = float(s.get('min_charge') or 65)
@@ -1889,6 +2066,10 @@ class AiEngine:
         with self._lock:
             self._view = view
         try:
+            self._heartbeat(view, s, now)
+        except Exception as e:
+            self._stat['last_err'] = f'огляд: {e}'[:200]
+        try:
             self._cleanup(now)
         except Exception as e:
             self._stat['last_err'] = f'🧹 очистка: {e}'[:200]
@@ -1897,6 +2078,21 @@ class AiEngine:
         if self._dirty:
             self._persist()
         return len(view)
+
+    def _heartbeat(self, view: Dict, s: Dict, now: float) -> None:
+        """🤖 Огляд перебору в 🧾 Лог: раз на HEARTBEAT_SEC або щойно змінився
+        набір точок входу (щоб лог показував, що ШІ працює, але не флудив)."""
+        tm = self._tm_get()
+        try:
+            open_n = len(tm.ai_open_positions()) if tm and hasattr(tm, 'ai_open_positions') else 0
+        except Exception:
+            open_n = 0
+        opens = len([t for t in self._ai_opens if now - t < OPEN_WINDOW_SEC])
+        text, key = ai_heartbeat_text(view, s, self.etalon_state(), open_n, opens)
+        if key == self._hb_key and now - self._hb_at < HEARTBEAT_SEC:
+            return
+        self._hb_key, self._hb_at = key, now
+        self._ai_log('', 'ai_scan', text, coins=len(view), ready=list(key))
 
     def _ai_log(self, S, event, text, side=None, **extra):
         try:
@@ -2045,14 +2241,22 @@ class AiEngine:
             k2 = (rec['sym'], rec['t'])
             if any((e.get('sym'), e.get('t')) == k2 for e in cur):
                 return False
-            cur = (cur + [rec])[-ETALON_MAX:]
+            cur = cur + [rec]
+            if len(cur) > ETALON_MAX:           # переповнено → геть найслабший, а не найстаріший
+                qk = 'good' if kind == 'good' else 'bad'
+                worst = min(range(len(cur)), key=lambda i: (etalon_quality(cur[i], qk),
+                                                            float(cur[i].get('t') or 0)))
+                cur.pop(worst)
             setattr(self, attr, cur)
             base = list(cur)
+            added = any(e is rec for e in cur)
         try:
             if self.db:
                 self.db.set_setting(key, base)
         except Exception:
             pass
+        if not added:                           # новий запис слабший за всю повну базу
+            return False
         res = f"результат {rec['pnl']}%" + (f" · {rec['r']}R" if rec['r'] is not None else '')
         if kind == 'good':
             msg = f"🏆 ШІ: угоду {rec['side']} додано в еталони ({res}) — база {len(base)}"
@@ -2107,7 +2311,7 @@ class AiEngine:
             p = v.get('pick') or {}
             sc = p.get('scenario') or {}
             b = v.get('brain') or {}
-            out[S] = {'side': p.get('side'), 'ready': bool(v.get('ready')),
+            out[S] = {'side': p.get('side'), 'ready': bool(v.get('ready')), 'src': v.get('src'),
                       'rank': v.get('rank'), 'sim': v.get('sim'),
                       'etalon': {k: (v.get('etalon') or {}).get(k) for k in
                                  ('mature', 'verdict', 'p_good', 'exp_r', 'tp_r', 'reason')},
@@ -2118,27 +2322,66 @@ class AiEngine:
         return out
 
     # ── 🧹 АВТООЧИСТКА ТАБЛИЦЬ НАВЧАННЯ ────────────────────────────────────
-    def _etalon_prune(self, now: float, dry: bool = False) -> int:
-        """Еталони / антибаза, старші за ETALON_MAX_AGE_DAYS — відпрацьований досвід."""
-        cut = now - ETALON_MAX_AGE_DAYS * 86400
-        n = 0
-        for attr, key in (('_etalon', ETALON_DB), ('_anti', ETALON_ANTI_DB)):
-            cur = list(getattr(self, attr))
-            keep = [e for e in cur if float(e.get('t') or now) >= cut]
-            n += len(cur) - len(keep)
-            if not dry and len(keep) != len(cur):
+    def _quality_plan(self) -> Dict:
+        """🏷 Позначення на видалення ЗА ЯКІСТЮ (а не за датою): еталони,
+        антибаза, дослідження угод ШІ, епізоди із сигналом."""
+        plan = {'etalon': [], 'anti': [], 'research': [], 'episodes': [], 'list': []}
+        for attr, kind, key in (('_etalon', 'good', 'etalon'), ('_anti', 'bad', 'anti')):
+            base = list(getattr(self, attr))
+            for i, why in etalon_prune_plan(base, kind):
+                e = base[i]
+                plan[key].append((e.get('sym'), e.get('t')))
+                plan['list'].append({'kind': key, 'sym': e.get('sym'), 'side': e.get('side'),
+                                     'r': e.get('r'), 'pnl': e.get('pnl'), 'why': why})
+        if self.db and hasattr(self.db, 'ai_learning_brief'):
+            try:
+                brief = self.db.ai_learning_brief() or {}
+            except Exception:
+                brief = {}
+            prot = {(e.get('sym'), int(float(e.get('t') or 0)))
+                    for e in list(self._etalon) + list(self._anti)}
+            plan['research'] = learning_prune_plan(brief.get('research') or [], 'research',
+                                                   RESEARCH_AI_KEEP, prot)
+            plan['episodes'] = learning_prune_plan(brief.get('episodes') or [], 'episodes',
+                                                   EPISODE_SIG_KEEP)
+        return plan
+
+    def _apply_quality_plan(self, plan: Dict) -> Dict:
+        out = {'etalon': 0, 'research': 0, 'episodes': 0}
+        for attr, key, dbk in (('_etalon', 'etalon', ETALON_DB), ('_anti', 'anti', ETALON_ANTI_DB)):
+            drop = set(plan.get(key) or ())
+            if not drop:
+                continue
+            with self._lock:
+                cur = list(getattr(self, attr))
+                keep = [e for e in cur if (e.get('sym'), e.get('t')) not in drop]
                 setattr(self, attr, keep)
-                try:
-                    if self.db:
-                        self.db.set_setting(key, keep)
-                except Exception:
-                    pass
-        return n
+            out['etalon'] += len(cur) - len(keep)
+            try:
+                if self.db:
+                    self.db.set_setting(dbk, keep)
+            except Exception:
+                pass
+        if (plan.get('research') or plan.get('episodes')) and hasattr(self.db, 'delete_learning_ids'):
+            try:
+                r = self.db.delete_learning_ids(plan.get('research') or (), plan.get('episodes') or ()) or {}
+                out['research'] += int(r.get('research') or 0)
+                out['episodes'] += int(r.get('episodes') or 0)
+            except Exception as e:
+                print(f'[AI] 🧹 delete_learning_ids: {e}')
+        return out
+
+    @staticmethod
+    def _plan_counts(plan: Dict) -> Dict:
+        return {'etalon': len(plan.get('etalon') or ()) + len(plan.get('anti') or ()),
+                'research_q': len(plan.get('research') or ()),
+                'episodes_q': len(plan.get('episodes') or ())}
 
     def _cleanup(self, now: float, force: bool = False) -> Optional[Dict]:
-        """🧹 Прибрати з таблиць навчання те, що лише заважає, і ВІДПРАЦЬОВАНИЙ
-        матеріал (вимоги 22.11). Раз на годину — ПОЗНАЧЕННЯ (підрахунок того,
-        що піде на видалення, видно в панелі ШІ), раз на 6 год — видалення."""
+        """🧹 Прибрати з таблиць навчання те, що лише заважає (вимоги 22.11).
+        Раз на годину — ПОЗНАЧЕННЯ: мозок оцінює ВСІ результати й позначає
+        найгірші та дублі (видно в панелі ШІ); раз на 6 год — видалення
+        позначеного. Результати не видаляються за датою — лише за якістю."""
         if not force and not self.ai_settings().get('cleanup_enabled'):
             return None
         if not self.db or not hasattr(self.db, 'cleanup_ai_learning'):
@@ -2150,20 +2393,30 @@ class AiEngine:
                                                     dry=True, **CLEANUP_RULES) or {}
                 except TypeError:
                     m = {}
-                m['etalon'] = self._etalon_prune(now + CLEANUP_EVERY_SEC, dry=True)
-                self._cleanup_mark = {'at': int(now), 'next_at': int(self._cleanup_at + CLEANUP_EVERY_SEC), **m}
+                plan = self._quality_plan()
+                pc = self._plan_counts(plan)
+                m['etalon'] = pc['etalon']
+                m['research'] = int(m.get('research') or 0) + pc['research_q']
+                m['episodes'] = int(m.get('episodes') or 0) + pc['episodes_q']
+                self._cleanup_mark = {'at': int(now), 'next_at': int(self._cleanup_at + CLEANUP_EVERY_SEC),
+                                      'list': plan['list'][:12], **m}
             return None
         self._cleanup_at = now
         try:
             res = self.db.cleanup_ai_learning(now, **CLEANUP_RULES) or {}
         except TypeError:                       # старіший шар БД без нових правил
             res = self.db.cleanup_ai_learning(now) or {}
-        res['etalon'] = self._etalon_prune(now)
+        q = self._apply_quality_plan(self._quality_plan())
+        res['etalon'] = q['etalon']
+        res['research'] = int(res.get('research') or 0) + q['research']
+        res['episodes'] = int(res.get('episodes') or 0) + q['episodes']
         self._cleanup_stat = {'at': int(now), **res}
         self._cleanup_mark = {'at': int(now), 'next_at': int(now + CLEANUP_EVERY_SEC),
-                              'episodes': 0, 'anomalies': 0, 'research': 0, 'etalon': 0}
-        if any(res.values()):
+                              'episodes': 0, 'anomalies': 0, 'research': 0, 'etalon': 0, 'list': []}
+        if any(v for k, v in res.items() if k != 'list'):
             print(f'[AI] 🧹 очистка таблиць навчання: {res}')
+            self._ai_log('', 'signal', '🧹 ШІ: очистка навчання — видалено найгірше й службове: '
+                         + ', '.join(f'{k} {v}' for k, v in res.items() if v))
         return res
 
     def _anom_personal(self, subs, scored, lives, anoms, now) -> int:
@@ -2295,6 +2548,35 @@ class AiEngine:
             self._learner = None
             self._learning_state = {'status': 'model_load_error', 'error': str(e)[:200]}
 
+    def readiness(self) -> Dict:
+        """Стан для ГОЛОВНОГО ТУМБЛЕРА (легкий: лише памʼять, без БД)."""
+        s = self.ai_settings()
+        sc = self._scn()
+        try:
+            spring_on = sc is not None and bool((sc.get_settings() or {}).get('spring_enabled', True))
+        except Exception:
+            spring_on = False
+        tm = self._tm_get()
+        try:
+            tm_on = bool(tm and tm.is_enabled())
+        except Exception:
+            tm_on = False
+        try:
+            test_mode = bool(tm and (getattr(tm, '_settings', {}) or {}).get('test_mode', True))
+        except Exception:
+            test_mode = False
+        try:
+            own = list(tm.ai_open_positions()) if tm and hasattr(tm, 'ai_open_positions') else []
+        except Exception:
+            own = []
+        with self._lock:
+            view = list(self._view.values())
+        ready = len([v for v in view if v.get('ready')])
+        r = ai_readiness(s, spring_on, tm_on, test_mode, len(view), ready, len(own))
+        r['own'] = [{'symbol': S, 'paper': b} for S, b in own]
+        r['enabled'] = bool(s.get('enabled'))
+        return r
+
     def state(self) -> Dict:
         with self._lock:
             view = sorted(self._view.values(),
@@ -2323,6 +2605,7 @@ class AiEngine:
                 'cleanup_mark': dict(self._cleanup_mark),
                 'cleanup_next': int(self._cleanup_at + CLEANUP_EVERY_SEC) if self._cleanup_at else None,
                 'own_trades': own,
+                'readiness': self.readiness(),
                 'opens_30m': len([t for t in self._ai_opens if self._clock() - t < OPEN_WINDOW_SEC]),
                 'stat': dict(self._stat),
                 'calibration': self.calibration(), 'coins': view,

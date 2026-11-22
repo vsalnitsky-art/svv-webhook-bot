@@ -3544,7 +3544,7 @@ def register_api_routes(app):
             # TF: 1H проти 15m у CHoCH). Вона вже винесена в окремий рядок у
             # 🧾 Лозі (`SOLO_EVENTS`), і експорт мусить робити ТЕ САМЕ —
             # інакше два подання того самого логу суперечать одне одному.
-            _SOLO = {'ob_new'}
+            _SOLO = {'ob_new', 'ai_scan'}
             _MAX_GAP = 3 * 3600     # розрив > 3 год — це вже інша історія
             _prev_t = None
             for e in evs:
@@ -6485,6 +6485,9 @@ def register_api_routes(app):
         розклад складових, калібровка, відкриті епізоди."""
         from detection.ai_signals import get_ai_engine, init_ai_engine
         eng = get_ai_engine() or init_ai_engine(db=get_db())
+        if request.args.get('light'):
+            # 🤖 головний тумблер ШІ: лише стан із памʼяті, без БД і таблиці монет
+            return jsonify({'ok': True, 'ai': eng.ai_settings(), 'readiness': eng.readiness()})
         st = eng.state()
         try:
             st['episodes_total'] = len(get_db().get_ai_episodes(since=_days_since(30), limit=50000))

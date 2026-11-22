@@ -2432,13 +2432,13 @@
   function recChCol(c) { return c >= 85 ? "#fb923c" : c >= 65 ? "#facc15" : "#a78bfa"; }
   function recPath(r, up) {
     var sl = Number(r.sl), tp = Number(r.tp), px = Number(r.price);
-    if (!(sl > 0 && tp > 0 && px > 0)) return rs(120, '<span class="muted" title="' + esc(r.sl_label || "") + '">' + (r.sl_wait || r.wait ? "⏳" : "—") + "</span>", "c") + rs(44, "");
+    if (!(sl > 0 && tp > 0 && px > 0)) return '<span class="muted" title="' + esc(r.sl_label || "") + '">' + (r.sl_wait || r.wait ? "⏳" : "—") + "</span>";
     var lo = Math.min(sl, tp), hi = Math.max(sl, tp), pos = hi > lo ? (px - lo) / (hi - lo) * 100 : 50;
     pos = Math.max(0, Math.min(100, pos)); var p0 = pos.toFixed(0);
     var grad = up ? "linear-gradient(90deg,#ff3b3b,#ffb020 " + (pos / 2).toFixed(0) + "%,#94a3b8 " + p0 + "%,#00e676)" : "linear-gradient(90deg,#00e676,#94a3b8 " + p0 + "%,#ffb020 " + ((pos + 100) / 2).toFixed(0) + "%,#ff3b3b)";
     var rr = Number(r.rr), rrc = !isFinite(rr) ? "" : rr >= 1.5 ? "rr-good" : rr >= 1 ? "rr-mid" : "rr-bad";
     return '<span class="rec-path" title="Ризик ' + recPct(r.sl_pct) + " · хід " + recPct(r.tp_pct) + (isFinite(rr) ? " · R " + rr.toFixed(2) : "") + '"><span class="bar" style="background:' + grad + '">' +
-      '<i style="left:' + pos.toFixed(1) + '%"></i></span></span>' + rs(44, isFinite(rr) ? '<b class="rr ' + rrc + '">' + rr.toFixed(2) + "R</b>" : "", "r");
+      '<i style="left:' + pos.toFixed(1) + '%"></i></span>' + (isFinite(rr) ? '<b class="rr ' + rrc + '">' + rr.toFixed(2) + "R</b>" : "") + "</span>";
   }
   // 📊 Група розрахунку одного TF (1H / 15m): 🛑 SL · 🎯 TP · Хід (вимога 11.11).
   // 📊 Група розрахунку одного TF (1H / 15m): 🛑 SL · Хід (вимога 11.11).
@@ -2446,26 +2446,27 @@
   function recGroupCells(g, up, cls) {
     var sl = Number(g.sl) > 0;
     var wt = '<span class="muted" title="' + esc(g.err || g.sl_label || "рахується") + '">' + (g.wait || g.sl_wait ? "⏳" : "—") + "</span>";
-    var slC = sl ? '<span class="rec-lv sl">' + rs(84, fmtPrice(g.sl), "r") + rs(58, "<small>" + recPct(g.sl_pct) + "</small>", "r") + rs(28, '<small class="rec-tf" title="' + esc(g.sl_label || "") + '">' + esc(String(g.sl_tf || "").toUpperCase()) + "</small>", "r") + "</span>" : rs(170, wt, "r");
+    var slC = sl ? '<span class="rec-lv sl">' + fmtPrice(g.sl) + " <small>" + recPct(g.sl_pct) + '</small> <small class="rec-tf" title="' + esc(g.sl_label || "") + '">' + esc(String(g.sl_tf || "").toUpperCase()) + "</small></span>" : wt;
     return '<td class="r ' + cls + ' gs">' + slC + '</td><td class="c ' + cls + '">' + recPath(g, up) + "</td>";
   }
   function recRow(r) {
     var sd = recSide(r), up = sd === "LONG", dc = sd ? (up ? "up" : "dn") : "";
     var prob = r.prob_long != null ? (up ? Number(r.prob_long) : 100 - Number(r.prob_long)) : null;
-    var ch = Math.max(0, Math.min(100, Math.round(Number(r.charge) || 0))), chIn = Number(r.charge_in), chD = isFinite(chIn) && chIn > 0 ? ch - Math.round(chIn) : null;
-    var icon = r.src === "wl" ? '<span class="rec-ic" title="WATCHLIST бота">🌀</span>' : (r.src === "ai" ? "" : '<span class="rec-ic" title="Скан біржі">🔭</span>');
+    // 22.11: біля монети — біржа, з якої рахується сигнал (🌀 WATCHLIST → Bybit, 🔭 скан → біржа скану)
+    var ex = String(r.ex || (r.src === "scan" ? "binance" : "bybit")).toLowerCase();
+    var icon = '<span class="rec-ic" title="' + (ex === "binance" ? "Binance" : "Bybit") + '">' + (SPB_ICON[ex] || "") + "</span>";
     var ai = r.ai || null;
-    var aiTip = ai ? ("ШІ: " + (ai.ready ? "ВХІД ГОТОВИЙ" : "оцінка") + (ai.side ? " " + ai.side : "") + (ai.scenario_name ? " · " + ai.scenario_name : "") + (ai.stage ? " " + ai.stage : "") + (ai.rank != null ? " · ранг " + ai.rank : "") + (ai.confidence != null ? " · впевненість " + ai.confidence : "") + (ai.etalon && ai.etalon.mature ? " · мозок еталонів: " + (ai.etalon.verdict === "take" ? "бере" : "ні") + (ai.etalon.p_good != null ? " (відмінних серед схожих " + Math.round(ai.etalon.p_good * 100) + "%)" : "") : (ai.sim != null ? " · схожість на еталони " + Number(ai.sim).toFixed(2) : "")) + (r.tab_side && r.tab_side !== ai.side ? " · таблиця пружини: " + r.tab_side : "")) : "";
-    var aiCell = ai ? (ai.ready ? '<span class="rec-ai on" title="' + esc(aiTip) + '">' + AI_BRAND + "<b>ВХІД</b></span>" : '<span class="rec-ai" title="' + esc(aiTip) + '">' + AI_BRAND + "</span>") : "";
+    var aiTip = ai ? ("ШІ: ВХІД ГОТОВИЙ" + (ai.side ? " " + ai.side : "") + (ai.scenario_name ? " · " + ai.scenario_name : "") + (ai.stage ? " " + ai.stage : "") + (ai.rank != null ? " · ранг " + ai.rank : "") + (ai.confidence != null ? " · впевненість " + ai.confidence : "") + (ai.etalon && ai.etalon.mature ? " · мозок еталонів: " + (ai.etalon.verdict === "take" ? "бере" : "ні") + (ai.etalon.p_good != null ? " (відмінних серед схожих " + Math.round(ai.etalon.p_good * 100) + "%)" : "") : (ai.sim != null ? " · схожість на еталони " + Number(ai.sim).toFixed(2) : ""))) : "";
+    // «ВХІД» — у слоті сталої ширини праворуч, рядок не зсувається
+    var aiCell = '<span class="rec-ai-slot">' + (ai && ai.ready ? '<span class="rec-ai on" title="' + esc(aiTip) + '">' + AI_BRAND + "<b>ВХІД</b></span>" : "") + "</span>";
     var nb = r.bybit === false ? ' <span class="rec-nb" title="Монети немає на Bybit">⚠</span>' : "";
-    var chCell = '<span class="rec-ch"><i style="width:' + ch + "%;background:linear-gradient(90deg,#a78bfa," + recChCol(ch) + ')"></i></span>' + rs(26, '<b style="color:' + recChCol(ch) + '">' + ch + "</b>", "r") + rs(30, chD ? '<small class="' + (chD > 0 ? "pp-up" : "pp-dn") + '">' + (chD > 0 ? "▲" : "▼") + Math.abs(chD) + "</small>" : "", "l");
     var pr = prob != null && isFinite(prob) ? prob : null;
-    var prCell = pr == null ? rs(100, "—", "r") : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span>' + rs(40, '<b class="rec-' + dc + '">' + pr.toFixed(0) + "%</b>", "r");
+    var prCell = pr == null ? '<span class="muted">—</span>' : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span><b class="rec-' + dc + '">' + pr.toFixed(0) + "%</b>";
     var g1 = recGroupCells(r, up, "g1"), g15 = recGroupCells(r.m15 || { wait: true }, up, "g15");
-    var tpCell = Number(r.tp) > 0 ? '<span class="rec-lv tp">' + rs(84, fmtPrice(r.tp), "r") + rs(58, "<small>" + recPct(r.tp_pct) + "</small>", "r") + "</span>" : rs(142, '<span class="muted" title="Цілі в бік угоди немає">—</span>', "r");
-    return '<tr class="rec-row ' + dc + (ai && ai.ready ? " ai-pick" : "") + '"><td class="sym">' + aiCell + icon + tvSym(r.symbol) + nb + "</td>" +
+    var tpCell = Number(r.tp) > 0 ? '<span class="rec-lv tp">' + fmtPrice(r.tp) + " <small>" + recPct(r.tp_pct) + "</small></span>" : '<span class="muted" title="Цілі в бік угоди немає">—</span>';
+    return '<tr class="rec-row ' + dc + (ai && ai.ready ? " ai-pick" : "") + '"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td>" +
       '<td><span class="rec-dir ' + dc + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</span></td>" +
-      '<td class="r">' + prCell + "</td>" + '<td class="r tpc">' + tpCell + "</td>" + g1 + g15 + '<td class="r">' + chCell + "</td></tr>";
+      '<td class="r">' + prCell + "</td>" + '<td class="r tpc">' + tpCell + "</td>" + g1 + g15 + "</tr>";
   }
   function recRender() {
     var rows = REC.rows || [], n = { all: rows.length, LONG: 0, SHORT: 0 };
@@ -2473,7 +2474,7 @@
     var lbl = { all: "Всі", LONG: "🟢 LONG", SHORT: "🔴 SHORT" };
     document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) { var d = b.getAttribute("data-d"); b.textContent = lbl[d] + " (" + n[d] + ")"; b.classList.toggle("on", d === REC.dir); });
     var vis = rows.filter(function (r) { return REC.dir === "all" || recSide(r) === REC.dir; }), tb = $("#rec-tbl tbody");
-    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="9" class="muted">' + (rows.length ? "Немає монет у цій вкладці" : "Зараз немає рекомендованих монет") + "</td></tr>";
+    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="8" class="muted">' + (rows.length ? "Немає сигналів у цій вкладці" : "ШІ зараз не бачить точки входу — сигнал зʼявиться, щойно складеться сценарій") + "</td></tr>";
     var rn = $("#rec-note"); if (rn) rn.textContent = new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
   }
   // ⚖ Банер «SMC Forecast» (вимога 11.11): куди накручено пружину — 🔭 скан біржі

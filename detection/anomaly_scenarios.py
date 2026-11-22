@@ -150,6 +150,7 @@ def _st(k, label, it=None, t=None, why=''):
     """Етап: done, коли є реакція `it` або момент `t`."""
     tt = _f((it or {}).get('t')) if it else _f(t)
     return {'k': k, 'label': label, 'done': tt is not None, 't': tt,
+            'px': _f((it or {}).get('price')) if it else None,
             'why': why or ((it or {}).get('why') or '')}
 
 
@@ -512,8 +513,14 @@ def view(s: Optional[Dict]) -> Optional[Dict]:
     """Компактний знімок для UI / стану."""
     if not s:
         return None
+    ev = [x for x in s['stages'] if x.get('t') is not None and not x.get('state')]
+    last = max(ev, key=lambda x: x['t']) if ev else None
     return {'key': s['key'], 'name': s['name'], 'side': s['side'], 'done': s['done'],
             'total': s['total'], 'ready': s['ready'], 'stale': s['stale'],
             'broken': s['broken'], 'last_t': s.get('last_t'),
-            'stages': [{'label': x['label'], 'done': x['done'], 'why': x.get('why') or ''}
+            # ціна на момент ОСТАННЬОЇ події сценарію (вимога 22.11: «ціна на момент
+            # сигналу, дата і час»); немає ціни в реакції → None (не вигадуємо)
+            'last_px': (last or {}).get('px'),
+            'stages': [{'label': x['label'], 'done': x['done'], 'why': x.get('why') or '',
+                        't': x.get('t'), 'px': x.get('px')}
                        for x in s['stages']]}

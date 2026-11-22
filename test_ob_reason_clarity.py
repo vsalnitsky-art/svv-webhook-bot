@@ -215,8 +215,14 @@ def test_ui_and_export_agree_on_what_is_solo():
     """Два подання ОДНОГО логу не мають суперечити одне одному."""
     html = open(os.path.join(_ROOT, 'templates', 'smart_money.html'),
                 encoding='utf-8').read()
-    _check("SOLO_EVENTS = new Set(['ob_new'])" in html,
-           'у таблиці логу ob_new більше не solo — розійшлось із експортом')
+    import re
+    ui = re.search(r"SOLO_EVENTS = new Set\(\[([^\]]*)\]\)", html)
+    fa = open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
+    ex = re.search(r"_SOLO = \{([^}]*)\}", fa)
+    _check(ui and ex, 'обидва набори знайдено')
+    names = lambda m: {x.strip().strip("'\"") for x in m.group(1).split(',') if x.strip()}
+    _check('ob_new' in names(ui) and names(ui) == names(ex),
+           f'solo-події таблиці логу і експорту розійшлись: {names(ui)} ≠ {names(ex)}')
 
 
 if __name__ == '__main__':

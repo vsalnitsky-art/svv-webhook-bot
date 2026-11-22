@@ -1535,6 +1535,10 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .vanom-btn:hover { border-color:#fbbf24; color:#fbbf24; }
 .vanom-btn-del { color:#fca5a5; border-color:#5b2a2f; }
 .vanom-btn-del:hover { border-color:#f87171; color:#f87171; }
+.ai-2l { display:flex; flex-direction:column; gap:2px; min-width:0; font-size:0.7rem; line-height:1.25; }
+.ai-sub { font-size:0.64rem; color:#8b93a7; font-family:monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ai-ell { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+#ai-table td, #ai-table th { overflow:hidden; vertical-align:top; }
 /* 🤖 Фірмова іконка ШІ (22.11) */
 .ai-mark { display:inline-flex; align-items:center; vertical-align:middle; }
 .ai-brand { width:14px; height:14px; border-radius:3px; object-fit:contain; vertical-align:middle;
@@ -1604,6 +1608,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                  і підпис був би шумом) — заповнює syncSideGateButtons(). -->
             <span class="sm-side-gates-state" id="sm-side-gates-state"
                   style="display:none"></span>
+            <!-- 🤖 ГОЛОВНИЙ ТУМБЛЕР ШІ (22.11): дзеркало aip-enabled панелі
+                 «ШІ БОТА» + чесний стан (працює / що заважає / угоди ШІ). -->
+            <span class="sm-aim" id="ai-master-box" title="🤖 ГОЛОВНИЙ ТУМБЛЕР ШІ. УВІМК — ШІ сам перебирає заряджені монети обох Пружин і відкриває СВОЇ угоди за своїм сценарієм (ворота бота і головні кнопки LONG/SHORT на нього НЕ діють). ВИМК — ШІ лише спостерігає і вчиться. Детальні налаштування — у панелі «🤖 ШІ БОТА».">
+                <img class="ai-brand" src="/static/vsv-logo.png" alt="" aria-hidden="true">
+                <span class="sm-aim-t">ШІ</span>
+                <label class="tm-toggle-switch"><input type="checkbox" id="ai-master-on" onchange="aiMasterToggle(this)"><span class="slider"></span></label>
+                <span class="sm-aim-st" id="ai-master-st">…</span>
+            </span>
             <!-- ⏰ БУДИЛЬНИК SBR (вимога 01.11): свіжий сигнал 🔔 SBR обраної
                  монети / TF / боку вмикає відповідну головну кнопку. -->
             <span class="sm-alarm" id="sbr-alarm-box"
@@ -1633,6 +1645,16 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     </div>
 
     <style>
+    .sm-aim { display:inline-flex; align-items:center; gap:6px; padding:3px 8px;
+        border:1px solid #3b3366; border-radius:6px; background:rgba(167,139,250,.06); }
+    .sm-aim .ai-brand { width:16px; height:16px; border-radius:3px; }
+    .sm-aim-t { font-weight:700; color:#c4b5fd; font-size:.8rem; }
+    .sm-aim-st { font-family:monospace; font-size:.72rem; color:#8b93a7; max-width:340px;
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .sm-aim.on { border-color:#7c3aed; background:rgba(124,58,237,.14); }
+    .sm-aim.st-ready .sm-aim-st, .sm-aim.st-watching .sm-aim-st { color:#4ade80; }
+    .sm-aim.st-blocked .sm-aim-st { color:#f87171; }
+    .sm-aim.st-full .sm-aim-st { color:#fbbf24; }
     .sm-side-gates-left { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     /* Підпис стану головного вимикача: бурштин = працює половина напрямків,
        червоний = бот стоїть. Та сама типографіка, що в решті бейджів. */
@@ -4986,7 +5008,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <label title="Мозок еталонів: найближча схожа угода мусить бути не далі цієї схожості (0..1)">схожість ≥ <input type="number" id="aip-et-sim" min="0" max="1" step="0.05" style="width:52px" onchange="aipSave()"></label>
             <label title="Мозок еталонів: серед схожих входів частка відмінних угод має бути не менша (0.3…0.95)">відмінних серед схожих ≥ <input type="number" id="aip-et-p" min="0.3" max="0.95" step="0.05" style="width:52px" onchange="aipSave()"></label>
             <label class="sm-checkbox" title="🎓 Раз на 15 хв модель мозку вчиться на нових закритих епізодах і угодах (champion / challenger)"><input type="checkbox" id="aip-learn" onchange="aipSave()"> 🎓 навчання</label>
-            <label class="sm-checkbox" title="🧹 Раз на годину бот ПОЗНАЧАЄ на видалення непотріб і відпрацьований матеріал навчання (видно в картці «Очистка»), раз на 6 год — видаляє: епізоди без сигналу > 7 дн · усі епізоди > 45 дн · службові аномалії (напрямок / підписки) > 2 дн · аномалії з повним наслідком > 60 дн · дослідження не-ШІ угод > 30 дн · дослідження угод ШІ > 60 дн (стислий запис уже в базі еталонів) · еталони й антибаза > 180 дн"><input type="checkbox" id="aip-clean" onchange="aipSave()"> 🧹 автоочистка</label>
+            <label class="sm-checkbox" title="🧹 Раз на годину бот АНАЛІЗУЄ всі результати навчання і ПОЗНАЧАЄ на видалення найгірші (видно в картці «Очистка» і списком нижче), раз на 6 год — видаляє лише позначене. Результати (🏆 еталони, ❌ антибаза, дослідження угод ШІ, епізоди із сигналом) НЕ видаляються за датою: геть ідуть дублі кращих записів і найслабші, коли базу переповнено. Службові дані без результату (епізоди без сигналу, допоміжні аномалії, дослідження чужих угод) — за давністю."><input type="checkbox" id="aip-clean" onchange="aipSave()"> 🧹 автоочистка</label>
             <span style="margin-left:auto;display:flex;gap:6px">
                 <a class="vanom-btn" href="#" onclick="aipCleanup();return false" title="Запустити очистку таблиць навчання зараз">🧹 Очистити зараз</a>
                 <a class="vanom-btn vanom-btn-del" href="#" onclick="aipEtalonClear();return false" title="Видалити всі еталони й антибазу (з підтвердженням)">🗑 Еталони</a>
@@ -4994,6 +5016,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
         <div class="aip-kpi" id="aip-kpi"></div>
         <div id="aip-etalon-last" style="font-size:0.68rem;color:#8b93a7;margin-bottom:6px"></div>
+        <div id="aip-mark-list" style="font-size:0.68rem;color:#8b93a7;margin-bottom:6px"></div>
         <!-- 🤖 ШІ: монети в заряді, бал розряду LONG/SHORT, калібровка з досліджень -->
         <div style="margin-top:10px;padding-top:8px;border-top:1px solid #2a2a2a">
             <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:0.72rem;color:#8b93a7;margin-bottom:6px">
@@ -5006,11 +5029,12 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <summary style="cursor:pointer;color:#c4b5fd;font-weight:700">📘 Правила ШІ — які послідовності реакцій ведуть до входу, а які — до виходу</summary>
                 <div id="ai-rules-body" style="margin-top:6px">—</div>
             </details>
-            <div style="overflow-x:auto;max-height:300px;overflow-y:auto"><table class="tm-table" id="ai-table" style="width:100%">
-                <thead><tr><th>Монета</th><th title="🌀 WATCHLIST / 🔭 скан біржі">Джерело</th><th title="Заряд пружини 0-100">Заряд</th>
-                    <th title="🧩 Сценарій входу LONG: етапи комплексу реакцій (✓ пройдено / · ще ні); у підказці — кожен етап, злам і довідковий бал">🟢 LONG · сценарій</th><th title="🧩 Сценарій входу SHORT">🔴 SHORT · сценарій</th>
-                    <th title="Рішення ШІ: ✅ точка входу (сценарій пройдено повністю і свіжий) · ⏳ формується · ⌛ запізно · ✗ злам">Рішення</th><th title="Скільки триває епізод заряду">Епізод</th><th title="Сигнал ШІ в цьому епізоді">Сигнал</th></tr></thead>
-                <tbody id="ai-tbody"><tr><td colspan="8" style="color:#8b93a7">—</td></tr></tbody>
+            <div style="max-height:420px;overflow-y:auto"><table class="tm-table" id="ai-table" style="width:100%;table-layout:fixed">
+                <colgroup><col style="width:13%"><col style="width:23%"><col style="width:23%"><col style="width:17%"><col style="width:16%"><col style="width:8%"></colgroup>
+                <thead><tr><th title="Монета · 🌀 WATCHLIST / 🔭 скан біржі · заряд пружини 0-100">Монета · заряд</th>
+                    <th title="🧩 Сценарій входу LONG: етапи комплексу реакцій (✓ пройдено / · ще ні); другий рядок — дата, час і ціна останньої реакції сценарію">🟢 LONG · сценарій</th><th title="🧩 Сценарій входу SHORT">🔴 SHORT · сценарій</th>
+                    <th title="Рішення ШІ: ✅ точка входу (сценарій пройдено повністю і свіжий) · ⏳ формується · ⌛ запізно · ✗ злам; нижче — мозок графіка і 🏆🧠 мозок еталонів">Рішення</th><th title="Сигнал ШІ в цьому епізоді: бік, сценарій, дата, час і ціна сигналу">Сигнал</th><th title="Скільки триває епізод заряду">Епізод</th></tr></thead>
+                <tbody id="ai-tbody"><tr><td colspan="6" style="color:#8b93a7">—</td></tr></tbody>
             </table></div>
         </div>
     </div>
@@ -6485,6 +6509,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <option value="passthrough">➡️ Пряме відкриття</option>
                         <option value="autosl">🎯 Авто-SL з OB</option>
                         <option value="ob_new">🆕 Новий OB на графіку</option>
+                        <option value="ai_scan">🤖 ШІ · огляд перебору</option>
                         <option value="config">📋 Параметри</option>
                     </select>
                     <button onclick="exportActivityLog('csv')" style="white-space:nowrap;font-size:0.7rem;padding:5px 11px;border-radius:5px;border:1px solid rgba(34,197,94,0.4);background:rgba(34,197,94,0.1);color:#22c55e;cursor:pointer" title="Завантажити всі події логу як CSV (для Excel / аналізу)">📥 CSV</button>
@@ -6513,6 +6538,7 @@ const _actMeta = {
     autosl: ['🎯', 'Авто-SL з OB', '#38bdf8'],
     config: ['📋', 'Параметри', '#facc15'],
     ob_new: ['🆕', 'Новий OB', '#22d3ee'],
+    ai_scan: ['🤖', 'ШІ · огляд', '#a78bfa'],
 };
 
 // 🆕 РЯДОК «НОВИЙ OB» — РОЗФАРБОВАНИЙ ПО ЗМІСТУ.
@@ -6669,7 +6695,7 @@ async function loadActivityLog() {
         // ланцюгом угоди неправильно й по суті.
         // ⚠️ `lastByKey` НЕ чіпаємо: наступна подія тієї самої монети мусить
         // продовжити СВІЙ ланцюг, а не приклеїтись до рядка «Новий OB».
-        const SOLO_EVENTS = new Set(['ob_new']);
+        const SOLO_EVENTS = new Set(['ob_new', 'ai_scan']);
         chrono.forEach(e => {
             if (SOLO_EVENTS.has(e.event)) {
                 chains.push({ symbol: e.symbol, side: e.side, steps: [e],
@@ -6906,8 +6932,28 @@ function _aiScenCell(e, best) {
         + (sc.broken ? '\n✗ злам: ' + sc.broken : '') + (sc.stale ? '\n⌛ сценарій завершено давно — точку входу пропущено' : '')
         + (e.veto ? '\n⛔ вето: ' + e.veto : '')
         + '\nДовідково: бал ' + Math.round(+e.score || 0) + (parts ? ' · ' + parts : '');
-    return `<span title="${tip.replace(/"/g, '&quot;')}" style="display:inline-flex;align-items:center;gap:5px;white-space:nowrap;${best ? '' : 'opacity:0.75'}">`
-        + `<span style="color:${col};font-size:0.7rem">${sc.name}</span>${dots}<span style="font-family:monospace;color:${col}">${sc.done}/${sc.total}</span></span>`;
+    // 22.11: другий рядок — коли склалась остання реакція сценарію і ціна в той момент.
+    const when = sc.last_t ? `🕐 ${_pcDM(sc.last_t)} ${_pcHM(sc.last_t)}` : '';
+    const px = sc.last_px ? ` · ${fmtPriceJS(sc.last_px)}` : '';
+    return `<div title="${tip.replace(/"/g, '&quot;')}" class="ai-2l" style="${best ? '' : 'opacity:0.75'}">`
+        + `<div style="display:flex;align-items:center;gap:5px;min-width:0"><span class="ai-ell" style="color:${col};font-size:0.7rem">${sc.name}</span>${dots}<span style="font-family:monospace;color:${col}">${sc.done}/${sc.total}</span></div>`
+        + `<div class="ai-sub">${when ? when + px : '<span style="color:#475569">—</span>'}</div></div>`;
+}
+// 🤖 Сигнал ШІ в епізоді: бік · сценарій, другий рядок — час і ціна сигналу.
+function _aiSignalCell(sg) {
+    if (!sg) return '<span style="color:#6b7280">—</span>';
+    const col = sg.side === 'LONG' ? '#4ade80' : '#f87171';
+    const why = sg.ok === false ? ` <span style="color:#6b7280" title="${String(sg.reason || '').replace(/"/g, '&quot;')}">✗</span>` : '';
+    return `<div class="ai-2l" title="${String(sg.scenario_name || '').replace(/"/g, '&quot;')}">`
+        + `<div><b style="color:${col}">${sg.side === 'LONG' ? '▲' : '▼'} ${sg.side}</b> <span style="color:#94a3b8">${sg.scenario || ''}</span>${why}</div>`
+        + `<div class="ai-sub">${sg.t ? '🕐 ' + _pcDM(sg.t) + ' ' + _pcHM(sg.t) : ''}${sg.px ? ' · ' + fmtPriceJS(sg.px) : ''}</div></div>`;
+}
+// Порядок рядків = порядок появи сигналу: найсвіжіша подія (сигнал ШІ або остання
+// реакція сценарію будь-якого боку) — зверху.
+function _aiEventT(c) {
+    const ts = [(c.signal || {}).t, ((c.long || {}).scenario || {}).last_t, ((c.short || {}).scenario || {}).last_t]
+        .map(Number).filter(v => isFinite(v) && v > 0);
+    return ts.length ? Math.max(...ts) : 0;
 }
 function _aiDecision(c) {
     const b = c.best === 'LONG' ? c.long : c.short;
@@ -6971,9 +7017,40 @@ function _aiAge(sec) {
 // ── 🤖 ПАНЕЛЬ ШІ (22.11): свої налаштування → POST /api/ai/settings ──────
 let _aipLast = null, _aipSavedAt = 0;
 function _aipEsc(x) { return String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+// 🤖 ГОЛОВНИЙ ТУМБЛЕР ШІ — стан і перешкоди з ai_readiness (бекенд).
+function aiMasterRender(a, rd) {
+    const box = document.getElementById('ai-master-box'), ck = document.getElementById('ai-master-on'),
+          st = document.getElementById('ai-master-st');
+    if (!box) return;
+    a = a || {}; rd = rd || {};
+    if (ck && document.activeElement !== ck && Date.now() - _aipSavedAt > 4000) ck.checked = !!a.enabled;
+    const state = rd.state || (a.enabled ? 'watching' : 'off');
+    box.className = 'sm-aim' + (a.enabled ? ' on' : '') + ' st-' + state;
+    const icon = {off: '⏸', blocked: '⛔', full: '🔒', ready: '✅', watching: '👁'}[state] || '';
+    const own = (rd.own || []);
+    const ownTxt = own.length ? ` · угоди ${own.length}/${rd.max_open || '—'} ${own.map(o => o.symbol.replace('USDT', '') + (o.paper ? '🧪' : '🏦')).join(' ')}` : '';
+    if (st) {
+        st.textContent = `${icon} ${rd.text || (a.enabled ? 'працює' : 'вимкнено')}${a.enabled ? ' · ' + (rd.book_ua || '') : ''}${ownTxt}`;
+        st.title = (rd.blockers && rd.blockers.length ? 'Що заважає:\n• ' + rd.blockers.join('\n• ') + '\n\n' : '')
+            + 'Книга: ' + (rd.book_ua || '—') + '\nПід наглядом заряджених монет: ' + (rd.coins || 0)
+            + '\nГотових точок входу: ' + (rd.ready || 0);
+    }
+}
+function aiMasterToggle(el) {
+    const ck = document.getElementById('aip-enabled');
+    if (ck) { ck.checked = !!el.checked; aipSave(); }
+}
+async function aiMasterLoad() {
+    try {
+        const r = await fetch('/api/ai/state?light=1');
+        const d = await r.json();
+        if (d && d.ok) aiMasterRender(d.ai, d.readiness);
+    } catch (e) {}
+}
 function aipApply(d) {
     _aipLast = d;
     const a = d.ai || {}, g = id => document.getElementById(id);
+    try { aiMasterRender(a, d.readiness); } catch (e) {}
     window._aipOn = !!a.enabled;
     const fresh = Date.now() - _aipSavedAt > 4000;   // не перебивати щойно збережене
     if (fresh) {
@@ -7014,6 +7091,12 @@ function aipApply(d) {
             [`<span title="${_aipEsc('Що позначається на видалення автоматично:\n• ' + (d.cleanup_rules_ua || []).join('\n• '))}">🧹 Очистка ⓘ</span>`, clTxt],
         ].map(([k, v]) => `<div><b>${k}</b><span>${v}</span></div>`).join('');
     }
+    const ml = g('aip-mark-list');
+    if (ml) {
+        const L = (d.cleanup_mark || {}).list || [];
+        ml.innerHTML = L.length ? '🏷 Позначено на видалення (найгірші): ' + L.map(x =>
+            `<span title="${_aipEsc(x.why || '')}" style="color:#fbbf24">${x.kind === 'anti' ? '❌' : '🏆'} ${_aipEsc((x.sym || '').replace('USDT', ''))} ${x.r != null ? x.r + 'R' : (x.pnl != null ? x.pnl + '%' : '')}</span>`).join(' · ') : '';
+    }
     const el = g('aip-etalon-last');
     if (el) el.innerHTML = (et.last || []).length
         ? '🏆 Останні еталони: ' + et.last.map(e => `<span title="${_aipEsc((e.lessons || []).join('\n'))}" style="color:${e.side === 'LONG' ? '#4ade80' : '#f87171'}">${_aipEsc((e.sym || '').replace('USDT', ''))} ${e.side === 'LONG' ? '▲' : '▼'} ${e.r != null ? e.r + 'R' : (e.pnl != null ? e.pnl + '%' : '')}</span>`).join(' · ')
@@ -7044,7 +7127,7 @@ async function aipSave() {
     if (scen.length) body.scenarios = scen;
     if (body.enabled && !(_aipLast && (_aipLast.ai || {}).enabled) && body.book !== 'paper'
         && !confirm('Увімкнути ШІ? Він відкриватиме СВОЇ угоди без воріт бота (книга: ' + body.book + '). Реальні угоди — за правилом TRD · Trade Manager.')) {
-        g('aip-enabled').checked = false; return;
+        g('aip-enabled').checked = false; const mc = g('ai-master-on'); if (mc) mc.checked = false; return;
     }
     _aipSavedAt = Date.now();
     try {
@@ -7107,17 +7190,15 @@ async function aiLoad() {
         const tb = document.getElementById('ai-tbody');
         if (!tb) return;
         const rows = d.coins || [];
-        if (!rows.length) { tb.innerHTML = '<tr><td colspan="8" style="color:#8b93a7">Немає заряджених монет під наглядом</td></tr>'; return; }
-        tb.innerHTML = rows.map(c => {
-            const best = c.best === 'LONG' ? c.long : c.short;
-                        const sig = c.signal ? `<b title="${String(c.signal.scenario_name || '').replace(/"/g, '&quot;')}" style="color:${c.signal.side === 'LONG' ? '#4ade80' : '#f87171'}">${c.signal.side === 'LONG' ? '▲' : '▼'} ${c.signal.scenario || Math.round(c.signal.score || 0)}</b>${c.signal.ok === false ? ' <span style="color:#6b7280" title="' + String(c.signal.reason || '').replace(/"/g, '&quot;') + '">✗</span>' : ''}` : '—';
+        if (!rows.length) { tb.innerHTML = '<tr><td colspan="6" style="color:#8b93a7">Немає заряджених монет під наглядом</td></tr>'; return; }
+        tb.innerHTML = rows.slice().sort((a, b) => _aiEventT(b) - _aiEventT(a)).map(c => {
             const proHTML = _aiBrainCell(c.brain);
-            return `<tr><td>${typeof tvSym === 'function' ? tvSym(c.symbol) : c.symbol}</td>`
-                + `<td>${c.src === 'scan' ? '🔭' : '🌀'}</td>`
-                + `<td style="font-family:monospace">${c.charge != null ? Math.round(c.charge) : '—'}</td>`
+            return `<tr><td><div class="ai-2l"><div class="ai-ell">${typeof tvSym === 'function' ? tvSym(c.symbol) : c.symbol}</div>`
+                + `<div class="ai-sub">${c.src === 'scan' ? '🔭 скан' : '🌀 WATCHLIST'} · заряд <b style="color:#e2e8f0">${c.charge != null ? Math.round(c.charge) : '—'}</b></div></div></td>`
                 + `<td>${_aiScenCell(c.long, c.best === 'LONG')}</td><td>${_aiScenCell(c.short, c.best === 'SHORT')}</td>`
-                + `<td>${_aiDecision(c)}${proHTML}${_aiEtalonCell(c.etalon)}</td>`
-                + `<td style="font-family:monospace">${_aiAge(c.episode_age)}</td><td>${sig}</td></tr>`;
+                + `<td><div class="ai-2l">${_aiDecision(c)}${proHTML}${_aiEtalonCell(c.etalon)}</div></td>`
+                + `<td>${_aiSignalCell(c.signal)}</td>`
+                + `<td style="font-family:monospace">${_aiAge(c.episode_age)}</td></tr>`;
         }).join('');
     } catch (e) {
         const el = document.getElementById('ai-st'); if (el) el.innerHTML = `<span style="color:#f87171">ШІ: ${e.message || e}</span>`;
@@ -7211,6 +7292,12 @@ setInterval(() => {
     if (!b || b.style.display === 'none' || document.hidden) return;
     try { aiLoad(); } catch (e) {}
 }, 30000);
+// 🤖 Головний тумблер ШІ — легкий стан раз на 20с (поки панель згорнута).
+setInterval(() => {
+    const b = document.getElementById('aip-body');
+    if (document.hidden || (b && b.style.display !== 'none')) return;
+    try { aiMasterLoad(); } catch (e) {}
+}, 20000);
 
 // 🪗 Гармошка логу. За замовчуванням ЗГОРНУТО: поки згорнуто — таблиця НЕ
 // опитується і НЕ малюється взагалі (нуль запитів і нуль роботи DOM).
