@@ -1535,6 +1535,20 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .vanom-btn:hover { border-color:#fbbf24; color:#fbbf24; }
 .vanom-btn-del { color:#fca5a5; border-color:#5b2a2f; }
 .vanom-btn-del:hover { border-color:#f87171; color:#f87171; }
+/* 🤖 Фірмова іконка ШІ (22.11) */
+.ai-mark { display:inline-flex; align-items:center; vertical-align:middle; }
+.ai-brand { width:14px; height:14px; border-radius:3px; object-fit:contain; vertical-align:middle;
+            filter: drop-shadow(0 0 2px rgba(167,139,250,.55)); }
+.aip-grid { display:flex; flex-wrap:wrap; gap:10px 16px; align-items:center; font-size:0.72rem; color:#cbd5e1; }
+.aip-grid input[type=number], .aip-grid select { background:#141821; color:#dde3ee; border:1px solid #2b2f36;
+            border-radius:4px; padding:2px 4px; }
+.aip-chip { display:inline-block; padding:1px 7px; border:1px solid #3b3366; border-radius:10px; cursor:pointer;
+            color:#8b93a7; user-select:none; font-size:0.7rem; }
+.aip-chip.on { color:#ede9fe; background:rgba(167,139,250,.18); border-color:#a78bfa; }
+.aip-kpi { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+.aip-kpi > div { flex:1 1 150px; border:1px solid #2b3444; border-radius:6px; padding:6px 8px; background:rgba(255,255,255,.02); }
+.aip-kpi b { display:block; font-size:0.62rem; text-transform:uppercase; color:#8b93a7; letter-spacing:.04em; }
+.aip-kpi span { font-family:monospace; font-size:0.86rem; color:#e2e8f0; }
 </style>
 
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
@@ -2574,19 +2588,8 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                         <input type="checkbox" id="sm-vob-alert" onchange="updateVobAlert()">
                         🟪 Volumized OB Alerts (новий тип сигналу)
                     </label>
-                    <!-- 🤖 СИГНАЛИ ШІ (16.11): монети «🌀 заряджені» обох Пружин, бал
-                         розряду з живого 1h-бару + потоку ⚠ аномалій, ваги — з досліджень. -->
-                    <span id="sm-ai-group" style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:8px;
-                                padding:3px 8px;border:1px solid #3b3366;border-radius:6px">
-                    <label class="sm-checkbox" title="🤖 Сигнали ШІ — ЄДИНИЙ МОЗОК: професійно визначити НАПРЯМОК і ВХІД. Бот стежить за монетами, ЗАРЯДЖЕНИМИ в 🌀 Пружині (WATCHLIST) і в 🔭 скані біржі, і вирішує по черзі: 🧭 НАПРЯМОК — куди накручено пружину і куди свідчить комплекс реакцій ⚠ аномалій обсягу (вето: коробку пробито в протилежний бік, зустрічний 🔥→🧽, сильний зустрічний потік); 🚀 СТАРТ — сценарій входу (🔁 Розворот після виснаження / 💥 Старт розряду / ↗ Продовження після відкату / 🪤 Спринг) пройдено повністю, точка свіжа (≤2 свічки); 📋 САНІТАРНІ перевірки ЗАКРИТИХ свічок 15m/1h/4h — дані свіжі, волатильність у межах, імпульс 15m не проти, ЗАПАС до цілі (R після комісій ≥ 1.3), навчена модель (коли готова) не проти. Трендові вето (тренд на 3 TF, конфлікт 1h/4h) НЕ блокують: на старті розряду тренд ще плаский — вони пишуться «тіньовим вердиктом» для досліджень. 🗺 План угоди: стоп від структури / ATR, ціль — «Ймовірний хід» Пружини; за ним потім судить «🤖 Вихід з угоди ШІ». Сигнал іде через усі ваші ворота. ВИМК (дефолт).">
-                        <input type="checkbox" id="sm-ai-signal" onchange="updateAiSignal()">
-                        🤖 Сигнали ШІ
-                    </label>
-                    <label title="Мінімальний ЗАРЯД пружини (0-100), з якого монета береться під нагляд ШІ">заряд ≥ <input type="number" id="sm-ai-min-charge" min="0" max="100" step="5" style="width:48px" onchange="updateAiSignal()"></label>
-                    <label class="sm-checkbox" title="🎓 Раз на 15 хв навчати модель мозку на нових ЗАКРИТИХ епізодах ШІ і угодах (🔬 дослідження). Кожен запис — рівно один раз; нова модель (претендент) замінює чинну, лише якщо краще передбачила пізніші, ще не бачені результати. Поки модель не пройшла 200 перевірок на даних, яких не бачила (OOS), вона на рішення НЕ впливає; після — є одним із пунктів санітарної перевірки входу. Працює, коли увімкнено 🤖 Сигнали ШІ або 🤖 Вихід з угоди ШІ. Торгівлю саме не вмикає.">
-                        <input type="checkbox" id="sm-ai-learning" checked onchange="updateAiSignal()"> 🎓 навчання на архівах
-                    </label>
-                    </span>
+                    <!-- 🤖 ШІ (22.11): власний сценарій, налаштування — у панелі ШІ БОТА. -->
+                    <span class="sm-checkbox" style="cursor:pointer" onclick="(document.getElementById('aip-body')||{}).scrollIntoView && document.getElementById('aip-body').scrollIntoView({behavior:'smooth'})" title="ШІ працює за ВЛАСНИМ сценарієм (дві Пружини, свої угоди) паралельно зі звичайними сигналами, ворота бота його не зупиняють. Усі налаштування — у панелі «ШІ БОТА»."><img class="ai-brand" src="/static/vsv-logo.png" alt=""> ШІ — у панелі «ШІ БОТА»</span>
                     <label class="sm-checkbox" title="🔒 Один VOB-сигнал на один 1H-OB (Require OB Match TF). Перший 5хв-VOB, що пройшов усі увімкнені фільтри (OB/Forecast/Decision), дає ОДИН сигнал; решта 5хв-VOB на цьому ж 1H-OB тихо ігноруються, поки не з'явиться НОВИЙ 1H-OB (будь-який напрямок). Тобто 1 сигнал = 1×(1H OB) + 1×(5хв VOB).">
                         <input type="checkbox" id="sm-vob-one-per-ob" onchange="updateVobOnePerOb()">
                         🔒 1 VOB на 1H OB
@@ -4954,6 +4957,64 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     </div>
     </div>
 
+    <!-- 🤖 ШІ (22.11): ВЛАСНИЙ сценарій — дві Пружини, свої налаштування, свої
+         угоди. Ворота бота ШІ не зупиняють; звичайні сигнали працюють паралельно. -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 6px">
+        <div style="font-size:0.8rem;font-weight:700;color:#c4b5fd;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px" onclick="togglePanel('aip')" title="Клік — згорнути/розгорнути"><span id="aip-caret" style="display:inline-block;width:11px;color:#8b93a7">▼</span> <img class="ai-brand" src="/static/vsv-logo.png" alt="" style="width:18px;height:18px"> ШІ БОТА · ВЛАСНИЙ СЦЕНАРІЙ <span style="font-weight:400;color:#8b93a7;font-size:0.7rem">— дві Пружини · свої угоди · еталони · самонавчання</span></div>
+        <label class="tm-toggle-switch" onclick="event.stopPropagation()" title="ШІ відкриває СВОЇ угоди за своїм сценарієм (ворота бота не діють). ВИМК (дефолт)."><input type="checkbox" id="aip-enabled" onchange="aipSave()"><span class="tm-toggle-slider"></span></label>
+    </div>
+    <div id="aip-body" style="background:rgba(167,139,250,0.03);border:1px solid rgba(167,139,250,0.22);border-radius:8px;padding:10px 12px;margin-bottom:12px">
+        <div id="aip-st" style="font-size:0.72rem;color:#8b93a7;margin-bottom:8px">—</div>
+        <div class="aip-grid">
+            <span title="Сценарій входу. «💥 Старт розряду» (E2) — найраніша точка; інші спрацьовують пізніше">Вхід на: <span id="aip-scen"></span></span>
+            <span>Напрямки: <span class="aip-chip" data-aip-side="allow_long" onclick="aipChip(this)">▲ LONG</span> <span class="aip-chip" data-aip-side="allow_short" onclick="aipChip(this)">▼ SHORT</span></span>
+            <label title="Монета Пружини береться в роботу ШІ з цього заряду (0-100)">заряд ≥ <input type="number" id="aip-min-charge" min="0" max="100" step="5" style="width:52px" onchange="aipSave()"></label>
+            <label title="Книга угод ШІ: авто — за правилом TRD · Trade Manager · Test Mode; або завжди 🧪 paper / 🏦 реальна">книга <select id="aip-book" onchange="aipSave()"><option value="auto">авто</option><option value="paper">🧪 paper</option><option value="real">🏦 реальна</option></select></label>
+            <label title="Скільки угод ШІ може бути відкрито одночасно">одночасно ≤ <input type="number" id="aip-max-open" min="1" max="50" step="1" style="width:46px" onchange="aipSave()"></label>
+            <label title="Нових угод ШІ за 30 хв (кілька монет одночасно = одна подія ринку)">за 30 хв ≤ <input type="number" id="aip-max-30" min="1" max="20" step="1" style="width:46px" onchange="aipSave()"></label>
+            <label title="Протилежний бік по тій самій монеті — не раніше ніж через N хв">фліп ≥ <input type="number" id="aip-flip" min="0" max="1440" step="10" style="width:56px" onchange="aipSave()"> хв</label>
+            <label title="Стоп, коли плану мозку немає (% від входу)">стоп без плану <input type="number" id="aip-slfb" min="0.2" max="20" step="0.1" style="width:52px" onchange="aipSave()"> %</label>
+        </div>
+        <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
+            <label class="sm-checkbox" title="ШІ супроводжує й закриває СВОЇ угоди: аномалії + план угоди (стоп / ціль). Інші правила виходу бота угод ШІ не чіпають; Manual SL / TP працюють."><input type="checkbox" id="aip-exit" onchange="aipSave()"> вихід ШІ</label>
+            <label title="Коли закривати">закривати: <select id="aip-exit-mode" onchange="aipSave()"><option value="confirmed">аномалії + підтвердження</option><option value="all">лише коли всі показники за вихід</option></select></label>
+            <label title="🌀 Поки потенціал Пружини у бік угоди ≥ N, слабкі сигнали виходу (сценарій, аномалії + підтвердження, розворот, час) вважаються передчасними. Стоп плану, 🔥→🧽, усі групи разом, ціль і віддача піку закривають завжди. 0 = вимкнено">тримати при заряді ≥ <input type="number" id="aip-hold" min="0" max="100" step="5" style="width:52px" onchange="aipSave()"></label>
+        </div>
+        <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
+            <label class="sm-checkbox" title="🏆🧠 ГОЛОВНИЙ МОЗОК ШІ — база еталонів. Бот сам заносить кожну відмінну угоду ШІ (з усім контекстом: момент входу, план, шлях, вихід, події, уроки) в еталони, а невдалу — в антибазу. Коли зібрано ≥ 10 відмінних і ≥ 5 невдалих, остаточне рішення на вхід ухвалює мозок еталонів (k найближчих схожих угод голосують), і ціль угоди береться з типового піку схожих відмінних. До того — вирішують правила (вони й наповнюють базу)."><input type="checkbox" id="aip-etalon" onchange="aipSave()"> 🏆🧠 мозок еталонів</label>
+            <label title="Угода стає еталоном, якщо результат ≥ N R від стопа плану (без стопа — ≥ 1.5%)">відмінна ≥ <input type="number" id="aip-et-r" min="0.5" max="10" step="0.1" style="width:52px" onchange="aipSave()"> R</label>
+            <label title="Мозок еталонів: найближча схожа угода мусить бути не далі цієї схожості (0..1)">схожість ≥ <input type="number" id="aip-et-sim" min="0" max="1" step="0.05" style="width:52px" onchange="aipSave()"></label>
+            <label title="Мозок еталонів: серед схожих входів частка відмінних угод має бути не менша (0.3…0.95)">відмінних серед схожих ≥ <input type="number" id="aip-et-p" min="0.3" max="0.95" step="0.05" style="width:52px" onchange="aipSave()"></label>
+            <label class="sm-checkbox" title="🎓 Раз на 15 хв модель мозку вчиться на нових закритих епізодах і угодах (champion / challenger)"><input type="checkbox" id="aip-learn" onchange="aipSave()"> 🎓 навчання</label>
+            <label class="sm-checkbox" title="🧹 Раз на годину бот ПОЗНАЧАЄ на видалення непотріб і відпрацьований матеріал навчання (видно в картці «Очистка»), раз на 6 год — видаляє: епізоди без сигналу > 7 дн · усі епізоди > 45 дн · службові аномалії (напрямок / підписки) > 2 дн · аномалії з повним наслідком > 60 дн · дослідження не-ШІ угод > 30 дн · дослідження угод ШІ > 60 дн (стислий запис уже в базі еталонів) · еталони й антибаза > 180 дн"><input type="checkbox" id="aip-clean" onchange="aipSave()"> 🧹 автоочистка</label>
+            <span style="margin-left:auto;display:flex;gap:6px">
+                <a class="vanom-btn" href="#" onclick="aipCleanup();return false" title="Запустити очистку таблиць навчання зараз">🧹 Очистити зараз</a>
+                <a class="vanom-btn vanom-btn-del" href="#" onclick="aipEtalonClear();return false" title="Видалити всі еталони й антибазу (з підтвердженням)">🗑 Еталони</a>
+            </span>
+        </div>
+        <div class="aip-kpi" id="aip-kpi"></div>
+        <div id="aip-etalon-last" style="font-size:0.68rem;color:#8b93a7;margin-bottom:6px"></div>
+        <!-- 🤖 ШІ: монети в заряді, бал розряду LONG/SHORT, калібровка з досліджень -->
+        <div style="margin-top:10px;padding-top:8px;border-top:1px solid #2a2a2a">
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:0.72rem;color:#8b93a7;margin-bottom:6px">
+                <b style="color:#c4b5fd">Монети під наглядом ШІ — заряджені обох Пружин</b>
+                <span id="ai-st"></span>
+                <span style="margin-left:auto"><a class="vanom-btn" href="#" onclick="aiExport();return false" title="Закриті епізоди заряду: старт, розряд, вистріл, сигнал ШІ і що було після (CSV)">⬇ Епізоди ШІ CSV</a></span>
+            </div>
+            <div id="ai-cal" style="font-size:0.66rem;color:#8b93a7;margin-bottom:6px"></div>
+            <details id="ai-rules" style="font-size:0.68rem;color:#cbd5e1;margin-bottom:6px;border:1px solid #2b3444;border-radius:6px;padding:4px 8px">
+                <summary style="cursor:pointer;color:#c4b5fd;font-weight:700">📘 Правила ШІ — які послідовності реакцій ведуть до входу, а які — до виходу</summary>
+                <div id="ai-rules-body" style="margin-top:6px">—</div>
+            </details>
+            <div style="overflow-x:auto;max-height:300px;overflow-y:auto"><table class="tm-table" id="ai-table" style="width:100%">
+                <thead><tr><th>Монета</th><th title="🌀 WATCHLIST / 🔭 скан біржі">Джерело</th><th title="Заряд пружини 0-100">Заряд</th>
+                    <th title="🧩 Сценарій входу LONG: етапи комплексу реакцій (✓ пройдено / · ще ні); у підказці — кожен етап, злам і довідковий бал">🟢 LONG · сценарій</th><th title="🧩 Сценарій входу SHORT">🔴 SHORT · сценарій</th>
+                    <th title="Рішення ШІ: ✅ точка входу (сценарій пройдено повністю і свіжий) · ⏳ формується · ⌛ запізно · ✗ злам">Рішення</th><th title="Скільки триває епізод заряду">Епізод</th><th title="Сигнал ШІ в цьому епізоді">Сигнал</th></tr></thead>
+                <tbody id="ai-tbody"><tr><td colspan="8" style="color:#8b93a7">—</td></tr></tbody>
+            </table></div>
+        </div>
+    </div>
+
     <!-- ⚠ АНОМАЛІЇ ОБСЯГУ · 🔬 ДОСЛІДЖЕННЯ УГОД (16.11): датасет для навчання
          бота рішенням входу / виходу. Усе пишеться в БД; тут — статистика і
          вивантаження. Торгівлі не стосується. -->
@@ -4981,25 +5042,6 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <th title="Середній рух ціни через 4 / 8 свічок у бік підказки (для 🔥/📈 — просто рух)">Сер. рух 4 / 8 св.</th></tr></thead>
             <tbody id="vanom-tbody"><tr><td colspan="6" style="color:#8b93a7">—</td></tr></tbody>
         </table></div>
-        <!-- 🤖 ШІ: монети в заряді, бал розряду LONG/SHORT, калібровка з досліджень -->
-        <div style="margin-top:10px;padding-top:8px;border-top:1px solid #2a2a2a">
-            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:0.72rem;color:#8b93a7;margin-bottom:6px">
-                <b style="color:#c4b5fd">🤖 ШІ — заряджені монети обох Пружин</b>
-                <span id="ai-st"></span>
-                <span style="margin-left:auto"><a class="vanom-btn" href="#" onclick="aiExport();return false" title="Закриті епізоди заряду: старт, розряд, вистріл, сигнал ШІ і що було після (CSV)">⬇ Епізоди ШІ CSV</a></span>
-            </div>
-            <div id="ai-cal" style="font-size:0.66rem;color:#8b93a7;margin-bottom:6px"></div>
-            <details id="ai-rules" style="font-size:0.68rem;color:#cbd5e1;margin-bottom:6px;border:1px solid #2b3444;border-radius:6px;padding:4px 8px">
-                <summary style="cursor:pointer;color:#c4b5fd;font-weight:700">📘 Правила ШІ — які послідовності реакцій ведуть до входу, а які — до виходу</summary>
-                <div id="ai-rules-body" style="margin-top:6px">—</div>
-            </details>
-            <div style="overflow-x:auto;max-height:300px;overflow-y:auto"><table class="tm-table" id="ai-table" style="width:100%">
-                <thead><tr><th>Монета</th><th title="🌀 WATCHLIST / 🔭 скан біржі">Джерело</th><th title="Заряд пружини 0-100">Заряд</th>
-                    <th title="🧩 Сценарій входу LONG: етапи комплексу реакцій (✓ пройдено / · ще ні); у підказці — кожен етап, злам і довідковий бал">🟢 LONG · сценарій</th><th title="🧩 Сценарій входу SHORT">🔴 SHORT · сценарій</th>
-                    <th title="Рішення ШІ: ✅ точка входу (сценарій пройдено повністю і свіжий) · ⏳ формується · ⌛ запізно · ✗ злам">Рішення</th><th title="Скільки триває епізод заряду">Епізод</th><th title="Сигнал ШІ в цьому епізоді">Сигнал</th></tr></thead>
-                <tbody id="ai-tbody"><tr><td colspan="8" style="color:#8b93a7">—</td></tr></tbody>
-            </table></div>
-        </div>
         <div style="font-size:0.66rem;color:#8b93a7;margin-top:6px;line-height:1.5">
             Кожна угода пише в БД 🔬 дослідження (зрізи раз на 5 хв + події: 💥 вистріл, 🎯 кульмінація, рубежі цілі Пружини, трейли, пік / дно з показниками). Після закриття — підсумок «якби вийти на першій події». Деталі угоди — 📈 біля назви монети → «Шлях монети».
         </div>
@@ -5439,19 +5481,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                             <label style="margin-left:10px" title="Мінімальний прибуток від входу: і умова озброєння, і найгірший стоп (покриває комісії)">мін. прибуток <input type="number" id="tm-exh-exit-profit" min="0" max="10" step="0.05" style="width:52px" onchange="saveTMSettings()"> %</label>
                         </div>
 
-                        <!-- 🤖 ВИХІД З УГОДИ ШІ (17.11): рішення — за ВЕРДИКТОМ ⚠ аномалій обсягу. -->
-                        <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
-                            <label>
-                                <input type="checkbox" id="tm-use-ai-exit" onchange="saveTMSettings()">
-                                🤖 Вихід з угоди ШІ
-                                <span class="tm-help" title="ЄДИНИЙ МОЗОК ВИХОДУ: вердикт ⚠ АНОМАЛІЙ ОБСЯГУ + супровід угоди за ПЛАНОМ (стоп від структури / ATR, ціль). Три групи свідчень: 📖 АНОМАЛІЇ (від входу, не давніше 24 год) — 🧽 поглинання / ⚡ зміна ініціативи / 🔥→🧽 проти угоди, 🔥 виснаження руху за угодою; 📉 ЦІНА — коробку пробито / пружина вистрілила ПРОТИ, CHoCH проти після входу, підтверджений розворот 15m/1h на двох закритих свічках; 💰 ПРИБУТОК — ≥70% шляху до цілі, ціль плану досягнуто, віддано ≥ половини піку (пік ≥1R). ЗАХИСНЕ (завжди): 🛑 ціна зламала стоп плану · 🧩 сценарій виходу завершено · підтверджений 🔥→🧽 · ✅ усі три групи. Свіже ⚡/📈 продовження ЗА угодою тримає все, крім захисного. План береться з сигналу ШІ; угоди з інших джерел — план від ATR / структури на вході. Бари — з кешу рушія ШІ (без нових запитів), перевірка раз на ~20с на книгу. Стан, R і план — значок 🤖 у колонці 🚨. 📌 Manual не чіпає. ВИМК (дефолт).">?</span>
-                            </label>
-                            <label style="margin-left:10px" title="Коли закривати. «Аномалії + підтвердження» — захисне + аномалії з підтвердженням ціною АБО прибутком + розворот 15m/1h, віддача прибутку від піку, ціль плану, часовий стоп (8 год без результату). «Лише коли всі показники за вихід» — лише захисне: стоп плану, сценарій виходу, підтверджений 🔥→🧽, або аномалії + ціна + прибуток разом (суворіше, рідше).">закривати:
-                                <select id="tm-ai-exit-mode" onchange="saveTMSettings()">
-                                    <option value="confirmed">аномалії + підтвердження</option>
-                                    <option value="all">лише коли всі показники за вихід</option>
-                                </select>
-                            </label>
+                        <!-- 🤖 ВИХІД ШІ (22.11): лише угоди ШІ, налаштування — у панелі ШІ БОТА. -->
+                        <div class="tm-row" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a;font-size:0.72rem;color:#8b93a7">
+                            <img class="ai-brand" src="/static/vsv-logo.png" alt=""> Вихід ШІ супроводжує ЛИШЕ угоди ШІ (і лише ними займається) — налаштування в панелі «ШІ БОТА». Правила виходу вище угод ШІ не чіпають.
                         </div>
                         <!-- 🧮 ОКРЕМЕ правило — СВІДОМО стоїть ПІСЛЯ «Комбінувати»,
                              щоб не читалось як четверте правило того збігу: там
@@ -6662,7 +6694,10 @@ async function loadActivityLog() {
                 const m = _actMeta[s.event] || ['•', s.event, '#cbd5e1'];
                 return `<span style="color:${m[2]};font-weight:700;white-space:nowrap">${m[0]} ${m[1]}</span>`;
             }).join('<span style="color:#4b5563"> → </span>');
-            const srcs = [...new Set(c.steps.map(s => s.source).filter(Boolean))].join(' · ');
+            // 🤖 Записи ШІ (source AI) — з фірмовою іконкою (22.11).
+            const srcs = [...new Set(c.steps.map(s => s.source).filter(Boolean))]
+                .map(x => x === 'AI' ? aiBrand('Подія ШІ бота') + ' ШІ' : x).join(' · ');
+            const isAi = c.steps.some(s => s.source === 'AI');
             // Each step on its own line with a COLOURED dot = «інше доповнення».
             const det = c.steps.map(s => {
                 const m = _actMeta[s.event] || ['•', s.event, '#cbd5e1'];
@@ -6683,7 +6718,8 @@ async function loadActivityLog() {
             // + ледь помітне тло. Без цього рядок стоїть окремо лише формально.
             const rowStyle = c.solo
                 ? ' style="background:rgba(34,211,238,0.05);'
-                  + 'box-shadow:inset 3px 0 0 #22d3ee"' : '';
+                  + 'box-shadow:inset 3px 0 0 #22d3ee"'
+                : (isAi ? ' style="box-shadow:inset 3px 0 0 #a78bfa"' : '');
             return `<tr${rowStyle}>
                 <td style="color:#8b93a7;font-size:0.72rem;white-space:nowrap;vertical-align:top">${t}</td>
                 <td style="font-weight:700;vertical-align:top">${c.symbol ? tvSym(c.symbol, c.symbol) : ''}</td>
@@ -6883,6 +6919,16 @@ function _aiDecision(c) {
     if (sc && sc.done) return `<span style="color:#fbbf24">⏳ ${arrow} формується ${sc.done}/${sc.total}</span>`;
     return '<span style="color:#6b7280">очікує</span>';
 }
+// 🏆🧠 Вердикт ГОЛОВНОГО МОЗКУ (база еталонів) для монети.
+function _aiEtalonCell(e) {
+    if (!e) return '';
+    const tip = ('🏆🧠 Мозок еталонів: ' + (e.reason || '') + (e.p_good != null ? '\nСеред схожих входів відмінних ' + Math.round(e.p_good * 100) + '%' : '')
+        + (e.exp_r != null ? ' · очікувано ' + e.exp_r + 'R' : '') + (e.tp_r != null ? '\nЦіль з досвіду ' + e.tp_r + 'R' : '')
+        + ((e.nearest || []).length ? '\nНайближчі: ' + e.nearest.map(n => (n.good ? '🏆' : '❌') + (n.sym || '').replace('USDT', '') + (n.r != null ? ' ' + n.r + 'R' : '')).join(' · ') : '')).replace(/"/g, '&quot;');
+    if (!e.mature) return `<div title="${tip}" style="font-size:10px;color:#8b93a7">${AI_BRAND_IMG} вчиться ${e.n_good || 0}/${e.need_good || 10} · ${e.n_anti || 0}/${e.need_anti || 5}</div>`;
+    const ok = e.verdict === 'take';
+    return `<div title="${tip}" style="font-size:10px;color:${ok ? '#4ade80' : '#f87171'};font-weight:700">${AI_BRAND_IMG} ${ok ? 'бере' : 'ні'}${e.p_good != null ? ' ' + Math.round(e.p_good * 100) + '%' : ''}</div>`;
+}
 function _aiRulesHTML(cat) {
     if (!cat) return '—';
     const blk = (title, arr, col) => `<div style="margin:4px 0"><b style="color:${col}">${title}</b>`
@@ -6922,6 +6968,113 @@ function _aiAge(sec) {
     const m = Math.floor(sec / 60);
     return m < 60 ? `${m}хв` : `${Math.floor(m / 60)}г ${m % 60}хв`;
 }
+// ── 🤖 ПАНЕЛЬ ШІ (22.11): свої налаштування → POST /api/ai/settings ──────
+let _aipLast = null, _aipSavedAt = 0;
+function _aipEsc(x) { return String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+function aipApply(d) {
+    _aipLast = d;
+    const a = d.ai || {}, g = id => document.getElementById(id);
+    window._aipOn = !!a.enabled;
+    const fresh = Date.now() - _aipSavedAt > 4000;   // не перебивати щойно збережене
+    if (fresh) {
+        const ck = (id, v) => { const e = g(id); if (e && document.activeElement !== e) e.checked = !!v; };
+        const vl = (id, v) => { const e = g(id); if (e && document.activeElement !== e && v != null) e.value = v; };
+        ck('aip-enabled', a.enabled); ck('aip-exit', a.exit_enabled); ck('aip-etalon', a.etalon_enabled);
+        ck('aip-learn', a.learning_enabled); ck('aip-clean', a.cleanup_enabled);
+        vl('aip-min-charge', a.min_charge); vl('aip-book', a.book); vl('aip-max-open', a.max_open);
+        vl('aip-max-30', a.max_per_30m); vl('aip-flip', a.flip_cooldown_min); vl('aip-slfb', a.sl_fallback_pct);
+        vl('aip-exit-mode', a.exit_mode); vl('aip-hold', a.hold_pot); vl('aip-et-r', a.etalon_min_r);
+        vl('aip-et-sim', a.etalon_min_sim); vl('aip-et-p', a.etalon_min_p);
+        document.querySelectorAll('[data-aip-side]').forEach(c => c.classList.toggle('on', a[c.dataset.aipSide] !== false));
+        const sc = g('aip-scen');
+        if (sc) {
+            const nm = {E1: '🔁 E1 Розворот', E2: '💥 E2 Старт розряду', E3: '↗ E3 Продовження', E4: '🪤 E4 Спринг'};
+            const on = new Set(a.scenarios || []);
+            sc.innerHTML = (d.scenario_keys || ['E1', 'E2', 'E3', 'E4']).map(k =>
+                `<span class="aip-chip${on.has(k) ? ' on' : ''}" data-aip-scen="${k}" onclick="aipChip(this)">${nm[k] || k}</span>`).join(' ');
+        }
+    }
+    const et = d.etalon || {}, cl = d.cleanup || {}, own = d.own_trades || [];
+    const kp = g('aip-kpi');
+    if (kp) {
+        const _dt = t => new Date(t * 1000).toLocaleString([], {hour12: false, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
+        const _sum = c => (c.episodes || 0) + (c.anomalies || 0) + (c.research || 0) + (c.etalon || 0);
+        const mk = d.cleanup_mark || {};
+        let clTxt = !a.cleanup_enabled ? 'вимкнено'
+            : (cl.at ? _dt(cl.at) + ' · −' + _sum(cl) : 'ще не було');
+        if (a.cleanup_enabled && mk.at) clTxt += ` <small style="color:#fbbf24" title="${_aipEsc('Позначено на видалення: епізодів ' + (mk.episodes || 0) + ' · аномалій ' + (mk.anomalies || 0) + ' · досліджень ' + (mk.research || 0) + ' · еталонів ' + (mk.etalon || 0))}">🏷 ${_sum(mk)}${d.cleanup_next ? ' до ' + _dt(d.cleanup_next) : ''}</small>`;
+        kp.innerHTML = [
+            ['Стан', a.enabled ? '<span style="color:#4ade80">ПРАЦЮЄ</span>' : '<span style="color:#94a3b8">вимкнено</span>'],
+            ['Угоди ШІ відкриті', `${own.length} / ${a.max_open || '—'}`
+                + (own.length ? ` <small style="color:#8b93a7">${own.map(o => o.symbol.replace('USDT', '') + (o.paper ? '🧪' : '🏦')).join(' ')}</small>` : '')],
+            ['Відкрито за 30 хв', `${d.opens_30m || 0} / ${a.max_per_30m || '—'}`],
+            ['🏆🧠 Головний мозок', et.mature ? '<span style="color:#4ade80">вирішує</span>'
+                : `<span style="color:#fbbf24">вчиться</span> <small style="color:#8b93a7">🏆 ${et.n || 0}/${et.need_good || 10} · ❌ ${et.anti_n || 0}/${et.need_anti || 5}</small>`],
+            ['🏆 Еталони · ❌ антибаза', `${et.n || 0} · ${et.anti_n || 0}` + (et.avg_r != null ? ` <small style="color:#8b93a7">сер. ${et.avg_r}R` + (et.avg_capture != null ? ` · взято ${Math.round(et.avg_capture * 100)}% піку` : '') + '</small>' : '')],
+            [`<span title="${_aipEsc('Що позначається на видалення автоматично:\n• ' + (d.cleanup_rules_ua || []).join('\n• '))}">🧹 Очистка ⓘ</span>`, clTxt],
+        ].map(([k, v]) => `<div><b>${k}</b><span>${v}</span></div>`).join('');
+    }
+    const el = g('aip-etalon-last');
+    if (el) el.innerHTML = (et.last || []).length
+        ? '🏆 Останні еталони: ' + et.last.map(e => `<span title="${_aipEsc((e.lessons || []).join('\n'))}" style="color:${e.side === 'LONG' ? '#4ade80' : '#f87171'}">${_aipEsc((e.sym || '').replace('USDT', ''))} ${e.side === 'LONG' ? '▲' : '▼'} ${e.r != null ? e.r + 'R' : (e.pnl != null ? e.pnl + '%' : '')}</span>`).join(' · ')
+          + ((et.anti_last || []).length ? ' &nbsp; ❌ ' + et.anti_last.map(e => `${_aipEsc((e.sym || '').replace('USDT', ''))} ${e.r != null ? e.r + 'R' : (e.pnl != null ? e.pnl + '%' : '')}`).join(' · ') : '')
+        : '🏆 Еталонів ще немає. Бот сам додає відмінні угоди ШІ (≥ ' + (a.etalon_min_r || 1.5) + 'R) в еталони, невдалі (≤ −0.5R) — в антибазу. Поки баз мало, вирішують правила; коли зібрано — рішення ухвалює мозок еталонів.';
+}
+function aipChip(el) {
+    el.classList.toggle('on');
+    if (el.dataset.aipScen && !document.querySelector('[data-aip-scen].on')) el.classList.add('on');   // хоч один сценарій
+    if (el.dataset.aipSide && !document.querySelector('[data-aip-side].on')) el.classList.add('on');
+    aipSave();
+}
+async function aipSave() {
+    const g = id => document.getElementById(id);
+    const n = (id, d) => { const v = parseFloat((g(id) || {}).value); return isFinite(v) ? v : d; };
+    const side = k => { const c = document.querySelector(`[data-aip-side="${k}"]`); return !c || c.classList.contains('on'); };
+    const scen = [...document.querySelectorAll('[data-aip-scen].on')].map(c => c.dataset.aipScen);
+    const body = {
+        enabled: !!(g('aip-enabled') || {}).checked, exit_enabled: !!(g('aip-exit') || {}).checked,
+        exit_mode: (g('aip-exit-mode') || {}).value || 'confirmed', min_charge: n('aip-min-charge', 65),
+        allow_long: side('allow_long'), allow_short: side('allow_short'),
+        book: (g('aip-book') || {}).value || 'auto', max_open: n('aip-max-open', 5),
+        max_per_30m: n('aip-max-30', 3), flip_cooldown_min: n('aip-flip', 180), hold_pot: n('aip-hold', 40),
+        sl_fallback_pct: n('aip-slfb', 2), learning_enabled: !!(g('aip-learn') || {}).checked,
+        etalon_enabled: !!(g('aip-etalon') || {}).checked, etalon_min_r: n('aip-et-r', 1.5),
+        etalon_min_sim: n('aip-et-sim', 0.35), etalon_min_p: n('aip-et-p', 0.6), cleanup_enabled: !!(g('aip-clean') || {}).checked,
+    };
+    if (scen.length) body.scenarios = scen;
+    if (body.enabled && !(_aipLast && (_aipLast.ai || {}).enabled) && body.book !== 'paper'
+        && !confirm('Увімкнути ШІ? Він відкриватиме СВОЇ угоди без воріт бота (книга: ' + body.book + '). Реальні угоди — за правилом TRD · Trade Manager.')) {
+        g('aip-enabled').checked = false; return;
+    }
+    _aipSavedAt = Date.now();
+    try {
+        const r = await fetch('/api/ai/settings', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) throw new Error((d && (d.error || d.reason)) || ('HTTP ' + r.status));
+        window._aipOn = !!body.enabled;
+        try { updateSettingsSummary(); } catch (e) {}
+        aiLoad();
+    } catch (e) { alert('ШІ: налаштування не збережено — ' + (e.message || e)); }
+}
+async function aipCleanup() {
+    try {
+        const r = await fetch('/api/ai/cleanup', {method: 'POST'});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) throw new Error((d && (d.error || d.reason)) || ('HTTP ' + r.status));
+        const c = d.result || {};
+        alert(`🧹 Очищено: епізодів ${c.episodes || 0} · аномалій ${c.anomalies || 0} · досліджень ${c.research || 0} · еталонів ${c.etalon || 0}`);
+        aiLoad();
+    } catch (e) { alert('🧹 Очистка: ' + (e.message || e)); }
+}
+async function aipEtalonClear() {
+    if (!confirm('Видалити ВСІ еталони ШІ? Бот почне збирати базу заново.')) return;
+    try {
+        const r = await fetch('/api/ai/etalon/clear', {method: 'POST'});
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) throw new Error((d && (d.error || d.reason)) || ('HTTP ' + r.status));
+        aiLoad();
+    } catch (e) { alert('🏆 Еталони: ' + (e.message || e)); }
+}
 async function aiLoad() {
     try {
         const r = await fetch('/api/ai/state');
@@ -6929,11 +7082,12 @@ async function aiLoad() {
         const d = await r.json();
         if (!d || !d.ok) throw new Error((d && d.reason) || 'немає відповіді');
         const st = d.stat || {}, s = d.settings || {};
+        try { aipApply(d); } catch (e) {}
         const el = document.getElementById('ai-st');
         if (el) el.innerHTML = `під наглядом <b style="color:#cbd5e1">${(d.coins || []).length}</b>`
             + ` · епізодів відкрито ${d.episodes_open || 0}` + (d.episodes_total != null ? ` · закрито за 30 дн ${d.episodes_total}` : '')
             + ` · сигналів ${st.signals || 0}`
-            + ` · <span style="color:${s.ai_signal_enabled ? '#4ade80' : '#6b7280'}">${s.ai_signal_enabled ? '🤖 сигнали увімкнено' : 'сигнали вимкнено (лише дослідження)'}</span>`
+            + ` · <span style="color:${s.ai_signal_enabled ? '#4ade80' : '#6b7280'}">${s.ai_signal_enabled ? 'ШІ відкриває свої угоди' : 'ШІ вимкнено (лише нагляд і дослідження)'}</span>`
             + ` · 🧠 графік 15m/1h/4h · 🎓 модель OOS ${(((d.professional || {}).model || {}).oos_samples || 0)}/${(((d.professional || {}).model || {}).min_oos || 200)}`
             + ` · архівів ${(d.professional || {}).processed_archive_records || 0}`
             + ` · ${String(((d.professional || {}).learning || {}).status || 'not_run')}`
@@ -6962,7 +7116,7 @@ async function aiLoad() {
                 + `<td>${c.src === 'scan' ? '🔭' : '🌀'}</td>`
                 + `<td style="font-family:monospace">${c.charge != null ? Math.round(c.charge) : '—'}</td>`
                 + `<td>${_aiScenCell(c.long, c.best === 'LONG')}</td><td>${_aiScenCell(c.short, c.best === 'SHORT')}</td>`
-                + `<td>${_aiDecision(c)}${proHTML}</td>`
+                + `<td>${_aiDecision(c)}${proHTML}${_aiEtalonCell(c.etalon)}</td>`
                 + `<td style="font-family:monospace">${_aiAge(c.episode_age)}</td><td>${sig}</td></tr>`;
         }).join('');
     } catch (e) {
@@ -6995,6 +7149,7 @@ function togglePanel(pid) {
     if (open && pid === 'fund') { try { fsprLoad(true); } catch (e) {} }
     if (open && pid === 'xspr') { try { xsprLoad(true); } catch (e) {} }
     if (open && pid === 'vanom') { try { vanomLoad(); } catch (e) {} }
+    if (open && pid === 'aip') { try { aiLoad(); } catch (e) {} }
     if (open && (pid === 'q4' || pid === 'mm' || pid === 'mmn' || pid === 'mmc' || pid === 'mmf' || pid === 'mmp' || pid === 'mmd' || pid === 'mmr' || pid === 'mms')) {
         try { loadFuelFilterStatus(); } catch (e) {}
     }
@@ -7020,7 +7175,7 @@ function _qCollapsed(qid) {
 }
 // Секції з гармошкою: Черги 1-4, 🎯 POC-сетап, 💰 Funding, 💼 Trade Manager,
 // 🧪 Test Mode. Стан кожної памʼятається окремо (UI-налаштування, не дані).
-const _PANEL_IDS = ['vanom', 'spr', 'xspr', 'tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'tmclosed', 'testmode', 'tmpclosed'];
+const _PANEL_IDS = ['aip', 'vanom', 'spr', 'xspr', 'tmgen', 'levels', 'autosl', 'mm', 'mmlist', 'mmn', 'mmnlist', 'mmc', 'mmclist', 'mmf', 'mmflist', 'mmp', 'mmplist', 'mmd', 'mmdlist', 'mmr', 'mmrlist', 'mms', 'mmslist', 'lh', 'q1', 'q2', 'q3', 'q4', 'poc', 'fund', 'tm', 'tmclosed', 'testmode', 'tmpclosed'];
 // Секції, ЗГОРНУТІ ЗА ЗАМОВЧУВАННЯМ (доки користувач сам не розгорне): список
 // монет МММ-монітора — вимога 18.09. Для решти дефолт лишається «розгорнуто»,
 // тобто збережений вибір користувача завжди сильніший за цей список.
@@ -7049,8 +7204,10 @@ const _PANEL_CLOSED_BY_DEFAULT = new Set(['vanom', 'tmgen', 'mmlist', 'mmnlist',
 })();
 
 // 🤖 Стан ШІ — раз на 30с, лише коли панель розгорнута і вкладка видима.
+// Стан тумблера — одразу на старті (шапка налаштувань знає, чи працює ШІ).
+try { aiLoad(); } catch (e) {}
 setInterval(() => {
-    const b = document.getElementById('vanom-body');
+    const b = document.getElementById('aip-body');
     if (!b || b.style.display === 'none' || document.hidden) return;
     try { aiLoad(); } catch (e) {}
 }, 30000);
@@ -8269,12 +8426,6 @@ async function loadSettings() {
             if (chAl) chAl.checked = s.choch_alerts_enabled !== false;   // default ON
             const vobAl = document.getElementById('sm-vob-alert');
             if (vobAl) vobAl.checked = !!s.vob_alert_enabled;            // default OFF
-            const aiSg = document.getElementById('sm-ai-signal');
-            if (aiSg) aiSg.checked = !!s.ai_signal_enabled;              // default OFF
-            const aiMc = document.getElementById('sm-ai-min-charge');
-            if (aiMc) aiMc.value = (s.ai_min_charge != null ? s.ai_min_charge : 65);
-            const aiLearn = document.getElementById('sm-ai-learning');
-            if (aiLearn) aiLearn.checked = s.ai_learning_enabled !== false;
             const vobOne = document.getElementById('sm-vob-one-per-ob');
             if (vobOne) vobOne.checked = !!s.vob_one_per_ob;             // default OFF
             const obChoch = document.getElementById('sm-ob-choch-only');
@@ -8513,8 +8664,7 @@ function updateSettingsSummary() {
         if (gOn) summary += ' · ' + t + (bOn ? ' +банер' : '');
         else if (bOn) summary += ' · банер ' + t;     // лише «за банером» (17.11)
     });
-    { const _ai = document.getElementById('sm-ai-signal');
-      if (_ai && _ai.checked) summary += ' · 🤖 ШІ (сценарії)'; }
+    if (window._aipOn) summary += ' · 🤖 ШІ (власний сценарій)';
     [['sm-spbx-gate', '⚖ SMC Binance'], ['sm-spbw-gate', '⚖ SMC Bybit']].forEach(([g, t]) => {
         const _g = document.getElementById(g);
         if (_g && _g.checked) summary += ' · ' + t;
@@ -8609,22 +8759,6 @@ async function updateChochAlerts() {
     } catch (err) { alert('CHoCH alerts update error: ' + err); }
 }
 // 🤖 Сигнали ШІ — тумблер + пороги (налаштування сканера).
-async function updateAiSignal() {
-    const g = id => document.getElementById(id);
-    const n = (id, d) => { const v = parseFloat((g(id) || {}).value); return isFinite(v) ? v : d; };
-    try {
-        const r = await fetch('/api/smc/settings', {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                ai_signal_enabled: !!(g('sm-ai-signal') || {}).checked,
-                ai_min_charge: n('sm-ai-min-charge', 65),
-                ai_learning_enabled: !!(g('sm-ai-learning') || {}).checked,
-            }),
-        });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        updateSettingsSummary();
-    } catch (err) { alert('🤖 Сигнали ШІ: не збережено — ' + err); }
-}
 async function updateVobAlert() {
     const enabled = document.getElementById('sm-vob-alert').checked;
     try {
@@ -11534,9 +11668,6 @@ async function loadTMSettings() {
         document.getElementById('tm-use-spring-fired-exit').checked = !!s.use_spring_fired_exit;
         document.getElementById('tm-spring-fired-exit-dir').value = s.spring_fired_exit_dir || 'any';
         document.getElementById('tm-use-exh-exit').checked = !!s.use_exh_exit;
-        { const _e = document.getElementById('tm-use-ai-exit'); if (_e) _e.checked = !!s.use_ai_exit;
-          const _m = document.getElementById('tm-ai-exit-mode'); if (_m) _m.value = (s.ai_exit_mode === 'all' ? 'all' : 'confirmed');
-          }
         document.getElementById('tm-exh-exit-min').value = (s.exh_exit_min != null) ? s.exh_exit_min : 75;
         document.getElementById('tm-exh-exit-atr').value = (s.exh_exit_atr != null) ? s.exh_exit_atr : 0.5;
         document.getElementById('tm-exh-exit-profit').value = (s.exh_exit_min_profit != null) ? s.exh_exit_min_profit : 0.3;
@@ -12103,8 +12234,6 @@ async function saveTMSettings() {
             use_spring_fired_exit: document.getElementById('tm-use-spring-fired-exit').checked,
             spring_fired_exit_dir: document.getElementById('tm-spring-fired-exit-dir').value,
             use_exh_exit: document.getElementById('tm-use-exh-exit').checked,
-            use_ai_exit: !!(document.getElementById('tm-use-ai-exit') || {}).checked,
-            ai_exit_mode: ((document.getElementById('tm-ai-exit-mode') || {}).value === 'all') ? 'all' : 'confirmed',
             exh_exit_min: _numOr('tm-exh-exit-min', 75),
             exh_exit_atr: _numOr('tm-exh-exit-atr', 0.5),
             exh_exit_min_profit: _numOr('tm-exh-exit-profit', 0.3),
@@ -19313,10 +19442,10 @@ function springTradeCellHTML(p) {
 // Три крапки = групи свідчень «аномалії · ціна · прибуток» (зелена — за вихід);
 // у підказці — вердикт і повний чек-лист.
 const _AIX_ICON = {invalid: '🛑', scenario: '🧩', all: '✅', combo: '🔥', close: '⚠', reversal: '🔀',
-                   giveback: '💸', target: '🎯', time: '⏳', hold: '⚡', watch: '👁', wait: '⏳', none: '·'};
+                   giveback: '💸', target: '🎯', time: '⏳', hold: '⚡', watch: '👁', wait: '⏳', charged: '🌀', none: '·'};
 const _AIX_COL = {invalid: '#f87171', scenario: '#f87171', all: '#f87171', combo: '#f87171', close: '#fb923c',
                   reversal: '#fb923c', giveback: '#fb923c', target: '#fb923c', time: '#fb923c', hold: '#4ade80',
-                  watch: '#fbbf24', wait: '#94a3b8', none: '#64748b'};
+                  watch: '#fbbf24', wait: '#94a3b8', charged: '#4ade80', none: '#64748b'};
 function aiExitChipHTML(p) {
     const x = p && p.ai_exit;
     if (!x || !x.verdict) return '';
@@ -19329,17 +19458,18 @@ function aiExitChipHTML(p) {
             + (sc.stages || []).map(st => (st.done ? '✓ ' : '⏳ ') + st.label).join(' · '));
     });
     const pl = x.plan || {};
-    const tip = ('🤖 Вихід ШІ (єдиний мозок): ' + (x.verdict_ua || '') + '\n'
+    const tip = ('ШІ · вихід (єдиний мозок): ' + (x.verdict_ua || '') + '\n'
         + 'Аномалій від входу: ' + (x.anoms != null ? x.anoms : '—')
         + ' · режим: ' + (x.mode === 'all' ? 'лише коли всі показники за вихід' : 'аномалії + підтвердження')
         + (x.r != null ? '\nR зараз ' + x.r + (x.peak_r != null ? ' · пік ' + x.peak_r + 'R' : '') : '')
         + (pl.stop != null ? '\nПлан' + (x.plan_src === 'ai' ? ' сигналу ШІ' : ' від ATR / структури на вході')
             + ': стоп ' + fmtPriceJS(pl.stop) + ' · ціль ' + fmtPriceJS(pl.target) + (pl.net_rr != null ? ' · R ' + pl.net_rr : '') : '')
+        + (x.charge && x.charge.pot != null ? '\n🌀 Заряд у бік угоди: ' + Math.round(x.charge.pot) + (x.charge.min ? ' (тримаємо від ' + x.charge.min + ')' : '') : '')
         + (x.data_ok === false ? '\n(графік 15m/1h/4h зараз недоступний — працюють аномалії і стоп плану)' : '')
         + '\n' + lines.join('\n') + (x.score != null ? '\nДовідково: бал аномалій ' + x.score : '')).replace(/"/g, '&quot;');
     const c = _AIX_COL[x.verdict] || '#64748b';
     const r = x.r != null ? (x.r >= 0 ? '+' : '') + Number(x.r).toFixed(1) + 'R' : '';
-    return `<span title="${tip}" style="display:inline-flex;align-items:center;gap:1px;margin-left:5px;padding:0 4px;border-radius:4px;border:1px solid ${c}55;color:${c};font-size:0.66rem;font-family:monospace;vertical-align:middle">🤖${_AIX_ICON[x.verdict] || ''}`
+    return `<span title="${tip}" style="display:inline-flex;align-items:center;gap:1px;margin-left:5px;padding:0 4px;border-radius:4px;border:1px solid ${c}55;color:${c};font-size:0.66rem;font-family:monospace;vertical-align:middle">${AI_BRAND_IMG}${_AIX_ICON[x.verdict] || ''}`
         + dot(g.anom, 'аномалії') + dot(g.price, 'ціна') + dot(g.profit, 'прибуток')
         + (r ? `<span style="margin-left:3px">${r}</span>` : '') + `</span>`;
 }
@@ -19566,8 +19696,16 @@ function prettyOpenedBy(raw) {
     return out.join(' → ') + tail;
 }
 // Компактна іконка-«картинка» сигналу + повна мітка у підказці (title).
+// 🤖 ФІРМОВА ІКОНКА ШІ (22.11): усе, що стосується ШІ, маркується логотипом.
+const AI_BRAND_IMG = '<img class="ai-brand" src="/static/vsv-logo.png" alt="ШІ">';
+function aiBrand(title) {
+    return `<span class="ai-mark" title="${String(title || 'ШІ бота').replace(/"/g, '&quot;')}">${AI_BRAND_IMG}</span>`;
+}
 function signalIconHtml(raw) {
     if (!raw) return '';
+    if (signalCodeOf(raw) === 'ai') {
+        return `<span class="tm-sigicon" title="${prettyOpenedBy(raw).replace(/"/g, '&quot;')}" style="margin-right:3px;cursor:help">${AI_BRAND_IMG}</span>`;
+    }
     const icon = ENGINE_ICON_OVERRIDE_JS[engineCodeOf(raw)]
         || SIGNAL_ICON_JS[signalCodeOf(raw)] || '🏷';
     const full = prettyOpenedBy(raw).replace(/"/g, '&quot;');

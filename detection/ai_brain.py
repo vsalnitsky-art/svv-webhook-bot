@@ -71,11 +71,15 @@ EXIT_VERDICT_UA = {
     'target': '🎯 ціль плану досягнуто, продовження не тримає',
     'time': '⏳ сценарій не реалізувався за 8 год — сильніший протилежний бік',
     'hold': '⚡ продовження за угодою — тримаємо',
+    'charged': '🌀 заряд у бік угоди ще є — вихід зарано',
     'watch': '👁 аномалії проти — чекаємо підтвердження',
     'wait': '⏳ ціна / прибуток без аномалій — чекаємо',
     'none': '· свідчень за вихід немає',
 }
 PROTECTIVE = ('invalid', 'scenario', 'combo', 'all')
+# 🌀 Заряд у бік угоди (22.11) стримує СЛАБКІ причини виходу; сильні —
+# стоп зламано, 🔥→🧽, усі групи, ціль плану, віддача від піку — діють завжди.
+CHARGE_HOLDABLE = ('scenario', 'close', 'reversal', 'time')
 CLOSE_CONFIRMED = PROTECTIVE + ('close', 'reversal', 'giveback', 'target', 'time')
 PRO_REASON = {'professional_reversal': 'reversal', 'professional_profit_giveback': 'giveback',
               'professional_time_stop': 'time', 'professional_invalidation': 'invalid',
@@ -240,7 +244,7 @@ def plan_from_pro(pro_d: Optional[Dict]) -> Optional[Dict]:
 
 
 def exit_merge(side: str, anom: Optional[Dict], pro_d: Optional[Dict], mode: str = 'confirmed',
-               plan: Optional[Dict] = None, price=None) -> Dict:
+               plan: Optional[Dict] = None, price=None, charge: Optional[Dict] = None) -> Dict:
     """🤖 Рішення про вихід ОДНИМ мозком: вердикт ⚠ аномалій (`exit_score`) +
     супровід за планом (`manage_position`). Повертає вердикт, групи, чек-лист."""
     sd = str(side).upper()
@@ -308,7 +312,16 @@ def exit_merge(side: str, anom: Optional[Dict], pro_d: Optional[Dict], mode: str
         verdict = 'wait'
     else:
         verdict = 'none'
+    ch = None
+    pot, need = _f((charge or {}).get('pot')), _f((charge or {}).get('min'))
+    if pot is not None and need:
+        ch = {'pot': round(pot, 1), 'min': need, 'hold': pot >= need}
+        if ch['hold'] and verdict in CHARGE_HOLDABLE:
+            notes.append(f'🌀 заряд у бік угоди {pot:.0f} ≥ {need:.0f} — «{EXIT_VERDICT_UA[verdict]}» ще зарано')
+            verdict = 'charged'
     close = verdict in (PROTECTIVE if mode == 'all' else CLOSE_CONFIRMED)
+    if verdict == 'charged':
+        close = False
     checklist = list(anom.get('checklist') or [])
     checklist += [
         {'k': 'invalid', 'label': '🛑 стоп плану зламано', 'v': 1.0 if invalid else 0.0,
@@ -323,7 +336,7 @@ def exit_merge(side: str, anom: Optional[Dict], pro_d: Optional[Dict], mode: str
             'mode': mode, 'groups': groups, 'checklist': checklist, 'notes': notes,
             'plan': plan, 'r': r_now, 'peak_r': peak_r, 'hold': round(hold, 3),
             'data_ok': (pro_d.get('analysis') or {}).get('ok') if pro_d.get('analysis') else None,
-            'pro_reason': pro_d.get('reason')}
+            'pro_reason': pro_d.get('reason'), 'charge': ch}
 
 
 def exit_groups_text(m: Optional[Dict]) -> str:
@@ -335,7 +348,7 @@ def exit_groups_text(m: Optional[Dict]) -> str:
 RULES = {
     'entry': [
         '🧭 Напрямок — натяг Пружини і комплекс реакцій ⚠ аномалій; вето: коробку пробито в протилежний бік, зустрічний 🔥→🧽, сильний зустрічний потік.',
-        '🚀 Старт — сценарій входу (E1–E4) пройдено повністю, остання реакція ≤ 2 свічки тому.',
+        '🚀 Старт — сценарій входу пройдено повністю, остання реакція ≤ 2 свічки тому; дозволені сценарії — у налаштуваннях ШІ (деф. лише E2 «💥 Старт розряду»: інші спрацьовують запізно).',
         f'📋 Санітарні перевірки графіка (закриті 15m/1h/4h): дані свіжі · ATR 15m у межах {ATR_MIN_PCT}–{ATR_MAX_PCT}% · імпульс 15m не проти (≥ {MOMENTUM_AGAINST}) · запас до цілі: R після комісій ≥ {MIN_NET_RR} · навчена модель (коли готова) не проти.',
         f'🗺 План — стоп від структури / ATR останніх закритих 15m, ціль — «Ймовірний хід» Пружини (немає попереду → {FALLBACK_TARGET_R}R).',
         '🕶 Трендові вето (тренд на 3 TF, конфлікт 1h/4h, якість) НЕ блокують: на старті розряду тренд ще плаский. Вони пишуться «тіньовим вердиктом» для досліджень, а старші TF — у впевненість.',
@@ -344,5 +357,6 @@ RULES = {
         'Захисне (обидва режими): 🛑 ціна зламала стоп плану · 🧩 сценарій виходу (X1–X5) · підтверджений 🔥→🧽 · ✅ усі три групи (аномалії · ціна · прибуток).',
         '«Аномалії + підтвердження» ще закриває: аномалії + ціна або прибуток · 🔀 підтверджений розворот 15m/1h (дві закриті свічки) · 💸 віддача ≥ ½ піку (пік ≥ 1R) · 🎯 ціль плану · ⏳ 8 год без результату, сильніший протилежний бік.',
         'Свіже ⚡/📈 продовження ЗА угодою тримає все, крім захисного. Немає даних графіка — працюють аномалії, стоп плану і далі діє.',
+        '🌀 Поки заряд Пружини в бік угоди ≥ порогу (налаштування ШІ), слабкі причини (сценарій виходу, аномалії + підтвердження, розворот 15m/1h, час) — «ще зарано»; стоп плану, 🔥→🧽, усі групи, ціль і віддача від піку діють завжди.',
     ],
 }

@@ -1039,6 +1039,22 @@ PRO_EXIT_REASON_UA = {
     'professional_time_stop': 'сценарій не реалізувався за 8 год',
 }
 
+
+# 🤖 Фірмовий маркер ШІ в Telegram (22.11). Картинку в текст повідомлення
+# Telegram не вставляє, тож угоди ШІ позначаються текстовим маркером.
+AI_TG_MARK = '🤖 <b>VSV·AI</b>'
+
+
+def ai_tg_line(pos) -> str:
+    """Рядок-маркер для повідомлення про угоду ШІ, '' для решти угод."""
+    try:
+        if TradeManager._ai_owned(pos or {}):
+            sc = (pos or {}).get('ai_scenario_name') or (pos or {}).get('ai_scenario') or ''
+            return AI_TG_MARK + (f' · {sc}' if sc else '') + '\n'
+    except Exception:
+        pass
+    return ''
+
 class TradeManager:
     
     def __init__(self, db=None, notifier=None, bybit=None, scanner=None):
@@ -2116,7 +2132,14 @@ class TradeManager:
         # автопілот) стоять ТУТ, ДО ручних рівнів — тож гейт мусить бути ТУТ,
         # а не лише нижче (кейс 24.09: 📌 угоди закривало «МММ LiQ ⚖ / ПРОТИ»).
         _manual = self._manual_locked(pos)
-        if not _manual:
+        # 🤖 Угода ШІ (22.11): її супроводжує ЛИШЕ сам ШІ — авто-SL, правила
+        # виходу бота, автопілот, трейли й стратегічні SL/TP її не чіпають;
+        # захист — стоп плану ШІ (Manual SL) і дії людини.
+        _ai = (not _manual) and self._ai_owned(pos)
+        if _ai:
+            if self._ai_exit_tick(symbol, pos, current_price, False):
+                return
+        elif not _manual:
             self._auto_ob_manual_sl(symbol, pos, current_price)
             # 🔮/🧠 Самостійні правила виходу (Forecast 1H / 4H / Decision).
             # Стоять ПЕРЕД перевіркою Manual SL/TP: якщо вердикт розвернувся,
@@ -2128,9 +2151,9 @@ class TradeManager:
         # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
         # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
         _lo, _hi = self._px_range(symbol, False, current_price)
-        if not _manual and self._sbr_trail_tick(symbol, pos, current_price, False, _lo, _hi):
+        if not _manual and not _ai and self._sbr_trail_tick(symbol, pos, current_price, False, _lo, _hi):
             return
-        if not _manual and self._exh_exit_tick(symbol, pos, current_price, False, _lo, _hi):
+        if not _manual and not _ai and self._exh_exit_tick(symbol, pos, current_price, False, _lo, _hi):
             return
         self._check_manual_tp1(symbol, pos, current_price, False, _lo, _hi)
         manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
@@ -2148,7 +2171,8 @@ class TradeManager:
         # manual SL/TP above and force-close from UI can close it. All
         # automatic exit logic and management actions below are bypassed.
         # The position lives or dies by the operator's hand.
-        if pos.get('manual_mode'):
+        # 🤖 Угода ШІ — так само: решту автоматики бота пропускаємо (її веде ШІ).
+        if pos.get('manual_mode') or _ai:
             return
 
         # === 🤖 Bot-side SOFT exit (independent of exchange SL/TP) ===
@@ -2425,6 +2449,8 @@ class TradeManager:
           3. A record is written to the 🧾 log ONLY when, after all checks, the
              Manual SL field is STILL EMPTY (not a single level could be set) —
              then we log the reason. Any SL in place ⇒ silence."""
+        if self._ai_owned(pos):
+            return              # 🤖 угода ШІ: стоп ставить сам ШІ (план), не бот
         # 🎯 POC-сетап керує СВОЇМ Manual SL (межа OB старшого/меншого ТФ + буфер).
         # Не втручаємось цим (15m) авто-SL — інакше дублює/перетирає і засмічує лог
         # рядками «OB на 15M протилежний».
@@ -2802,7 +2828,11 @@ class TradeManager:
 
         # 📌 Manual — той самий гейт, що в реальній книзі (паперова ДЗЕРКАЛИТЬ).
         _manual = self._manual_locked(pos)
-        if not _manual:
+        _ai = (not _manual) and self._ai_owned(pos)     # 🤖 угода ШІ — лише ШІ
+        if _ai:
+            if self._ai_exit_tick(symbol, pos, current_price, True):
+                return
+        elif not _manual:
             self._auto_ob_manual_sl(symbol, pos, current_price)
             # 🔮/🧠 Самостійні правила виходу (Forecast 1H / 4H / Decision).
             if self._check_signal_exits(symbol, pos, current_price, True):
@@ -2812,9 +2842,9 @@ class TradeManager:
         # 🎯 TP-1 — ЧАСТКОВА фіксація. Стоїть ПЕРЕД повним TP: інакше рівень
         # TP-2, який лежить далі, ніколи не дав би частковому спрацювати.
         _lo, _hi = self._px_range(symbol, True, current_price)
-        if not _manual and self._sbr_trail_tick(symbol, pos, current_price, True, _lo, _hi):
+        if not _manual and not _ai and self._sbr_trail_tick(symbol, pos, current_price, True, _lo, _hi):
             return
-        if not _manual and self._exh_exit_tick(symbol, pos, current_price, True, _lo, _hi):
+        if not _manual and not _ai and self._exh_exit_tick(symbol, pos, current_price, True, _lo, _hi):
             return
         self._check_manual_tp1(symbol, pos, current_price, True, _lo, _hi)
         manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
@@ -2830,7 +2860,7 @@ class TradeManager:
             return
 
         # === 🤖 Bot-side SOFT exit (same rules as real; paper computes PnL) ===
-        if not pos.get('manual_mode'):
+        if not pos.get('manual_mode') and not _ai:
             soft_reason = self._bot_soft_exit(cur_pnl, _peak)
             if soft_reason:
                 self._close_shadow(symbol, current_price, reason=soft_reason)
@@ -2847,14 +2877,14 @@ class TradeManager:
             _exsnap = self._ff_exit_snapshot(symbol)
             if _exsnap:
                 pos['ff_exit_at_peak'] = _exsnap
-        if not pos.get('manual_mode') and self._rev_persisted(pos, _rev_hard, _tf_sec):
+        if not pos.get('manual_mode') and not _ai and self._rev_persisted(pos, _rev_hard, _tf_sec):
             self._close_shadow(symbol, current_price, reason='ctr_reversal_after_peak')
             return
 
         # === Automatic exits — paper now MIRRORS the real book so paper PnL ===
         # === reflects what a live trade would actually do (SL/TP/trailing/BE/  ===
         # === time-stop/HTF-flip). Bypassed in manual mode, same as real.      ===
-        if pos.get('manual_mode'):
+        if pos.get('manual_mode') or _ai:
             return
         s = self._settings
         # 1) Hard Stop Loss / Take Profit.
@@ -3356,7 +3386,8 @@ class TradeManager:
         # CHoCH-driven exits (Reverse SMC, Forecast 1H Confluence) are
         # AUTOMATIC and therefore bypassed in manual mode. Manual SL/TP
         # and force-close remain the only ways out.
-        if pos.get('manual_mode'):
+        # 🤖 Угоду ШІ CHoCH-виходи бота теж не чіпають (її веде лише ШІ).
+        if pos.get('manual_mode') or self._ai_owned(pos):
             return
         
         # Record this CHoCH in the evaluator state (whether same-dir or opposite).
@@ -3476,8 +3507,8 @@ class TradeManager:
             # mitigation, and we'd churn closes.
             return
         for is_sh, pos in books:
-            # 📌 Manual — автоматичний вихід за Opposite OB не діє.
-            if self._manual_locked(pos):
+            # 📌 Manual / 🤖 угода ШІ — автоматичний вихід за Opposite OB не діє.
+            if self._auto_locked(pos):
                 continue
             self._opp_ob_check(symbol, pos, is_sh, exit_tf, row)
 
@@ -3599,7 +3630,7 @@ class TradeManager:
             pos['mmd_alert_lvl'] = lvl
             on = bool(pos.get('opp_ob_exit'))
             by = pos.get('opp_ob_exit_by') or ''
-            locked = self._manual_locked(pos)
+            locked = self._auto_locked(pos)
             # 🤖 Автоконтроль вимкнено (деф.) → рівень лише запамʼятовуємо,
             # тумблер угоди не чіпаємо.
             auto_on = bool(self._settings.get('opp_ob_auto_enabled', False))
@@ -4563,16 +4594,8 @@ class TradeManager:
             if hit:
                 return self._signal_exit_close(symbol, pos, current_price,
                                                is_shadow, hit)
-        # 🤖 Вихід ШІ — теж ВЛАСНИЙ тротл (живий бар з кешу + аномалії з БД).
-        if s.get('use_ai_exit'):
-            try:
-                hit = self._ai_exit_reason(symbol, pos, current_price, is_shadow)
-            except Exception as e:
-                print(f"[TM] ai-exit check error {symbol}: {e}")
-                hit = None
-            if hit:
-                return self._signal_exit_close(symbol, pos, current_price,
-                                               is_shadow, hit)
+        # 🤖 Вихід ШІ тут БІЛЬШЕ НЕ діє (22.11): ШІ супроводжує лише СВОЇ угоди
+        # (`_ai_exit_tick` у моніторах), чужі угоди він не закриває.
         if not (s.get('use_forecast_1h_exit') or s.get('use_forecast_4h_exit')
                 or s.get('use_decision_exit') or s.get('use_mm_flat_exit')
                 or s.get('use_sbr_exit') or pos.get('sbr_exit_on')):
@@ -4622,7 +4645,10 @@ class TradeManager:
             return None
         tk[k] = now
         from detection import ai_signals
-        if not s.get('use_ai_exit'):
+        _ais = getattr(ai_signals, 'ai_settings_now', None)
+        ai_s = _ais() if callable(_ais) else {'exit_enabled': s.get('use_ai_exit'),
+                                              'exit_mode': s.get('ai_exit_mode')}
+        if not ai_s.get('exit_enabled'):
             return None
         vw = self._spring_fire_view(symbol, fetch=False) or {}
         # ⚠ аномалії ВІД ВХОДУ (не давніші за EXIT_LOOK_MAX, не коротше 2 год):
@@ -4659,7 +4685,21 @@ class TradeManager:
                                       lv, ch, opened_at=opened, look=now - t0)
         except TypeError:                     # старіший ai_signals без opened_at/look
             r = ai_signals.exit_score(pos.get('side'), vw, anoms, now, exh, pnl, peak, mult, lv, ch)
-        mode = s.get('ai_exit_mode') if s.get('ai_exit_mode') in ('confirmed', 'all') else 'confirmed'
+        mode = ai_s.get('exit_mode') if ai_s.get('exit_mode') in ('confirmed', 'all') else 'confirmed'
+        # 🌀 ЗАРЯД У БІК УГОДИ (вимога 22.11): «якщо монета все ще має хороший
+        # заряд, то приймати рішення про вихід ще зарано, хіба що на це впливають
+        # інші фактори» — потенціал Пружини в бік угоди зараз (той самий запис,
+        # що колонка «Заряд»).
+        charge = None
+        try:
+            _hp = float(ai_s.get('hold_pot') or 0)
+            rec = self._spring_rec(symbol) if _hp > 0 else None
+            if rec:
+                _side = str(pos.get('side') or '').upper()
+                charge = {'pot': rec.get('pot_long' if _side == 'LONG' else 'pot_short'),
+                          'min': _hp, 'state': rec.get('state'), 'charge': rec.get('charge')}
+        except Exception:
+            charge = None
         # 🧠 супровід за планом мозку графіка (кеш барів; немає → HOLD)
         pro_d = self._ai_plan_follow(symbol, pos, current_price, ai_signals)
         _sibm = getattr(ai_signals, '_sib', None)
@@ -4667,7 +4707,11 @@ class TradeManager:
             ai_brain = _sibm('ai_brain')
         else:                                 # старіший ai_signals без _sib
             from detection import ai_brain
-        m = ai_brain.exit_merge(pos.get('side'), r, pro_d, mode, pos.get('ai_plan'), current_price)
+        try:
+            m = ai_brain.exit_merge(pos.get('side'), r, pro_d, mode, pos.get('ai_plan'),
+                                    current_price, charge=charge)
+        except TypeError:                     # старіший ai_brain без charge=
+            m = ai_brain.exit_merge(pos.get('side'), r, pro_d, mode, pos.get('ai_plan'), current_price)
         pos['ai_exit'] = {'score': r['score'], 'parts': r['parts'], 'ready': m['close'],
                           'hold': r.get('hold'), 'notes': ((r.get('flow_notes') or []) + m['notes'])[:8],
                           'verdict': m['verdict'], 'verdict_ua': m['verdict_ua'],
@@ -4675,7 +4719,7 @@ class TradeManager:
                           'scenario': r.get('scenario'), 'scenarios': r.get('scenarios'),
                           'anoms': len(anoms), 'ts': int(now), 'mode': mode,
                           'plan': m['plan'], 'r': m['r'], 'peak_r': m['peak_r'],
-                          'data_ok': m['data_ok'],
+                          'data_ok': m['data_ok'], 'charge': m.get('charge'),
                           'plan_src': 'ai' if pos.get('ai_plan') else ('chart' if m['plan'] else None)}
         if not m['close']:
             return None
@@ -5507,6 +5551,115 @@ class TradeManager:
             return bool(pos and pos.get('manual_mode'))
         except Exception:
             return False
+
+    @staticmethod
+    def _ai_owned(pos) -> bool:
+        """🤖 Угода ШІ (22.11): відкрита сигналом ШІ → її супроводжує ЛИШЕ ШІ
+        (решта автоматики бота її не чіпає). 📌 Manual — сильніший (людина)."""
+        try:
+            if not pos or pos.get('manual_mode'):
+                return False
+            if pos.get('ai_owned'):
+                return True
+            ob = str(pos.get('opened_by') or '').strip().lower()
+            return ob.split('→')[0].strip() == 'ai'
+        except Exception:
+            return False
+
+    def _auto_locked(self, pos) -> bool:
+        """Чужа автоматика (Opposite OB, 🧱-автомат, закриття Fuel Filter) угоду
+        не чіпає: 📌 Manual АБО 🤖 угода ШІ."""
+        return self._manual_locked(pos) or self._ai_owned(pos)
+
+    def is_auto_locked(self, symbol: str, is_shadow: bool = False) -> bool:
+        sym = (symbol or '').upper()
+        with self._lock:
+            store = self._shadow_positions if is_shadow else self._positions
+            return self._auto_locked(store.get(sym))
+
+    def ai_open_positions(self) -> List:
+        """[(символ, is_shadow)] відкритих угод ШІ (обидві книги)."""
+        with self._lock:
+            out = [(S, False) for S, p in self._positions.items() if self._ai_owned(p)]
+            out += [(S, True) for S, p in self._shadow_positions.items() if self._ai_owned(p)]
+        return out
+
+    @staticmethod
+    def ai_stop_level(side: str, price: float, plan: Optional[Dict],
+                      fallback_pct: float = 2.0):
+        """Стоп угоди ШІ: стоп ПЛАНУ, якщо він з правильного боку від ціни;
+        інакше % від ціни. → (рівень, підпис). ЧИСТА."""
+        sd = str(side).upper()
+        try:
+            px = float(price)
+        except (TypeError, ValueError):
+            return None, ''
+        try:
+            st = float((plan or {}).get('stop'))
+        except (TypeError, ValueError):
+            st = None
+        if st and ((sd == 'LONG' and st < px) or (sd == 'SHORT' and st > px)):
+            return st, 'ШІ · стоп плану'
+        f = max(0.2, float(fallback_pct or 2.0)) / 100.0
+        return (px * (1 - f) if sd == 'LONG' else px * (1 + f)), f'ШІ · {fallback_pct}% від входу'
+
+    def ai_open(self, symbol: str, side: str, plan: Optional[Dict] = None,
+                book: str = 'auto', sl_fallback_pct=2.0, feat: Optional[Dict] = None,
+                scenario: Optional[str] = None, scenario_name: Optional[str] = None,
+                context: Optional[Dict] = None, entry: Optional[Dict] = None) -> Dict:
+        """🤖 ВІДКРИТТЯ УГОДИ ШІ (22.11) — власний шлях ШІ: ворота бота, кнопки
+        напрямку й черги FF НЕ діють (`by_hand`-шлях `manual_open`), книга — з
+        налаштувань ШІ ('auto' = правило TRD · TM · Test Mode). Стоп плану одразу
+        стає Manual SL (🤖 бот · «ШІ · стоп плану»); угоду далі веде лише ШІ."""
+        sym = (symbol or '').upper().strip()
+        sd = (side or '').upper().strip()
+        if sd not in ('LONG', 'SHORT') or not sym:
+            return {'ok': False, 'reason': 'невірні параметри'}
+        px = self._get_current_price(sym)
+        if not px:
+            return {'ok': False, 'reason': f'{sym}: немає ціни'}
+        stop, slbl = self.ai_stop_level(sd, px, plan, sl_fallback_pct)
+        forced = book if book in ('real', 'paper') else None
+        res = self.manual_open(sym, sd, bypass_gates=True, opened_by='ai',
+                               manual_sl=stop, by_hand=True, book=forced)
+        if not (res or {}).get('ok') or res.get('queued'):
+            return res or {'ok': False, 'reason': 'невідома відмова'}
+        is_shadow = res.get('mode') == 'test'
+        with self._lock:
+            store = self._shadow_positions if is_shadow else self._positions
+            pos = store.get(sym)
+            if pos:
+                pos['ai_owned'] = True
+                if isinstance(plan, dict) and plan.get('stop') and plan.get('target'):
+                    pos['ai_plan'] = dict(plan)
+                if feat:
+                    pos['ai_feat'] = dict(feat)
+                pos['ai_scenario'] = scenario
+                pos['ai_scenario_name'] = scenario_name
+                if context:
+                    pos['professional_entry'] = context
+                if entry:
+                    pos['ai_entry'] = entry      # 📸 момент входу → у базу еталонів
+                if pos.get('manual_sl'):
+                    pos['manual_sl_src'] = self.SRC_AUTO
+                    pos['manual_sl_by'] = slbl
+                    pos['manual_sl_tf'] = ''
+        try:
+            (self._persist_shadow_positions if is_shadow else self._persist_positions)()
+        except Exception:
+            pass
+        return res
+
+    def _ai_exit_tick(self, symbol: str, pos: Dict, current_price, is_shadow: bool) -> bool:
+        """🤖 Супровід УГОДИ ШІ самим ШІ. True → закрито."""
+        try:
+            hit = self._ai_exit_reason(symbol, pos, current_price, is_shadow)
+        except Exception as e:
+            print(f"[TM] ai-exit check error {symbol}: {e}")
+            hit = None
+        if not hit:
+            return False
+        return self._signal_exit_close(symbol, pos, current_price, is_shadow, hit)
 
     def is_manual_locked(self, symbol: str, is_shadow: bool = False) -> bool:
         """Публічний читач для інших модулів (Fuel Filter) — щоб не лізти в
@@ -6828,6 +6981,19 @@ class TradeManager:
             self.db.archive_trade(closed, entry_snapshot=snap, is_paper=is_paper)
         except Exception as e:
             print(f"[TM] archive_closed error: {e}")
+        # 🏆 Угода ШІ закрилась → кандидат у ЕТАЛОН відмінних угод (22.11)
+        if self._ai_owned(pos) or str(closed.get('opened_by') or '').lower().startswith('ai'):
+            try:
+                from detection import ai_signals as _ais
+                _cb = getattr(_ais, 'on_ai_trade_closed', None)
+                if callable(_cb):
+                    _cb({**closed, 'ai_feat': pos.get('ai_feat'), 'ai_plan': pos.get('ai_plan'),
+                         'ai_scenario': pos.get('ai_scenario'), 'ai_entry': pos.get('ai_entry'),
+                         'ai_exit': pos.get('ai_exit'), 'spring_open': pos.get('spring_open'),
+                         'mae_pnl_pct': closed.get('mae_pnl_pct', pos.get('mae_pnl_pct')),
+                         'is_paper': bool(is_paper)})
+            except Exception as e:
+                print(f"[TM] etalon hook error: {e}")
         try:
             self._research_archive(closed, pos, is_paper)
         except Exception as e:
@@ -8604,7 +8770,7 @@ class TradeManager:
         # 'good +50' — should I trust this score or down-weight it?"
         dot = self._dir_dot(pos['side'])
         peak_line = self._fmt_peak_line(closed)
-        msg = (
+        msg = ai_tg_line(pos) + (
             f"{icon} ⏹ ЗАКРИТО {dot}<b>{pos['side']}</b> <b>{pnl_pct:+.2f}%</b>\n"
             f"<b>#{symbol}</b>   🧪 ТЕСТ\n"
             f"📍 Вихід: <b>{self._fmt_price(exit_price)}</b>\n"
@@ -10617,7 +10783,7 @@ class TradeManager:
                 sl_str += ' · % від входу'
             elif _tf:
                 sl_str += f' · {_tf}'
-        msg = (
+        msg = ai_tg_line(pos) + (
             f"▶️ ВІДКРИТО {dot}<b>{side}</b>\n"
             f"<b>#{pos['symbol']}</b>" + ("   🧪 ТЕСТ" if is_test else "") + "\n"
             f"📍 Вхід: <b>{self._fmt_price(pos['entry_price'])}</b>\n"
@@ -10677,7 +10843,7 @@ class TradeManager:
         # weight-tuning and spotting when the predictor was wrong.
         dot = self._dir_dot(side)
         peak_line = self._fmt_peak_line(closed)
-        msg = (
+        msg = ai_tg_line(closed) + (
             f"{icon} ⏹ ЗАКРИТО {dot}<b>{side}</b> <b>{pnl_pct:+.2f}%</b>\n"
             f"<b>#{closed['symbol']}</b>\n"
             f"📍 Вихід: <b>{self._fmt_price(closed['exit_price'])}</b>\n"

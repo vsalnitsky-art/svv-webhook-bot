@@ -171,7 +171,7 @@ def _js(body):
         a = _HTML.index(c)
         e = _HTML.index(';\n', a) + 2
         src = _HTML[a:e] + '\n' + src
-    src = "function fmtPriceJS(v){return String(Number(v));}\n" + src
+    src = "function fmtPriceJS(v){return String(Number(v));}\nconst AI_BRAND_IMG='<img>';\n" + src
     with tempfile.NamedTemporaryFile('w', suffix='.js', delete=False, encoding='utf-8') as fh:
         fh.write(src + body)
         path = fh.name
@@ -204,7 +204,7 @@ console.log(mmdAlertCellHTML({}) + springTradeCellHTML({}));
     for bad in ('ПРОТИ', 'OK', '🔔', 'tm-mmd-alert-hot'):
         _check(bad not in p[1] and bad not in p[2], f'SBR у 🚨 більше не показується: {bad}')
     _check('>—<' in p[1], 'без даних ШІ → «—»')
-    _check('🤖⚠' in p[2] and '+1.2R' in p[2] and '🧠' not in p[2] and '>—<' not in p[2], p[2])
+    _check('<img>⚠' in p[2] and '+1.2R' in p[2] and '🧠' not in p[2] and '>—<' not in p[2], p[2])
     _check(p[3].count('>—<') == 2, 'немає даних → «—» в обох комірках')
     print('✓ JS: 🌀 заряд + 🚨 лише ШІ (🤖 вердикт · R), без 🔔 МММ-SBR')
 

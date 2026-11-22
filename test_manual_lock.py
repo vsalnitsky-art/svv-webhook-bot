@@ -127,8 +127,12 @@ def test_public_reader_matches_the_rule():
 
 # ═══════════════════════ ЗАМКИ НА КОЖЕН ШЛЯХ ═════════════════════════════════
 def test_opposite_ob_exit_respects_manual():
-    _check('_manual_locked(pos)' in _fn_src(_TM_SRC, 'on_main_ob_update'),
+    # 22.11: `_auto_locked` = 📌 Manual АБО угода ШІ (її веде лише ШІ).
+    src = _fn_src(_TM_SRC, 'on_main_ob_update')
+    _check('_manual_locked(pos)' in src or '_auto_locked(pos)' in src,
            'Opposite OB exit мусить пропускати 📌 угоди')
+    _check('_manual_locked(pos)' in _fn_src(_TM_SRC, '_auto_locked'),
+           '_auto_locked включає 📌 Manual')
     print('✓ Opposite OB — 📌 пропускається')
 
 

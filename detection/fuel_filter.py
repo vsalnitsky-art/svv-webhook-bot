@@ -7525,10 +7525,12 @@ class FuelFilterDaemon:
         Читаємо ПУБЛІЧНИЙ `TradeManager.is_manual_locked` (єдине правило).
         Старіший TM без методу / збій → False (поведінка як раніше)."""
         tm = self._get_tm() if self._get_tm else None
-        if not tm or not hasattr(tm, 'is_manual_locked'):
+        # 🤖 Угода ШІ (22.11) — так само недоторканна: її веде лише ШІ.
+        fn = getattr(tm, 'is_auto_locked', None) or getattr(tm, 'is_manual_locked', None)
+        if not tm or not callable(fn):
             return False
         try:
-            return bool(tm.is_manual_locked(symbol, is_shadow=not is_real))
+            return bool(fn(symbol, is_shadow=not is_real))
         except Exception:
             return False
 

@@ -6492,6 +6492,36 @@ def register_api_routes(app):
             st['episodes_total'] = None
         return jsonify(st)
 
+    @app.route('/api/ai/settings', methods=['POST'])
+    def api_ai_settings():
+        """🤖 ВЛАСНІ налаштування ШІ (22.11): лише правила ШІ (дві Пружини,
+        свої ліміти, вихід, еталон, автоочистка). Ворота бота тут не беруть участі."""
+        from detection.ai_signals import get_ai_engine, init_ai_engine
+        eng = get_ai_engine() or init_ai_engine(db=get_db())
+        body = request.get_json(silent=True) or {}
+        try:
+            return jsonify({'ok': True, 'ai': eng.update_ai_settings(body)})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)}), 400
+
+    @app.route('/api/ai/etalon/clear', methods=['POST'])
+    def api_ai_etalon_clear():
+        """🏆 Очистити базу еталонів відмінних угод ШІ (вручну)."""
+        from detection.ai_signals import get_ai_engine, init_ai_engine
+        eng = get_ai_engine() or init_ai_engine(db=get_db())
+        return jsonify({'ok': True, 'deleted': eng.etalon_clear()})
+
+    @app.route('/api/ai/cleanup', methods=['POST'])
+    def api_ai_cleanup():
+        """🧹 Очистка таблиць навчання ШІ зараз (за тими самими правилами, що й авто)."""
+        import time
+        from detection.ai_signals import get_ai_engine, init_ai_engine
+        eng = get_ai_engine() or init_ai_engine(db=get_db())
+        try:
+            return jsonify({'ok': True, 'result': eng._cleanup(time.time(), force=True) or {}})
+        except Exception as e:
+            return jsonify({'ok': False, 'error': str(e)}), 500
+
     @app.route('/api/ai/episodes-export')
     def api_ai_episodes_export():
         """🤖 Закриті епізоди заряджених монет: ?days=30 (0 = усе) &fmt=json|csv."""

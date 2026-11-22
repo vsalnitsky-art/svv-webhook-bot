@@ -55,6 +55,8 @@ def _engine(direction=1, **settings):
     engine = L.A.AiEngine(db=db, md=_Md(market), scanner=sc, tm=tm, clock=lambda: L.NOW)
     engine._refresh_cal = lambda now: None
     engine._fetch_live = lambda S, now: (dict(L._REC), dict(L._VW_UP))
+    engine._ai_s = L.A.ai_settings_norm({'enabled': True, 'scenarios': ['E1', 'E2', 'E3', 'E4']})
+    engine._ai_s_at = 1e15
     return engine, sc, tm
 
 
@@ -62,11 +64,12 @@ def test_professional_entry_passes_all_existing_gates():
     # 17.11 «єдиний мозок»: графік 15m/1h/4h — частина рішення 🤖 завжди
     # (окремого тумблера немає); санітарні перевірки пройдено → сигнал іде
     # через спільні ворота, ознаки й план — в епізод.
+    # 22.11: ШІ — власний сценарій: угоду відкриває tm.ai_open, ворота бота
+    # (`_signal_allowed`) його не зупиняють.
     engine, scanner, tm = _engine(1)
     engine.tick(L.NOW)
-    _check(tm.sig and tm.sig[0]['side'] == 'LONG', 'Valid chart should allow LONG through on_signal')
-    _check(scanner.calls and scanner.calls[0][2] is True and scanner.calls[0][3] == 'ai',
-           'Existing shared gates remain mandatory')
+    _check(tm.opened and tm.opened[0]['side'] == 'LONG', 'Valid chart should open the AI trade')
+    _check(not scanner.calls and not tm.sig, 'AI does not go through the bot gates')
     row = engine.state()['coins'][0]
     _check(row['brain']['ok'] and row['brain']['plan'], row['brain'])
     signal = engine._eps['XUSDT']['signal']
@@ -81,7 +84,7 @@ def test_stale_chart_blocks_before_shared_gates():
         for bar in engine._md.market[tf]:
             bar['t'] -= 7200
     engine.tick(L.NOW)
-    _check(not tm.sig and not scanner.calls, 'Stale 15m data must fail closed')
+    _check(not tm.opened and not scanner.calls, 'Stale 15m data must fail closed')
     row = engine.state()['coins'][0]
     _check(not row['brain']['ok'] and any(c['k'] == 'data' and c['ok'] is False
                                           for c in row['brain']['checks']), row['brain'])
@@ -94,7 +97,7 @@ def test_untrained_model_does_not_block_entry():
     engine.tick(L.NOW)
     row = engine.state()['coins'][0]
     m = [c for c in row['brain']['checks'] if c['k'] == 'model'][0]
-    _check(m['ok'] is None and not m['hard'] and tm.sig, m)
+    _check(m['ok'] is None and not m['hard'] and tm.opened, m)
 
 
 def _tm_stub(TM, engine, settings, calls=None):
@@ -136,8 +139,9 @@ def test_trade_manager_plan_follow_is_part_of_ai_exit():
     _check(hit and hit[0] == 'ai_exit' and 'стоп плану' in hit[1], hit)
     _check(pos['ai_exit']['verdict'] == 'invalid' and pos['ai_exit']['plan']['stop']
            and 'analysis' not in pos['ai_pro'], pos['ai_exit'])
-    # Вимкнено «🤖 Вихід з угоди ШІ» → нічого не рахується і не закривається.
-    stub2 = _tm_stub(TM, engine, {'use_ai_exit': False}, [])
+    # Вимкнено «вихід ШІ» (налаштування ШІ) → нічого не рахується і не закривається.
+    engine._ai_s = dict(engine._ai_s, exit_enabled=False)
+    stub2 = _tm_stub(TM, engine, {}, [])
     pos2 = dict(pos)
     pos2.pop('ai_exit', None); pos2.pop('ai_pro', None)
     _check(TM._ai_exit_reason(stub2, 'XUSDT', pos2, current, False) is None
@@ -151,7 +155,8 @@ def test_engine_prefetches_open_trades_and_learning_is_gated():
     old = sys.modules.get('detection.sbr_signals')
     sys.modules['detection.sbr_signals'] = sb
     try:
-        engine._tm = types.SimpleNamespace(_settings={'use_ai_exit': True})
+        # 22.11: бари готуються лише для ВЛАСНИХ угод ШІ
+        engine._tm = types.SimpleNamespace(ai_open_positions=lambda: [('YUSDT', True)])
         _check(engine._pro_prefetch_open(L.NOW) == 1, 'One open trade')
         got = {(c[0], c[2]) for c in engine._md.calls}
         _check({('YUSDT', '15m'), ('YUSDT', '1h'), ('YUSDT', '4h')} <= got, got)
@@ -175,11 +180,10 @@ def test_engine_prefetches_open_trades_and_learning_is_gated():
     e2, sc2, _ = _engine(1)
     e2.db = _Db2()
     e2._tm = types.SimpleNamespace(_settings={})
-    sc2.extra.update(ai_signal_enabled=False, ai_learning_enabled=True)
-    sc2.get_settings = lambda: dict(L._Sc.get_settings(sc2), **sc2.extra)
+    e2._ai_s = L.A.ai_settings_norm({'enabled': False, 'exit_enabled': False, 'learning_enabled': True})
     _check(e2._learn_professional(L.NOW, force=True) is None and _Db2.n == 0,
            'No archive reads while the brain is unused')
-    sc2.extra['ai_signal_enabled'] = True
+    e2._ai_s = dict(e2._ai_s, enabled=True)
     rep = e2._learn_professional(L.NOW, force=True)
     _check(_Db2.n == 1 and rep['status'] == 'no_new_labels', rep)
 
@@ -208,11 +212,12 @@ def test_one_brain_one_switch_per_side_of_the_trade():
     _check('_ai_pro_exit_reason' not in tm_source and 'def _ai_plan_follow' in tm_source, 'plan follow')
     for element in ('sm-ai-professional', 'sm-ai-require-model', 'tm-use-ai-professional-exit'):
         _check(f'id="{element}"' not in html, element)
-    for element in ('sm-ai-signal', 'sm-ai-learning', 'tm-use-ai-exit', 'tm-ai-exit-mode'):
+    # 22.11: один тумблер на вхід і один на вихід — у ВЛАСНІЙ панелі ШІ.
+    for element in ('aip-enabled', 'aip-learn', 'aip-exit', 'aip-exit-mode'):
         _check(f'id="{element}"' in html, element)
     _check('function aiProChipHTML' not in html and 'function _aiBrainCell' in html, 'UI мозку')
-    a, m = (html.index(f'id="{x}"') for x in ('tm-use-ai-exit', 'tm-ai-exit-mode'))
-    _check(a < m, 'випадайка режиму — біля «🤖 Вихід з угоди ШІ»')
+    a, m = (html.index(f'id="{x}"') for x in ('aip-exit', 'aip-exit-mode'))
+    _check(a < m, 'випадайка режиму — біля «вихід ШІ»')
 
 
 def test_js_exit_chip_shows_r_and_plan():
@@ -222,7 +227,7 @@ def test_js_exit_chip_shows_r_and_plan():
     html = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
     a = html.index('const _AIX_ICON')
     b = html.index('function aiExitChipHTML(')
-    src = ("function fmtPriceJS(v){return String(Number(v));}\n" + html[a:html.index('function aiExitChipHTML(', a)]
+    src = ("function fmtPriceJS(v){return String(Number(v));}\nconst AI_BRAND_IMG='<img>';\n" + html[a:html.index('function aiExitChipHTML(', a)]
            + html[b:html.index('\n}', b) + 2])
     pos = {'ai_exit': {'verdict': 'hold', 'verdict_ua': 'тримаємо', 'r': 1.234, 'peak_r': 1.8,
                        'groups': {'anom': False, 'price': True, 'profit': False},

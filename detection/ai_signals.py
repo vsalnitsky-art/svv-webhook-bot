@@ -30,6 +30,450 @@ from typing import Dict, List, Optional
 # (17.11, «єдиний мозок»): графік 15m/1h/4h — частина рішення 🤖 завжди.
 DEFAULTS = {'ai_signal_enabled': False, 'ai_min_charge': 65,
             'ai_learning_enabled': True}
+
+# ── 🤖 ВЛАСНИЙ СЦЕНАРІЙ ШІ (вимога 22.11) ──────────────────────────────────
+# Дослівно: «ШІ не мають зупиняти жоден із воріт, ШІ має працювати за своїм
+# окремим сценарієм (дві пружини і окремі налаштування які стосуються лише
+# роботи ШІ)… бот відкриває угоду ШІ і супроводжує лише свою відкриту угоду».
+# Налаштування ШІ живуть ОКРЕМО (`ai_settings_v1`), а не в сканері / TM.
+AI_DB_SETTINGS = 'ai_settings_v1'
+AI_SCENARIOS = ('E1', 'E2', 'E3', 'E4')
+AI_BOOKS = ('auto', 'paper', 'real')
+AI_DEFAULTS = {
+    'enabled': False,          # ШІ відкриває СВОЇ угоди (деф. ВИМК)
+    'exit_enabled': True,      # ШІ супроводжує й закриває СВОЇ угоди
+    'exit_mode': 'confirmed',  # 'confirmed' | 'all'
+    'min_charge': 65,          # монета Пружини береться в роботу з цього заряду
+    'scenarios': ['E2'],       # вхід лише на «💥 Старт розряду» (рішення 22.11)
+    'allow_long': True,
+    'allow_short': True,
+    'book': 'auto',            # 'auto' (TRD · TM · Test Mode) | 'paper' | 'real'
+    'max_open': 5,             # одночасно відкритих угод ШІ
+    'max_per_30m': 3,          # нових угод ШІ за 30 хв (кластер = одна подія ринку)
+    'flip_cooldown_min': 180,  # протилежний бік по тій самій монеті — не раніше
+    'hold_pot': 40,            # 🌀 заряд у бік угоди ≥ → вихід «ще зарано» (0 = вимк)
+    'sl_fallback_pct': 2.0,    # стоп, коли плану немає (% від входу)
+    'learning_enabled': True,  # 🎓 champion/challenger на архівах
+    'etalon_enabled': True,    # 🏆 база еталонів відмінних угод (самопоповнення)
+    'etalon_min_r': 1.5,       # «відмінна» = результат ≥ N R від стопа плану
+    'etalon_min_sim': 0.35,    # мозок еталонів: найближчий досвід не далі за цю схожість
+    'etalon_min_p': 0.6,       # мозок еталонів: частка «відмінних» серед схожих входів ≥
+    'cleanup_enabled': True,   # 🧹 автоочистка таблиць навчання
+}
+ETALON_DB = 'ai_etalon_v1'
+ETALON_MAX = 300
+ETALON_MIN_N = 10              # поки еталонів менше — схожість лише довідка
+ETALON_K = 5
+ETALON_FALLBACK_PNL = 1.5      # «відмінна» без стопа плану: результат ≥ N %
+FEAT_KEYS = ('charge', 'pot', 'prob', 'lean', 'break', 'impulse', 'flow', 'conf', 'rr')
+CLEANUP_EVERY_SEC = 6 * 3600
+CLEANUP_MARK_SEC = 3600        # 🏷 позначення «на видалення» — раз на годину (лише підрахунок)
+CLEANUP_RULES = {'episode_nosignal_days': 7, 'episode_days': 45,
+                 'anom_aux_days': 2, 'research_other_days': 30,
+                 'research_ai_days': 60, 'anom_done_days': 60}
+CLEANUP_RULES_UA = [
+    'епізоди заряду без сигналу ШІ — старші за 7 днів',
+    'усі епізоди — старші за 45 днів (навчання їх уже спожило)',
+    'допоміжні аномалії (🧭 напрямок / 👤 підписки) — старші за 2 дні',
+    'аномалії з повним наслідком — старші за 60 днів',
+    'дослідження угод НЕ ШІ — старші за 30 днів',
+    'дослідження угод ШІ — старші за 60 днів (стислий запис уже в базі еталонів)',
+    'еталони й антибаза — старші за 180 днів (ринок змінився)',
+]
+ETALON_MAX_AGE_DAYS = 180
+OPEN_WINDOW_SEC = 1800
+BLOCK_LOG_GAP = 900            # однакова відмова ШІ в лог — не частіше раз на 15 хв
+
+
+def ai_settings_norm(raw: Optional[Dict]) -> Dict:
+    """🤖 Налаштування ШІ з валідацією. ЧИСТА. Невідоме / биті → дефолт."""
+    s = dict(AI_DEFAULTS)
+    r = raw if isinstance(raw, dict) else {}
+    for k in ('enabled', 'exit_enabled', 'allow_long', 'allow_short', 'learning_enabled',
+              'etalon_enabled', 'cleanup_enabled'):
+        if k in r:
+            s[k] = bool(r[k])
+    if r.get('exit_mode') in ('confirmed', 'all'):
+        s['exit_mode'] = r['exit_mode']
+    if r.get('book') in AI_BOOKS:
+        s['book'] = r['book']
+    sc = r.get('scenarios')
+    if isinstance(sc, (list, tuple)):
+        got = [x for x in AI_SCENARIOS if x in {str(v).upper() for v in sc}]
+        s['scenarios'] = got or ['E2']
+    for k, lo, hi, cast in (('min_charge', 0, 100, float), ('max_open', 1, 50, int),
+                            ('max_per_30m', 1, 50, int), ('flip_cooldown_min', 0, 1440, int),
+                            ('hold_pot', 0, 100, float), ('sl_fallback_pct', 0.2, 20.0, float),
+                            ('etalon_min_r', 0.5, 10.0, float), ('etalon_min_sim', 0.0, 1.0, float),
+                            ('etalon_min_p', 0.3, 0.95, float)):
+        if k in r:
+            try:
+                s[k] = cast(max(lo, min(hi, float(r[k]))))
+            except (TypeError, ValueError):
+                pass
+    return s
+
+
+def ai_settings_migrate(scanner_s: Optional[Dict], tm_s: Optional[Dict]) -> Dict:
+    """Перший запуск: переносимо наявні ключі сканера / TM у власні. ЧИСТА."""
+    a, t = scanner_s or {}, tm_s or {}
+    raw = {}
+    if 'ai_signal_enabled' in a:
+        raw['enabled'] = a.get('ai_signal_enabled')
+    if 'ai_min_charge' in a:
+        raw['min_charge'] = a.get('ai_min_charge')
+    if 'ai_learning_enabled' in a:
+        raw['learning_enabled'] = a.get('ai_learning_enabled')
+    if 'ai_exit_mode' in t:
+        raw['exit_mode'] = t.get('ai_exit_mode')
+    return ai_settings_norm(raw)
+
+
+def scen_allowed(r: Optional[Dict], allowed) -> bool:
+    """Готовий сценарій входу — серед дозволених у налаштуваннях ШІ. ЧИСТА."""
+    key = ((r or {}).get('scenario') or {}).get('key')
+    return bool(key) and key in set(allowed or ())
+
+
+def ai_limits_block(side: str, s: Dict, open_n: int, opens: List[float],
+                    last: Optional[tuple], now: float) -> str:
+    """Власні правила ШІ (не ворота бота). '' → можна. ЧИСТА."""
+    sd = str(side).upper()
+    if sd == 'LONG' and not s.get('allow_long', True):
+        return 'LONG вимкнено в налаштуваннях ШІ'
+    if sd == 'SHORT' and not s.get('allow_short', True):
+        return 'SHORT вимкнено в налаштуваннях ШІ'
+    if open_n >= int(s.get('max_open') or 5):
+        return f"відкрито угод ШІ {open_n} — ліміт {s.get('max_open')}"
+    recent = [t for t in (opens or []) if now - t < OPEN_WINDOW_SEC]
+    if len(recent) >= int(s.get('max_per_30m') or 3):
+        return f"за 30 хв уже {len(recent)} нових угод ШІ — ліміт {s.get('max_per_30m')}"
+    if last and last[0] != sd:
+        cd = float(s.get('flip_cooldown_min') or 0) * 60
+        if cd > 0 and now - float(last[1] or 0) < cd:
+            left = int((cd - (now - float(last[1]))) // 60) + 1
+            return f'протилежний сигнал по монеті був {int((now - float(last[1])) // 60)} хв тому — перевертання не раніше ніж через {left} хв'
+    return ''
+
+
+# ── 🏆 ЕТАЛОН ВІДМІННИХ УГОД (вимога 22.11) ─────────────────────────────────
+# «створити базу еталон відмінних угод і щоб бот самостійно її поповнював для
+# удосконалення самого себе». Кожна угода ШІ несе ОЗНАКИ ВХОДУ (знімок у
+# момент сигналу); закрилась відмінно → ознаки йдуть у базу. Новий вхід
+# порівнюється з еталонами (k найближчих) — схожість і є «досвід бота».
+def entry_features(side: str, er: Optional[Dict], rec: Optional[Dict],
+                   brain: Optional[Dict]) -> Dict:
+    """Ознаки входу 0..1 (одна шкала для відстані). ЧИСТА."""
+    sd = str(side).upper()
+    er, rec, brain = er or {}, rec or {}, brain or {}
+    parts = er.get('parts') or {}
+
+    def _n(v, k=100.0):
+        try:
+            return _c(float(v) / k)
+        except (TypeError, ValueError):
+            return None
+    pot = rec.get('pot_long' if sd == 'LONG' else 'pot_short')
+    try:
+        pl = float(rec.get('prob_long'))
+        prob = pl if sd == 'LONG' else 100.0 - pl
+    except (TypeError, ValueError):
+        prob = None
+    try:
+        flow = (float(er.get('flow_raw')) + 1.0) / 2.0
+    except (TypeError, ValueError):
+        flow = None
+    rr = (brain.get('plan') or {}).get('net_rr')
+    out = {'charge': _n(rec.get('charge')), 'pot': _n(pot), 'prob': _n(prob),
+           'lean': _n(parts.get('lean'), 1.0), 'break': _n(parts.get('break'), 1.0),
+           'impulse': _n(parts.get('impulse'), 1.0), 'flow': _c(flow) if flow is not None else None,
+           'conf': _n(brain.get('confidence')), 'rr': _n(rr, 5.0)}
+    return {k: round(v, 4) for k, v in out.items() if v is not None}
+
+
+def feat_distance(a: Dict, b: Dict) -> Optional[float]:
+    """Середньоквадратична відстань по СПІЛЬНИХ ознаках (≥4). ЧИСТА."""
+    ks = [k for k in FEAT_KEYS if k in (a or {}) and k in (b or {})]
+    if len(ks) < 4:
+        return None
+    return (sum((float(a[k]) - float(b[k])) ** 2 for k in ks) / len(ks)) ** 0.5
+
+
+def etalon_similarity(feat: Dict, base: List[Dict], side: Optional[str] = None,
+                      k: int = ETALON_K) -> Optional[float]:
+    """Схожість 0..1 на k найближчих еталонів (того самого боку, якщо є). ЧИСТА."""
+    rows = [e for e in (base or []) if isinstance(e, dict) and e.get('feat')]
+    if side:
+        same = [e for e in rows if e.get('side') == str(side).upper()]
+        rows = same if len(same) >= max(3, k) else rows
+    ds = sorted(d for d in (feat_distance(feat, e['feat']) for e in rows) if d is not None)
+    if not ds:
+        return None
+    top = ds[:max(1, k)]
+    return round(sum(1.0 - min(1.0, d) for d in top) / len(top), 3)
+
+
+def trade_r(closed: Dict) -> Optional[float]:
+    """Результат угоди в R (від ризику плану). ЧИСТА."""
+    try:
+        pnl = float(closed.get('pnl_pct'))
+        risk = float(((closed.get('ai_plan') or {}).get('risk_pct')))
+        return round(pnl / risk, 2) if risk > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+def etalon_excellent(closed: Dict, s: Dict) -> bool:
+    """Угода ШІ — ВІДМІННА: ≥ `etalon_min_r` R, а без стопа плану — результат
+    ≥ ETALON_FALLBACK_PNL %. ЧИСТА."""
+    if not (closed or {}).get('ai_feat'):
+        return False
+    r = trade_r(closed)
+    if r is not None:
+        return r >= float(s.get('etalon_min_r') or 1.5)
+    try:
+        return float(closed.get('pnl_pct')) >= ETALON_FALLBACK_PNL
+    except (TypeError, ValueError):
+        return False
+
+
+ETALON_ANTI_DB = 'ai_etalon_anti_v1'   # ❌ антибаза: збиткові угоди ШІ (контраст для навчання)
+ETALON_ANTI_R = -0.5                   # «невдала» = результат ≤ −0.5R (без плану — ≤ −1%)
+ETALON_ANTI_PNL = -1.0
+ETALON_EVENTS_MAX = 25
+
+
+def etalon_failed(closed: Dict) -> bool:
+    """Угода ШІ — НЕВДАЛА (в антибазу): ≤ ETALON_ANTI_R, без плану — ≤ ETALON_ANTI_PNL %. ЧИСТА."""
+    if not (closed or {}).get('ai_feat'):
+        return False
+    r = trade_r(closed)
+    if r is not None:
+        return r <= ETALON_ANTI_R
+    try:
+        return float(closed.get('pnl_pct')) <= ETALON_ANTI_PNL
+    except (TypeError, ValueError):
+        return False
+
+
+def _fnum(v, nd=4):
+    try:
+        f = float(v)
+        return round(f, nd) if f == f else None
+    except (TypeError, ValueError):
+        return None
+
+
+def ai_entry_snapshot(side: str, er: Optional[Dict], rec: Optional[Dict], brain: Optional[Dict],
+                      sim: Optional[float] = None, px=None, now: Optional[float] = None,
+                      adir: Optional[Dict] = None, anti_sim: Optional[float] = None) -> Dict:
+    """📸 Повний знімок МОМЕНТУ ВХОДУ ШІ для бази еталонів: сценарій з етапами,
+    складові балу, Пружина, чек-лист мозку, план, напрямок аномалій, схожість.
+    Компактно (без сирих барів). ЧИСТА."""
+    er, rec, brain = er or {}, rec or {}, brain or {}
+    sc = er.get('scenario') or {}
+    sp = {k: rec.get(k) for k in ('charge', 'pot_long', 'pot_short', 'prob_long', 'state', 'phase',
+                                   'lean', 'lean_pp', 'box_hi', 'box_lo', 'atr', 'move_long_pct',
+                                   'move_short_pct', 'tgt_long', 'tgt_short', 'move24_pct')
+          if rec.get(k) is not None}
+    ctx = brain.get('context') or {}
+    return {
+        't': int(now or time.time()), 'side': str(side).upper(), 'px': _fnum(px, 8),
+        'scenario': {'key': sc.get('key'), 'name': sc.get('name'), 'done': sc.get('done'),
+                     'total': sc.get('total'), 'last_t': sc.get('last_t'),
+                     'stages': [{'label': x.get('label'), 'done': bool(x.get('done')), 't': x.get('t')}
+                                for x in (sc.get('stages') or [])][:8]},
+        'score': er.get('score'), 'parts': dict(er.get('parts') or {}),
+        'spring': sp,
+        'brain': {'ok': brain.get('ok'), 'confidence': brain.get('confidence'),
+                  'checks': [{'label': c.get('label'), 'ok': c.get('ok'), 'note': c.get('note')}
+                             for c in (brain.get('checks') or [])][:12],
+                  'plan': brain.get('plan'),
+                  'strict_ready': (brain.get('strict') or {}).get('ready'),
+                  'strict_vetoes': list((brain.get('strict') or {}).get('vetoes') or [])[:6],
+                  'context': ctx.get('note') if isinstance(ctx, dict) else None},
+        'adir': ({k: (adir or {}).get(k) for k in ('dir', 'state', 'long', 'short')} if adir else None),
+        'sim': sim, 'anti_sim': anti_sim,
+    }
+
+
+def etalon_lessons(closed: Dict) -> List[str]:
+    """🎓 Уроки угоди людською мовою (для самовдосконалення). ЧИСТА."""
+    out: List[str] = []
+    pnl, peak = _fnum(closed.get('pnl_pct'), 2), _fnum(closed.get('peak_pnl_pct'), 2)
+    mae = _fnum(closed.get('mae_pnl_pct'), 2)
+    risk = _fnum((closed.get('ai_plan') or {}).get('risk_pct'), 4)
+    if pnl is not None and peak and peak > 0:
+        cap = round(100 * pnl / peak)
+        out.append(f'взято {cap}% піку ({pnl:+.2f}% з {peak:+.2f}%)')
+        if cap < 50:
+            out.append('вихід запізнився: віддано більше половини руху')
+    if mae is not None and risk:
+        out.append(f'найглибший відкат {mae:+.2f}% = {round(mae / risk, 2)}R від стопа плану')
+    summ = closed.get('research_summary') or {}
+    for k, v in (summ.get('first') or {}).items() if isinstance(summ.get('first'), dict) else []:
+        if isinstance(v, dict) and v.get('pnl') is not None and pnl is not None:
+            better = float(v['pnl']) > pnl
+            out.append(f"на першій події «{k}» було б {float(v['pnl']):+.2f}%" + (' — краще' if better else ''))
+    ex = closed.get('ai_exit') or {}
+    if ex.get('verdict'):
+        out.append(f"вердикт виходу: {ex.get('verdict_ua') or ex.get('verdict')}")
+    ent = closed.get('ai_entry') or {}
+    if ent.get('sim') is not None:
+        out.append(f"схожість на еталони при вході {ent['sim']}")
+    return out[:10]
+
+
+def etalon_record(closed: Dict) -> Dict:
+    """🏆 Запис бази еталонів / антибази: ключі для k-NN (feat, side, scen, r) +
+    УСЕ корисне для самовдосконалення — момент входу, план, шлях угоди, вихід,
+    події дослідження, уроки. ЧИСТА."""
+    try:
+        dur = int(float(closed.get('closed_at')) - float(closed.get('opened_at')))
+    except (TypeError, ValueError):
+        dur = None
+    plan = closed.get('ai_plan') or {}
+    risk = _fnum(plan.get('risk_pct'), 4)
+    peak, mae = _fnum(closed.get('peak_pnl_pct'), 3), _fnum(closed.get('mae_pnl_pct'), 3)
+    pnl = _fnum(closed.get('pnl_pct'), 3)
+    ex = closed.get('ai_exit') or {}
+    rs = closed.get('research') if isinstance(closed.get('research'), dict) else {}
+    evs = rs.get('ev') if isinstance(rs, dict) else None
+    if evs is None and isinstance(closed.get('research'), list):
+        evs = closed.get('research')
+    t0 = _fnum(closed.get('opened_at'), 0) or 0
+    events = []
+    for e in (evs or [])[-ETALON_EVENTS_MAX:]:
+        if isinstance(e, dict):
+            events.append({'dt': int((_fnum(e.get('t'), 0) or t0) - t0), 'k': e.get('k') or e.get('kind'),
+                           'n': e.get('note') or e.get('label'), 'pnl': e.get('pnl')})
+    return {'sym': closed.get('symbol'), 'side': str(closed.get('side') or '').upper(),
+            't': int(float(closed.get('closed_at') or time.time())),
+            'scen': closed.get('ai_scenario'), 'feat': dict(closed.get('ai_feat') or {}),
+            'pnl': pnl, 'peak': peak, 'mae': mae,
+            'r': trade_r(closed), 'peak_r': round(peak / risk, 2) if (peak is not None and risk) else None,
+            'mae_r': round(mae / risk, 2) if (mae is not None and risk) else None,
+            'capture': round(pnl / peak, 2) if (pnl is not None and peak and peak > 0) else None,
+            'reason': closed.get('reason'), 'dur_sec': dur,
+            'paper': bool(closed.get('is_paper', closed.get('paper'))),
+            'entry_px': _fnum(closed.get('entry_price'), 8), 'exit_px': _fnum(closed.get('exit_price'), 8),
+            'plan': ({k: plan.get(k) for k in ('stop', 'target', 'risk_pct', 'reward_pct', 'net_rr',
+                                                'target_src')} if plan else None),
+            'entry': closed.get('ai_entry'),
+            'spring_open': closed.get('spring_open'),
+            'exit': ({'verdict': ex.get('verdict'), 'verdict_ua': ex.get('verdict_ua'),
+                      'groups': ex.get('groups'), 'r': ex.get('r'), 'peak_r': ex.get('peak_r'),
+                      'charge': ex.get('charge'),
+                      'checklist': [{'label': c.get('label'), 'v': c.get('v'), 'say': c.get('say')}
+                                    for c in (ex.get('checklist') or [])][:10]} if ex else None),
+            'partials': list(closed.get('partial_closes_done') or [])[:6],
+            'events': events,
+            'summary': closed.get('research_summary'),
+            'lessons': etalon_lessons(closed)}
+
+
+ETALON_MATURE_GOOD = 10   # мозок еталонів вирішує, коли є ≥10 відмінних
+ETALON_MATURE_ANTI = 5    # … і ≥5 невдалих угод (є з чим порівнювати)
+ETALON_TP_CAPTURE = 0.8   # ціль = 0.8 × типовий пік схожих еталонів (реалістичний вихід)
+
+
+def etalon_brain(feat: Dict, good: List[Dict], anti: List[Dict], side: Optional[str] = None,
+                 s: Optional[Dict] = None, k: int = ETALON_K) -> Dict:
+    """🏆🧠 ГОЛОВНИЙ МОЗОК ШІ — досвід самого ШІ (вимога 22.11: «база Еталон —
+    основний мозок»). k найближчих угод з ОБОХ баз (відмінні + невдалі) того
+    самого боку голосують зважено за близькістю:
+      p_good — частка «відмінних» серед схожих входів;
+      exp_r  — очікуваний результат у R; tp_r — типовий пік схожих відмінних.
+    `mature` — бази зібрані: тоді вердикт `take`/`skip` є ОСТАТОЧНИМ рішенням
+    на вхід; до того `learning` — рішення за правилами (вони й наповнюють базу).
+    ЧИСТА."""
+    s = s or {}
+    sd = str(side or '').upper()
+
+    def _pool(base, lab):
+        rows = [e for e in (base or []) if isinstance(e, dict) and e.get('feat')]
+        same = [e for e in rows if e.get('side') == sd] if sd else rows
+        rows = same if len(same) >= 3 else rows
+        return [(d, lab, e) for e in rows for d in [feat_distance(feat, e['feat'])] if d is not None]
+    g_n = len([e for e in (good or []) if e.get('feat')])
+    a_n = len([e for e in (anti or []) if e.get('feat')])
+    mature = g_n >= ETALON_MATURE_GOOD and a_n >= ETALON_MATURE_ANTI
+    out = {'n_good': g_n, 'n_anti': a_n, 'mature': mature, 'need_good': ETALON_MATURE_GOOD,
+           'need_anti': ETALON_MATURE_ANTI, 'p_good': None, 'exp_r': None, 'tp_r': None,
+           'nearest': [], 'verdict': 'learning', 'reason': ''}
+    pool = sorted(_pool(good, 1) + _pool(anti, 0), key=lambda x: x[0])[:max(1, k)]
+    if not pool:
+        out['reason'] = 'досвіду ще немає — вирішують правила'
+        return out
+    ws = [max(0.02, 1.0 - min(1.0, d)) for d, _, _ in pool]
+    W = sum(ws)
+    out['p_good'] = round(sum(w for w, (_, lab, _) in zip(ws, pool) if lab) / W, 3)
+    rs = [(w, e.get('r')) for w, (_, _, e) in zip(ws, pool) if isinstance(e.get('r'), (int, float))]
+    if rs:
+        out['exp_r'] = round(sum(w * r for w, r in rs) / sum(w for w, _ in rs), 2)
+    pk = sorted(e.get('peak_r') for _, lab, e in pool if lab and isinstance(e.get('peak_r'), (int, float)))
+    if len(pk) >= 3:
+        out['tp_r'] = round(ETALON_TP_CAPTURE * pk[len(pk) // 2], 2)
+    out['nearest'] = [{'sym': e.get('sym'), 'side': e.get('side'), 'good': bool(lab), 'r': e.get('r'),
+                       'd': round(d, 3)} for d, lab, e in pool]
+    if not mature:
+        out['reason'] = (f'мозок еталонів вчиться: відмінних {g_n}/{ETALON_MATURE_GOOD}, '
+                         f'невдалих {a_n}/{ETALON_MATURE_ANTI} — вирішують правила')
+        return out
+    p_min = float(s.get('etalon_min_p') or 0.6)
+    sim_min = float(s.get('etalon_min_sim') or 0)
+    near = 1.0 - pool[0][0]
+    if near < sim_min:
+        out['verdict'], out['reason'] = 'skip', f'немає схожого досвіду (найближчий {near:.2f} < {sim_min:.2f})'
+    elif out['p_good'] < p_min:
+        out['verdict'], out['reason'] = 'skip', (f"схожі входи частіше були невдалими "
+                                                 f"(відмінних {round(out['p_good'] * 100)}% < {round(p_min * 100)}%)")
+    elif out['exp_r'] is not None and out['exp_r'] <= 0:
+        out['verdict'], out['reason'] = 'skip', f"очікуваний результат схожих угод {out['exp_r']}R"
+    else:
+        out['verdict'] = 'take'
+        out['reason'] = (f"схожі входи: відмінних {round(out['p_good'] * 100)}%"
+                         + (f" · очікувано {out['exp_r']}R" if out['exp_r'] is not None else ''))
+    return out
+
+
+def etalon_plan(plan: Optional[Dict], side: str, eb: Optional[Dict]) -> Optional[Dict]:
+    """🎯 Ціль угоди з досвіду: зрілий мозок еталонів і типовий пік схожих
+    відмінних (tp_r) → ціль = вхід ± tp_r × ризик плану. ЧИСТА."""
+    if not plan or not eb or not eb.get('mature') or not eb.get('tp_r'):
+        return plan
+    try:
+        stop, tgt = float(plan['stop']), float(plan['target'])
+        risk = float(plan.get('risk_pct'))
+    except (TypeError, ValueError, KeyError):
+        return plan
+    if risk <= 0:
+        return plan
+    sd = str(side).upper()
+    ref = stop / (1 - risk / 100.0) if sd == 'LONG' else stop / (1 + risk / 100.0)
+    rw = float(eb['tp_r']) * risk
+    new_t = ref * (1 + rw / 100.0) if sd == 'LONG' else ref * (1 - rw / 100.0)
+    out = dict(plan)
+    out.update({'target': round(new_t, 10), 'reward_pct': round(rw, 3), 'target_src': 'etalon',
+                'target_prev': tgt, 'net_rr': round(float(eb['tp_r']), 2)})
+    return out
+
+
+def ai_rank(view: Dict, sim: Optional[float]) -> float:
+    """Ранг рекомендації ШІ. Зрілий мозок еталонів — ГОЛОВНА складова
+    (ймовірність «відмінна» серед схожих входів), до того — готовність
+    сценарію, прогрес, впевненість правил і схожість. ЧИСТА."""
+    best = (view or {}).get('pick') or {}
+    sc = best.get('scenario') or {}
+    prog = (sc.get('done') or 0) / max(1, sc.get('total') or 1)
+    conf = float(((view or {}).get('brain') or {}).get('confidence') or 0) / 100.0
+    ready = 1.0 if view.get('ready') else 0.0
+    eb = (view or {}).get('etalon') or {}
+    if eb.get('mature') and eb.get('p_good') is not None:
+        return round(100 * (0.5 * float(eb['p_good']) + 0.3 * ready + 0.1 * prog + 0.1 * conf), 1)
+    return round(100 * (0.45 * ready + 0.2 * prog + 0.2 * conf + 0.15 * (sim if sim is not None else 0.5)), 1)
+
+
 TICK_SEC = 30               # такт рушія
 LIVE_TTL = 60               # 1h-бари монети в заряді — не частіше раз на хвилину
 WORKERS = 4
@@ -884,7 +1328,7 @@ def anom_tg_text(symbol: str, side: str, r: Dict, price=None, adir: Optional[Dic
     """Текст Telegram: бік, монета, сценарій, етапи, ціна, напрямок аномалій."""
     sc = (r or {}).get('scenario') or {}
     emo = '🟢' if side == 'LONG' else '🔴'
-    out = [f"⚠️ <b>Аномалії обсягу</b> · {emo} <b>{side}</b>",
+    out = ['🤖 <b>VSV·AI</b>', f"⚠️ <b>Аномалії обсягу</b> · {emo} <b>{side}</b>",
            f"<b>#{symbol}</b> · {sc.get('name') or 'сценарій входу'}"]
     for st in (sc.get('stages') or [])[:5]:
         out.append(('✓ ' if st.get('done') else '· ') + str(st.get('label') or ''))
@@ -980,20 +1424,72 @@ class AiEngine:
                       'errors': 0, 'last_err': ''}
         self._dirty = False
         self._thread = None
+        # 🤖 власний сценарій ШІ (22.11)
+        self._ai_s: Optional[Dict] = None
+        self._ai_s_at = 0.0
+        self._etalon: List[Dict] = []
+        self._anti: List[Dict] = []
+        self._ai_opens: List[float] = []          # часи відкриттів угод ШІ (ліміт 30 хв)
+        self._ai_last: Dict[str, list] = {}       # S → [бік, час] останнього сигналу ШІ
+        self._ai_block: Dict[str, list] = {}      # 'S|side' → [причина, час] (анти-флуд логу)
+        self._cleanup_at = 0.0
+        self._cleanup_mark: Dict = {}
+        self._cleanup_stat: Dict = {}
         self._load()
+        self._load_etalon()
 
     # джерела
     def _scn(self):
         return self._sc or _scanner()
 
-    def settings(self) -> Dict:
-        s = dict(DEFAULTS)
+    def ai_settings(self) -> Dict:
+        """🤖 ВЛАСНІ налаштування ШІ (`ai_settings_v1`, 5с кеш). Перший запуск —
+        міграція наявних ключів сканера / TM."""
+        now = time.time()
+        if self._ai_s is not None and now - self._ai_s_at < 5:
+            return dict(self._ai_s)
+        raw = None
         try:
-            st = self._scn().get_settings() or {}
-            s.update({k: st[k] for k in DEFAULTS if k in st})
+            raw = self.db.get_setting(AI_DB_SETTINGS, None) if self.db else None
+            if isinstance(raw, str):
+                raw = json.loads(raw)
         except Exception:
-            pass
-        return s
+            raw = None
+        if isinstance(raw, dict):
+            st = ai_settings_norm(raw)
+        else:
+            sc_s, tm_s = {}, {}
+            try:
+                sc_s = self._scn().get_settings() or {}
+            except Exception:
+                pass
+            try:
+                tm_s = getattr(self._tm_get(), '_settings', None) or {}
+            except Exception:
+                pass
+            st = ai_settings_migrate(sc_s, tm_s)
+            try:
+                if self.db:
+                    self.db.set_setting(AI_DB_SETTINGS, st)
+            except Exception:
+                pass
+        self._ai_s, self._ai_s_at = st, now
+        return dict(st)
+
+    def update_ai_settings(self, patch: Dict) -> Dict:
+        cur = self.ai_settings()
+        cur.update({k: v for k, v in (patch or {}).items() if k in AI_DEFAULTS})
+        st = ai_settings_norm(cur)
+        if self.db:
+            self.db.set_setting(AI_DB_SETTINGS, st)
+        self._ai_s, self._ai_s_at = st, time.time()
+        return dict(st)
+
+    def settings(self) -> Dict:
+        """Сумісність: старі ключі (`ai_signal_enabled` …) — з ВЛАСНИХ налаштувань ШІ."""
+        a = self.ai_settings()
+        return {'ai_signal_enabled': a['enabled'], 'ai_min_charge': a['min_charge'],
+                'ai_learning_enabled': a['learning_enabled'], **a}
 
     def _md_get(self):
         if self._md is None:
@@ -1069,17 +1565,15 @@ class AiEngine:
     def _pro_exit_on(self) -> bool:
         """Чи увімкнено «🤖 Вихід з угоди ШІ» у Trade Manager — супровід угоди
         за планом мозку графіка тепер його частина (бари треба готувати)."""
-        tm = self._tm_get()
-        try:
-            return bool((getattr(tm, '_settings', None) or {}).get('use_ai_exit'))
-        except Exception:
-            return False
+        return bool(self.ai_settings().get('exit_enabled'))
 
     def _pro_prefetch_open(self, now: float) -> int:
         """Бари 15m/1h/4h для монет ВІДКРИТИХ угод (real + paper) — паралельно,
         у такті рушія. Так монітор TM читає готовий кеш і не чекає біржу."""
+        # Лише ВЛАСНІ угоди ШІ: він супроводжує тільки їх (22.11).
         try:
-            syms = _sib('sbr_signals')._open_trade_symbols()
+            tm = self._tm_get()
+            syms = [S for S, _b in (tm.ai_open_positions() if tm and hasattr(tm, 'ai_open_positions') else [])]
         except Exception:
             syms = []
         syms = sorted(set(syms))[:PRO_OPEN_CAP]
@@ -1296,7 +1790,8 @@ class AiEngine:
         if not spring_on and not subs:
             return 0
         self._refresh_cal(now)
-        min_charge = float(s.get('ai_min_charge') or 65)
+        min_charge = float(s.get('min_charge') or 65)
+        allowed = s.get('scenarios') or ['E2']
         cand = self.candidates(min_charge) if spring_on else {}
         anoms: Dict[str, List[Dict]] = {}
         try:
@@ -1345,22 +1840,32 @@ class AiEngine:
             if ep is not None:
                 episode_step(ep, now, rec, vw, el, es, charged)
                 self._dirty = True
-            # головний бік: готовий сценарій → більший прогрес сценарію → бал
+            # головний бік: готовий ДОЗВОЛЕНИЙ сценарій (налаштування ШІ, деф.
+            # лише E2 «💥 Старт розряду») → прогрес сценарію → бал
             def _rk(x):
                 sc = x.get('scenario') or {}
-                return (1 if entry_decide(x) else 0, (sc.get('done') or 0) / max(1, sc.get('total') or 1),
-                        x['score'])
+                return (1 if (entry_decide(x) and scen_allowed(x, allowed)) else 0,
+                        (sc.get('done') or 0) / max(1, sc.get('total') or 1), x['score'])
             best = el if _rk(el) >= _rk(es) else es
+            ready = entry_decide(best) and scen_allowed(best, allowed)
             # 🤖🧠 ЄДИНИЙ МОЗОК: напрямок → старт → санітарні перевірки графіка → план
             pro = self._professional_snapshot(S, now)
             bc = brain.entry_check(best['side'], best, pro, rec)
+            feat = entry_features(best['side'], best, rec, bc)
+            sim = etalon_similarity(feat, self._etalon, best['side']) if self._etalon else None
+            anti_sim = etalon_similarity(feat, self._anti, best['side']) if self._anti else None
             view[S] = {'symbol': S, 'src': src, 'charge': rec.get('charge'),
                        'state': rec.get('state'), 'lean': rec.get('lean'),
                        'prob_long': rec.get('prob_long'), 'long': el, 'short': es,
                        'best': best['side'], 'episode_age': (int(now - ep['started_at'])
                                                              if ep else None),
                        'signal': (ep or {}).get('signal'),
-                       'brain': bc}
+                       'brain': bc, 'pick': best, 'ready': bool(ready and bc.get('ok')),
+                       'feat': feat, 'sim': sim, 'anti_sim': anti_sim,
+                       'etalon': etalon_brain(feat, self._etalon, self._anti, best['side'], s)}
+            view[S]['rank'] = ai_rank(view[S], sim)
+            if view[S]['etalon'].get('mature') and view[S]['etalon'].get('verdict') != 'take':
+                view[S]['ready'] = False          # 🏆🧠 головний мозок сказав «ні»
             if ep is not None:
                 for x in (el, es):
                     sc = x.get('scenario') or {}
@@ -1370,8 +1875,9 @@ class AiEngine:
                             ep[k] = int(now)
                             _ev(ep, now, 'scenario', side=x['side'], key=sc.get('key'),
                                 name=sc.get('name'), score=x.get('score'))
-            if s.get('ai_signal_enabled') and ep is not None and entry_decide(best):
-                self._try_signal(S, best, rec, vw, ep, now, professional=pro, brain=bc)
+            if s.get('enabled') and ep is not None and ready:
+                self._try_signal(S, best, rec, vw, ep, now, professional=pro, brain=bc,
+                                 feat=feat, sim=sim, anti_sim=anti_sim, eb=view[S]['etalon'])
             if ep is not None:
                 why = episode_done(ep, now, charged)
                 if why:
@@ -1382,22 +1888,46 @@ class AiEngine:
             self._stat['last_err'] = f'⚠ особисті: {e}'[:200]
         with self._lock:
             self._view = view
+        try:
+            self._cleanup(now)
+        except Exception as e:
+            self._stat['last_err'] = f'🧹 очистка: {e}'[:200]
         self._pro_prune(view.keys())
         self._stat.update({'last_at': now, 'coins': len(view)})
         if self._dirty:
             self._persist()
         return len(view)
 
-    def _try_signal(self, S, sc_res, rec, vw, ep, now, professional=None, brain=None):
+    def _ai_log(self, S, event, text, side=None, **extra):
+        try:
+            from detection.activity_log import log_activity
+            log_activity(S, event, text, side=side, source='AI', extra=extra or None)
+        except Exception:
+            pass
+
+    def _ai_block_note(self, S, side, why, now) -> None:
+        """Власна відмова ШІ → 🧾 Лог ОДИН раз (та сама причина — раз на 15 хв)."""
+        k = f'{S}|{side}'
+        last = self._ai_block.get(k)
+        if last and last[0] == why and now - float(last[1] or 0) < BLOCK_LOG_GAP:
+            return
+        self._ai_block[k] = [why, now]
+        self._ai_log(S, 'rejected', f'🤖 ШІ {side}: {why}', side=side)
+
+    def _try_signal(self, S, sc_res, rec, vw, ep, now, professional=None, brain=None,
+                    feat=None, sim=None, anti_sim=None, eb=None):
+        """🤖 ВЛАСНИЙ СЦЕНАРІЙ ШІ (22.11): ворота бота (кнопки напрямку, МММ,
+        Пружини, OB/PD/…, черги) НЕ діють — ШІ відкриває СВОЮ угоду за своїми
+        правилами (налаштування ШІ) і далі супроводжує лише її."""
         side = sc_res['side']
         if ep.get('signal'):
             return                          # один результативний сигнал на епізод
+        s = self.ai_settings()
         pro_side = ((professional or {}).get('sides') or {}).get(side) or {}
         if brain is None:
             brain = _sib('ai_brain').entry_check(side, sc_res, professional, rec)
         if not brain.get('ok'):
             # 🧠 мозок не дав входу: подія в епізоді — ЛИШЕ коли причина змінилась
-            # (такт 30с, точка свіжа ≤2 свічки → інакше десятки однакових подій).
             last = ep.setdefault('brain_veto', {})
             if last.get(side) != brain.get('reason'):
                 last[side] = brain.get('reason')
@@ -1407,67 +1937,234 @@ class AiEngine:
         tr = ep.setdefault('tries', {}).get(side) or [0, 0]
         if tr[0] >= SIGNAL_TRIES or now - tr[1] < SIGNAL_RETRY_SEC:
             return
-        scn = self._scn()
+        tm = self._tm_get()
+        if tm is None or not hasattr(tm, 'ai_open'):
+            self._stat['last_err'] = 'Trade Manager без ai_open'
+            return
         try:
-            from detection.activity_log import log_activity
+            open_n = len(tm.ai_open_positions()) if hasattr(tm, 'ai_open_positions') else 0
         except Exception:
-            def log_activity(*a, **k):
-                return None
-        try:
-            if scn is not None and hasattr(scn, '_dir_paused') and scn._dir_paused(S, side):
-                return                      # ⏸ кнопка напрямку вимкнена — не опрацьовано
-            ok, reason, detail = scn._signal_allowed(S, side, at_intake=True, origin='ai')
-        except Exception as e:
-            self._stat['last_err'] = f'ворота {S}: {e}'[:200]
+            open_n = 0
+        why = ai_limits_block(side, s, open_n, self._ai_opens, self._ai_last.get(S), now)
+        # 🏆🧠 ГОЛОВНИЙ МОЗОК — база еталонів: коли досвід зібрано, саме вона
+        # ухвалює остаточне рішення на вхід (k-NN за відмінними й невдалими угодами).
+        if eb is None and feat is not None:
+            eb = etalon_brain(feat, self._etalon, self._anti, side, s)
+        if not why and s.get('etalon_enabled') and eb and eb.get('mature') and eb.get('verdict') != 'take':
+            why = '🏆🧠 мозок еталонів: ' + (eb.get('reason') or 'ні')
+        if why:
+            self._ai_block_note(S, side, why, now)
+            _ev(ep, now, 'ai_block', side=side, reason=why)
             return
         ep['tries'][side] = [tr[0] + 1, int(now)]
         px = _px(vw, rec)
         pro_compact = self._pro_compact(professional)
         bm = _sib('ai_brain')
         plan = brain.get('plan') or {}
-        head = (f"🤖 Сигнал ШІ {side} · 🧩 {sc_res.get('scenario_text') or ''} · "
+        if s.get('etalon_enabled'):
+            plan = etalon_plan(plan, side, eb) or plan      # 🎯 ціль — з досвіду
+        scen = sc_res.get('scenario') or {}
+        head = (f"Сигнал ШІ {side} · 🧩 {sc_res.get('scenario_text') or ''} · "
                 f"заряд Пружини {rec.get('charge')} · 🧠 {bm.checks_text(brain)}")
         if plan:
             head += (f" · план: стоп {plan.get('stop')} (−{plan.get('risk_pct')}%) · ціль "
                      f"{plan.get('target')} (+{plan.get('reward_pct')}%) · R {plan.get('net_rr')}")
         head += f" · впевненість {brain.get('confidence')}"
-        st = brain.get('strict') or {}
-        if st and not st.get('ready'):
-            head += ' · 🕶 строгий трендовий фільтр був би проти'
-        log_activity(S, 'signal', f'{head} · {detail}', side=side, source='AI',
-                     extra={'ai_score': sc_res['score'], 'ai_parts': sc_res['parts'],
-                            'ai_scenario': (sc_res.get('scenario') or {}).get('key'),
-                            'ai_plan': plan or None, 'ai_confidence': brain.get('confidence'),
-                            'ai_strict': st.get('ready'),
-                            'professional_quality': pro_side.get('quality'),
-                            'professional_model': (pro_compact or {}).get('model')})
-        if not ok:
-            log_activity(S, 'rejected', reason, side=side, source='AI')
-            _ev(ep, now, 'signal_rejected', side=side, score=sc_res['score'], reason=reason)
-            return
-        tm = self._tm_get()
+        if eb:
+            head += (f" · 🏆🧠 мозок еталонів: {eb.get('reason')}"
+                     + (f" · ціль з досвіду {eb.get('tp_r')}R" if plan.get('target_src') == 'etalon' else ''))
+        elif sim is not None:
+            head += f" · 🏆 схожість на еталони {sim:.2f} (база {len(self._etalon)})"
+        self._ai_log(S, 'signal', head, side=side, ai_score=sc_res['score'],
+                     ai_parts=sc_res['parts'], ai_scenario=scen.get('key'),
+                     ai_plan=plan or None, ai_confidence=brain.get('confidence'),
+                     ai_sim=sim, professional_quality=pro_side.get('quality'))
         res = None
-        if tm is not None:
-            try:
-                res = tm.on_signal(symbol=S, side=side, entry_price=px or 0, opened_by='ai')
-                attach = getattr(tm, 'set_ai_professional_context', None)
-                if callable(attach) and (pro_compact or plan):
-                    try:
-                        attach(S, side, pro_compact or {}, plan=plan or None)
-                    except TypeError:           # старіший TM без plan=
-                        attach(S, side, pro_compact or {})
-            except Exception as e:
-                self._stat['last_err'] = f'on_signal {S}: {e}'[:200]
+        try:
+            res = tm.ai_open(S, side, plan=plan or None, book=s.get('book') or 'auto',
+                             sl_fallback_pct=s.get('sl_fallback_pct'),
+                             feat=feat, scenario=scen.get('key'),
+                             scenario_name=scen.get('name'), context=pro_compact or {},
+                             entry={**ai_entry_snapshot(side, sc_res, rec, brain, sim, px, now,
+                                                        self.anomaly_dir(S), anti_sim),
+                                    'etalon': {k: (eb or {}).get(k) for k in
+                                               ('mature', 'verdict', 'p_good', 'exp_r', 'tp_r', 'reason')},
+                                    'plan_final': plan or None})
+        except Exception as e:
+            res = {'ok': False, 'reason': f'помилка відкриття: {e}'}
+            self._stat['last_err'] = f'ai_open {S}: {e}'[:200]
+        ok = bool((res or {}).get('ok'))
+        if not ok:
+            self._ai_log(S, 'rejected', f"🤖 ШІ {side}: угоду НЕ відкрито — {(res or {}).get('reason')}",
+                         side=side)
+            _ev(ep, now, 'signal_rejected', side=side, score=sc_res['score'],
+                reason=(res or {}).get('reason'))
+            return
+        self._ai_opens = [t for t in self._ai_opens if now - t < OPEN_WINDOW_SEC] + [now]
+        self._ai_last[S] = [side, now]
         ep['signal'] = {'t': int(now), 'side': side, 'px': px, 'score': sc_res['score'],
-                        'parts': sc_res['parts'], 'result': str(res)[:80] if res else None,
-                        'scenario': (sc_res.get('scenario') or {}).get('key'),
-                        'scenario_name': (sc_res.get('scenario') or {}).get('name'),
-                        'professional': pro_compact,
+                        'parts': sc_res['parts'], 'result': (res or {}).get('mode'),
+                        'scenario': scen.get('key'), 'scenario_name': scen.get('name'),
+                        'professional': pro_compact, 'feat': feat, 'sim': sim, 'anti_sim': anti_sim,
+                        'etalon': {k: (eb or {}).get(k) for k in ('mature', 'verdict', 'p_good', 'exp_r', 'tp_r')},
                         'brain': {'checks': brain.get('checks'), 'plan': plan or None,
                                   'confidence': brain.get('confidence'),
                                   'strict': brain.get('strict'), 'context': brain.get('context')}}
         _ev(ep, now, 'signal', side=side, px=px, score=sc_res['score'])
         self._stat['signals'] += 1
+        self._dirty = True
+
+    # ── 🏆 ЕТАЛОН ──────────────────────────────────────────────────────────
+    def _load_etalon(self):
+        for key, attr in ((ETALON_DB, '_etalon'), (ETALON_ANTI_DB, '_anti')):
+            try:
+                raw = self.db.get_setting(key, None) if self.db else None
+                if isinstance(raw, str):
+                    raw = json.loads(raw)
+                if isinstance(raw, list):
+                    setattr(self, attr, [e for e in raw if isinstance(e, dict) and e.get('feat')][-ETALON_MAX:])
+            except Exception:
+                setattr(self, attr, [])
+
+    def etalon_consider(self, closed: Dict) -> bool:
+        """Закрита угода ШІ: відмінна → у базу еталонів, невдала → в антибазу
+        (контраст для навчання). У запис іде все корисне: вхід, план, шлях,
+        вихід, події, уроки."""
+        s = self.ai_settings()
+        if not s.get('etalon_enabled'):
+            return False
+        if etalon_excellent(closed, s):
+            attr, key, kind = '_etalon', ETALON_DB, 'good'
+        elif etalon_failed(closed):
+            attr, key, kind = '_anti', ETALON_ANTI_DB, 'bad'
+        else:
+            return False
+        rec = etalon_record(closed)
+        with self._lock:
+            cur = getattr(self, attr)
+            k2 = (rec['sym'], rec['t'])
+            if any((e.get('sym'), e.get('t')) == k2 for e in cur):
+                return False
+            cur = (cur + [rec])[-ETALON_MAX:]
+            setattr(self, attr, cur)
+            base = list(cur)
+        try:
+            if self.db:
+                self.db.set_setting(key, base)
+        except Exception:
+            pass
+        res = f"результат {rec['pnl']}%" + (f" · {rec['r']}R" if rec['r'] is not None else '')
+        if kind == 'good':
+            msg = f"🏆 ШІ: угоду {rec['side']} додано в еталони ({res}) — база {len(base)}"
+        else:
+            msg = f"❌ ШІ: невдалу угоду {rec['side']} додано в антибазу ({res}) — база {len(base)}"
+        if rec.get('lessons'):
+            msg += ' · уроки: ' + '; '.join(rec['lessons'][:3])
+        self._ai_log(rec['sym'], 'signal', msg, side=rec['side'])
+        return True
+
+    def etalon_state(self) -> Dict:
+        base = list(self._etalon)
+        rs = [e.get('r') for e in base if isinstance(e.get('r'), (int, float))]
+        by_sc: Dict[str, int] = {}
+        for e in base:
+            by_sc[e.get('scen') or '?'] = by_sc.get(e.get('scen') or '?', 0) + 1
+        anti = list(self._anti)
+        caps = [e.get('capture') for e in base if isinstance(e.get('capture'), (int, float))]
+        return {'n': len(base), 'min_n': ETALON_MIN_N, 'active': len(base) >= ETALON_MIN_N,
+                'anti_n': len(anti), 'contrast': len(base) >= ETALON_MIN_N and len(anti) >= ETALON_MIN_N,
+                'mature': len(base) >= ETALON_MATURE_GOOD and len(anti) >= ETALON_MATURE_ANTI,
+                'need_good': ETALON_MATURE_GOOD, 'need_anti': ETALON_MATURE_ANTI,
+                'avg_capture': round(sum(caps) / len(caps), 2) if caps else None,
+                'anti_last': [{k: e.get(k) for k in ('sym', 'side', 'r', 'pnl', 'scen', 't')}
+                              for e in anti[-5:][::-1]],
+                'avg_r': round(sum(rs) / len(rs), 2) if rs else None,
+                'long': sum(1 for e in base if e.get('side') == 'LONG'),
+                'short': sum(1 for e in base if e.get('side') == 'SHORT'),
+                'by_scenario': by_sc,
+                'last': [{k: e.get(k) for k in ('sym', 'side', 'r', 'pnl', 'scen', 't', 'capture', 'lessons')}
+                         for e in base[-8:][::-1]]}
+
+    def etalon_clear(self) -> int:
+        n = len(self._etalon) + len(self._anti)
+        self._etalon, self._anti = [], []
+        try:
+            if self.db:
+                self.db.set_setting(ETALON_DB, [])
+                self.db.set_setting(ETALON_ANTI_DB, [])
+        except Exception:
+            pass
+        return n
+
+    # ── 🎯 ВИБІР ШІ ДЛЯ «Рекомендовані ботом» ──────────────────────────────
+    def recommend(self) -> Dict[str, Dict]:
+        """{S: {side, ready, rank, scenario, sim, confidence, plan}} — ТІ САМІ
+        рішення, за якими ШІ відкриває свої угоди (лише памʼять)."""
+        with self._lock:
+            view = dict(self._view)
+        out = {}
+        for S, v in view.items():
+            p = v.get('pick') or {}
+            sc = p.get('scenario') or {}
+            b = v.get('brain') or {}
+            out[S] = {'side': p.get('side'), 'ready': bool(v.get('ready')),
+                      'rank': v.get('rank'), 'sim': v.get('sim'),
+                      'etalon': {k: (v.get('etalon') or {}).get(k) for k in
+                                 ('mature', 'verdict', 'p_good', 'exp_r', 'tp_r', 'reason')},
+                      'scenario': sc.get('key'), 'scenario_name': sc.get('name'),
+                      'stage': f"{sc.get('done') or 0}/{sc.get('total') or 0}" if sc else None,
+                      'confidence': b.get('confidence'),
+                      'plan': etalon_plan(b.get('plan'), p.get('side') or '', v.get('etalon')) or b.get('plan')}
+        return out
+
+    # ── 🧹 АВТООЧИСТКА ТАБЛИЦЬ НАВЧАННЯ ────────────────────────────────────
+    def _etalon_prune(self, now: float, dry: bool = False) -> int:
+        """Еталони / антибаза, старші за ETALON_MAX_AGE_DAYS — відпрацьований досвід."""
+        cut = now - ETALON_MAX_AGE_DAYS * 86400
+        n = 0
+        for attr, key in (('_etalon', ETALON_DB), ('_anti', ETALON_ANTI_DB)):
+            cur = list(getattr(self, attr))
+            keep = [e for e in cur if float(e.get('t') or now) >= cut]
+            n += len(cur) - len(keep)
+            if not dry and len(keep) != len(cur):
+                setattr(self, attr, keep)
+                try:
+                    if self.db:
+                        self.db.set_setting(key, keep)
+                except Exception:
+                    pass
+        return n
+
+    def _cleanup(self, now: float, force: bool = False) -> Optional[Dict]:
+        """🧹 Прибрати з таблиць навчання те, що лише заважає, і ВІДПРАЦЬОВАНИЙ
+        матеріал (вимоги 22.11). Раз на годину — ПОЗНАЧЕННЯ (підрахунок того,
+        що піде на видалення, видно в панелі ШІ), раз на 6 год — видалення."""
+        if not force and not self.ai_settings().get('cleanup_enabled'):
+            return None
+        if not self.db or not hasattr(self.db, 'cleanup_ai_learning'):
+            return None
+        if not force and now - self._cleanup_at < CLEANUP_EVERY_SEC:
+            if now - float((self._cleanup_mark or {}).get('at') or 0) >= CLEANUP_MARK_SEC:
+                try:
+                    m = self.db.cleanup_ai_learning(now + (CLEANUP_EVERY_SEC - (now - self._cleanup_at)),
+                                                    dry=True, **CLEANUP_RULES) or {}
+                except TypeError:
+                    m = {}
+                m['etalon'] = self._etalon_prune(now + CLEANUP_EVERY_SEC, dry=True)
+                self._cleanup_mark = {'at': int(now), 'next_at': int(self._cleanup_at + CLEANUP_EVERY_SEC), **m}
+            return None
+        self._cleanup_at = now
+        try:
+            res = self.db.cleanup_ai_learning(now, **CLEANUP_RULES) or {}
+        except TypeError:                       # старіший шар БД без нових правил
+            res = self.db.cleanup_ai_learning(now) or {}
+        res['etalon'] = self._etalon_prune(now)
+        self._cleanup_stat = {'at': int(now), **res}
+        self._cleanup_mark = {'at': int(now), 'next_at': int(now + CLEANUP_EVERY_SEC),
+                              'episodes': 0, 'anomalies': 0, 'research': 0, 'etalon': 0}
+        if any(res.values()):
+            print(f'[AI] 🧹 очистка таблиць навчання: {res}')
+        return res
 
     def _anom_personal(self, subs, scored, lives, anoms, now) -> int:
         """⚠ Особисті сповіщення: монета з підписки, сценарій входу ГОТОВИЙ →
@@ -1549,7 +2246,10 @@ class AiEngine:
             return
         try:
             self.db.set_setting(DB_STATE, {'eps': self._eps, 'anom_sent': self._anom_sent,
-                                           'anom_last': self._anom_last})
+                                           'anom_last': self._anom_last,
+                                           'ai_opens': self._ai_opens[-50:],
+                                           'ai_last': self._ai_last,
+                                           'cleanup_at': self._cleanup_at})
         except Exception:
             pass
 
@@ -1563,6 +2263,17 @@ class AiEngine:
             eps = st.get('eps') or {}
             if isinstance(eps, dict):
                 self._eps = {str(k).upper(): v for k, v in eps.items() if isinstance(v, dict)}
+            ao = st.get('ai_opens')
+            if isinstance(ao, list):
+                self._ai_opens = [float(x) for x in ao if isinstance(x, (int, float))]
+            al = st.get('ai_last')
+            if isinstance(al, dict):
+                self._ai_last = {str(k).upper(): list(v) for k, v in al.items()
+                                 if isinstance(v, (list, tuple)) and len(v) == 2}
+            try:
+                self._cleanup_at = float(st.get('cleanup_at') or 0)
+            except (TypeError, ValueError):
+                self._cleanup_at = 0.0
             for k, attr in (('anom_sent', '_anom_sent'), ('anom_last', '_anom_last')):
                 v = st.get(k)
                 if isinstance(v, dict):
@@ -1599,7 +2310,21 @@ class AiEngine:
             'processed_archive_records': len(self._learner.seen) if self._learner else 0,
             'monitored_symbols': len(self._pro_analysis),
         }
-        return {'ok': True, 'settings': self.settings(), 'stat': dict(self._stat),
+        tm = self._tm_get()
+        try:
+            own = [{'symbol': S, 'paper': b} for S, b in
+                   (tm.ai_open_positions() if tm and hasattr(tm, 'ai_open_positions') else [])]
+        except Exception:
+            own = []
+        return {'ok': True, 'settings': self.settings(), 'ai': self.ai_settings(),
+                'ai_defaults': AI_DEFAULTS, 'scenario_keys': list(AI_SCENARIOS),
+                'etalon': self.etalon_state(), 'cleanup': dict(self._cleanup_stat),
+                'cleanup_rules': CLEANUP_RULES, 'cleanup_rules_ua': CLEANUP_RULES_UA,
+                'cleanup_mark': dict(self._cleanup_mark),
+                'cleanup_next': int(self._cleanup_at + CLEANUP_EVERY_SEC) if self._cleanup_at else None,
+                'own_trades': own,
+                'opens_30m': len([t for t in self._ai_opens if self._clock() - t < OPEN_WINDOW_SEC]),
+                'stat': dict(self._stat),
                 'calibration': self.calibration(), 'coins': view,
                 'professional': professional,
                 'episodes_open': len(self._eps), 'server_now': self._clock(),
@@ -1639,3 +2364,22 @@ def init_ai_engine(db=None, start_loop: bool = True, **kw) -> AiEngine:
 
 def get_ai_engine() -> Optional[AiEngine]:
     return _instance
+
+
+def ai_settings_now() -> Dict:
+    """Налаштування ШІ для інших модулів (немає рушія → дефолти)."""
+    eng = get_ai_engine()
+    try:
+        return eng.ai_settings() if eng else dict(AI_DEFAULTS)
+    except Exception:
+        return dict(AI_DEFAULTS)
+
+
+def on_ai_trade_closed(closed: Dict) -> bool:
+    """TM: закрилась угода ШІ → кандидат у еталони."""
+    eng = get_ai_engine()
+    try:
+        return bool(eng and eng.etalon_consider(closed))
+    except Exception as e:
+        print(f'[AI] etalon: {e}')
+        return False

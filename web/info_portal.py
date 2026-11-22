@@ -2016,6 +2016,46 @@ def recommended_rows(wl_recs, wl_pass, scan_rows):
     return out
 
 
+def rec_ai_merge(rows, ai_map, ai_recs=None):
+    """ЧИСТА: 🤖 ВИБІР ШІ для «Рекомендовані ботом» (вимога 22.11) — ті самі
+    рішення, за якими ШІ відкриває СВОЇ угоди (`AiEngine.recommend`).
+    • рядок, який ШІ оцінив, несе `ai` {ready, rank, side, scenario, sim, …};
+    • готовий вхід ШІ задає бік рядка (ШІ вирішує), бік таблиці лишається в `tab_side`;
+    • монета, яку ШІ вважає готовою, але якої немає в таблицях, додається (`src='ai'`);
+    • порядок: готові входи ШІ (за рангом) → решта, оцінена ШІ (за рангом) → інші."""
+    ai_map = ai_map or {}
+    seen = set()
+    for r in rows:
+        S = r.get('symbol')
+        seen.add(S)
+        a = ai_map.get(S)
+        if not a:
+            continue
+        r['ai'] = dict(a)
+        if a.get('ready') and a.get('side') in ('LONG', 'SHORT'):
+            if r.get('side') != a['side']:
+                r['tab_side'] = r.get('side')
+            r['side'] = a['side']
+    for S, a in ai_map.items():
+        if S in seen or not a.get('ready') or a.get('side') not in ('LONG', 'SHORT'):
+            continue
+        rec = (ai_recs or {}).get(S)
+        if not rec:
+            continue
+        row = {k: rec.get(k) for k in REC_KEYS}
+        row.update({'symbol': S, 'src': 'ai', 'side': a['side'], 'ai': dict(a)})
+        rows.append(row)
+
+    def _k(x):
+        a = x.get('ai') or {}
+        rk = a.get('rank') if isinstance(a.get('rank'), (int, float)) else -1
+        pr = rec_prob(x)
+        return (0 if a.get('ready') else (1 if a else 2), -rk if a else 0,
+                -(pr if pr is not None else -1), x.get('symbol') or '')
+    rows.sort(key=_k)
+    return rows
+
+
 def rec_prob(row):
     """ЧИСТА: ймовірність у бік рядка (%), None — немає даних. Сортування
     таблиці «Рекомендовані ботом» — за нею (вимога 10.11)."""
@@ -2229,6 +2269,24 @@ def recommended_payload(now=None):
     except Exception:
         pass
     rows = recommended_rows(wl_recs, wl_pass, scan_rows)
+    # 🤖 ШІ підбирає найкращі угоди (22.11) — ті самі рішення, що відкривають
+    # його власні угоди; лише памʼять рушія.
+    ai_n = 0
+    try:
+        from detection.ai_signals import get_ai_engine
+        _ai = get_ai_engine()
+        if _ai is not None:
+            amap = _ai.recommend() or {}
+            ai_recs = {}
+            try:
+                miss = [S for S, a in amap.items() if a.get('ready')]
+                ai_recs = sc.spring_for(miss) if (miss and sc is not None) else {}
+            except Exception:
+                ai_recs = {}
+            rows = rec_ai_merge(rows, amap, ai_recs)
+            ai_n = sum(1 for r in rows if (r.get('ai') or {}).get('ready'))
+    except Exception:
+        pass
     ffs = {}
     try:
         from detection.fuel_filter import get_fuel_filter
@@ -2260,7 +2318,7 @@ def recommended_payload(now=None):
     except Exception:
         banners = []
     p = {'ok': True, 'rows': rows, 'banners': banners,
-         'scan': scan_meta, 'wl_n': len(wl_recs), 'ts': now}
+         'scan': scan_meta, 'wl_n': len(wl_recs), 'ai_ready': ai_n, 'ts': now}
     _rec_cache['p'] = (now, p)
     return p
 

@@ -261,11 +261,19 @@ class _Sc:
 
 class _Tm:
     def __init__(self):
-        self.sig = []
+        self.sig, self.opened, self.own = [], [], []
 
     def on_signal(self, **kw):
         self.sig.append(kw)
         return 'queued'
+
+    def ai_open(self, symbol, side, **kw):
+        self.opened.append({'symbol': symbol, 'side': side, **kw})
+        self.own.append((symbol, True))
+        return {'ok': True, 'mode': 'test'}
+
+    def ai_open_positions(self):
+        return list(self.own)
 
 
 class _Db:
@@ -289,6 +297,8 @@ def _engine(ok=True):
     e._refresh_cal = lambda now: None
     e._fetch_live = lambda S, now: (dict(_REC), dict(_VW_UP))
     e._professional_snapshot = lambda S, now: pro_ok()
+    e._ai_s = A.ai_settings_norm({'enabled': True, 'scenarios': ['E1', 'E2', 'E3', 'E4']})
+    e._ai_s_at = 1e15
     return e, sc, tm
 
 
@@ -309,30 +319,36 @@ def pro_ok(mom=0.3, atr=0.6, ready_model=False, p=0.6, strict_ready=False):
             'data_issues': [], 'vetoes': []}
 
 
-def test_engine_signal_goes_through_shared_gates():
-    e, sc, tm = _engine(True)
+def test_engine_ai_opens_its_own_trade_without_gates():
+    """22.11: ШІ працює за ВЛАСНИМ сценарієм — ворота бота (`_signal_allowed`,
+    кнопки напрямку) його не зупиняють; угоду відкриває `tm.ai_open`."""
+    e, sc, tm = _engine(False)            # ворота «проти» — ШІ їх не питає
     e.tick(NOW)
-    _check(sc.calls and sc.calls[0][3] == 'ai' and sc.calls[0][2] is True, f'ворота: {sc.calls}')
-    _check(tm.sig and tm.sig[0]['opened_by'] == 'ai' and tm.sig[0]['side'] == 'LONG', f'on_signal: {tm.sig}')
+    _check(not sc.calls, f'ворота бота не питаються: {sc.calls}')
+    _check(not tm.sig, 'on_signal (звичайний шлях бота) не кличеться')
+    _check(tm.opened and tm.opened[0]['side'] == 'LONG', f'ai_open: {tm.opened}')
+    ent = tm.opened[0].get('entry') or {}
+    _check(ent.get('scenario') and ent.get('spring') and ent.get('brain')
+           and 'etalon' in ent, f'знімок входу для бази еталонів: {list(ent)}')
     e.tick(NOW + 60)
-    _check(len(tm.sig) == 1, 'один сигнал на епізод заряду')
+    _check(len(tm.opened) == 1, 'одна угода на епізод заряду')
     st = e.state()
     _check(st['coins'] and st['coins'][0]['signal'], 'стан для UI несе сигнал')
 
 
-def test_engine_rejected_signal_never_opens():
-    e, sc, tm = _engine(False)
+def test_engine_limits_of_ai_settings():
+    e, sc, tm = _engine(True)
+    e._ai_s = A.ai_settings_norm({'enabled': True, 'scenarios': ['E1', 'E2', 'E3', 'E4'],
+                                  'allow_long': False})
     e.tick(NOW)
-    _check(sc.calls and not tm.sig, 'ворота відхилили → on_signal не кличеться')
-    e.tick(NOW + 60)
-    _check(len(sc.calls) == 1, 'повтор лише через SIGNAL_RETRY_SEC')
+    _check(not tm.opened, 'напрямок LONG вимкнено в налаштуваннях ШІ → угоди немає')
 
 
 def test_no_direct_open_path():
     tree = ast.parse(_SRC)
     names = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
     _check('_open' not in names and 'manual_open' not in names and 'hand_open' not in names,
-           'ШІ не відкриває угоди напряму — лише on_signal після воріт')
+           'ШІ відкриває лише через tm.ai_open (власний шлях), не через _open / manual_open напряму')
 
 
 # ── 5. Вихід ШІ у Trade Manager ──────────────────────────────────────────
@@ -382,18 +398,18 @@ def test_tm_ai_exit_reason():
 def test_settings_and_ui():
     _check('ai_entry_min' not in _SC and 'sm-ai-entry-min' not in _HTML,
            '17.11: порогу «бал ≥» для входу більше немає — вхід за сценарієм')
-    for k in ('ai_signal_enabled', 'ai_min_charge'):
-        _check(f"'{k}'" in _SC, f'ключ сканера {k}')
-    for k in ('use_ai_exit', 'ai_exit_mode'):
-        _check(f"'{k}'" in _TM, f'ключ TM {k}')
-    for i in ('sm-ai-signal', 'sm-ai-min-charge', 'tm-use-ai-exit', 'ai-rules-body',
-              'tm-ai-exit-mode', 'ai-tbody', 'ai-cal'):
+    _check("AI_DB_SETTINGS = 'ai_settings_v1'" in _SRC, '22.11: власні налаштування ШІ')
+    for i in ('aip-enabled', 'aip-exit', 'aip-exit-mode', 'aip-min-charge', 'aip-book', 'aip-hold',
+              'aip-etalon', 'aip-et-p', 'aip-clean', 'ai-rules-body', 'ai-tbody', 'ai-cal'):
         _check(f'id="{i}"' in _HTML, f'UI {i}')
-    _check('function updateAiSignal' in _HTML and 'function aiLoad' in _HTML, 'JS ШІ')
-    _check("use_ai_exit: " in _HTML and "ai_exit_mode: " in _HTML, 'збереження виходу ШІ')
+    for i in ('sm-ai-signal', 'tm-use-ai-exit', 'tm-ai-exit-mode'):
+        _check(f'id="{i}"' not in _HTML, f'22.11: старий контрол {i} прибрано (усе — у панелі ШІ)')
+    _check('function aipSave' in _HTML and 'function aiLoad' in _HTML and "'/api/ai/settings'" in _HTML, 'JS ШІ')
     _check('ai_exit_min' not in _TM and 'tm-ai-exit-min' not in _HTML,
            '17.11: порогу «бал ≥» для виходу більше немає')
-    _check("@app.route('/api/ai/state')" in _APP and "@app.route('/api/ai/episodes-export')" in _APP, 'API ШІ')
+    for r in ("'/api/ai/state'", "'/api/ai/settings'", "'/api/ai/etalon/clear'", "'/api/ai/cleanup'",
+              "'/api/ai/episodes-export'"):
+        _check(r in _APP, f'API ШІ {r}')
     _check("'ai':" in _SL and 'ai_exit: "🤖 Вихід ШІ"' in _JS, 'мітки ШІ (бот + інфосайт)')
 
 

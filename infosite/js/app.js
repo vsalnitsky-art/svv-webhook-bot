@@ -124,8 +124,12 @@
     });
     return out.join(" → ") + tail;
   }
+  // 🤖 Фірмова іконка ШІ (вимога 22.11): усі дані ШІ — головним логотипом.
+  var AI_BRAND = '<img class="ai-brand" src="img/logo.png" alt="ШІ">';
+  function aiBrand(title) { return '<span class="ai-mark" title="' + esc(title || "ШІ бота") + '">' + AI_BRAND + "</span>"; }
   function signalIconHtml(raw) {
     if (!raw) return "";
+    if (signalCodeOf(raw) === "ai") return aiBrand(prettyOpenedBy(raw));
     var icon = ENGINE_ICON_OVERRIDE_JS[engineCodeOf(raw)] || SIGNAL_ICON_JS[signalCodeOf(raw)] || "🏷";
     return '<span title="' + prettyOpenedBy(raw).replace(/"/g, "&quot;") + '" style="margin-right:3px;font-size:0.8rem;cursor:help">' + icon + "</span>";
   }
@@ -2449,14 +2453,17 @@
     var sd = recSide(r), up = sd === "LONG", dc = sd ? (up ? "up" : "dn") : "";
     var prob = r.prob_long != null ? (up ? Number(r.prob_long) : 100 - Number(r.prob_long)) : null;
     var ch = Math.max(0, Math.min(100, Math.round(Number(r.charge) || 0))), chIn = Number(r.charge_in), chD = isFinite(chIn) && chIn > 0 ? ch - Math.round(chIn) : null;
-    var icon = r.src === "wl" ? '<span class="rec-ic" title="WATCHLIST бота">🌀</span>' : '<span class="rec-ic" title="Скан біржі">🔭</span>';
+    var icon = r.src === "wl" ? '<span class="rec-ic" title="WATCHLIST бота">🌀</span>' : (r.src === "ai" ? "" : '<span class="rec-ic" title="Скан біржі">🔭</span>');
+    var ai = r.ai || null;
+    var aiTip = ai ? ("ШІ: " + (ai.ready ? "ВХІД ГОТОВИЙ" : "оцінка") + (ai.side ? " " + ai.side : "") + (ai.scenario_name ? " · " + ai.scenario_name : "") + (ai.stage ? " " + ai.stage : "") + (ai.rank != null ? " · ранг " + ai.rank : "") + (ai.confidence != null ? " · впевненість " + ai.confidence : "") + (ai.etalon && ai.etalon.mature ? " · мозок еталонів: " + (ai.etalon.verdict === "take" ? "бере" : "ні") + (ai.etalon.p_good != null ? " (відмінних серед схожих " + Math.round(ai.etalon.p_good * 100) + "%)" : "") : (ai.sim != null ? " · схожість на еталони " + Number(ai.sim).toFixed(2) : "")) + (r.tab_side && r.tab_side !== ai.side ? " · таблиця пружини: " + r.tab_side : "")) : "";
+    var aiCell = ai ? (ai.ready ? '<span class="rec-ai on" title="' + esc(aiTip) + '">' + AI_BRAND + "<b>ВХІД</b></span>" : '<span class="rec-ai" title="' + esc(aiTip) + '">' + AI_BRAND + "</span>") : "";
     var nb = r.bybit === false ? ' <span class="rec-nb" title="Монети немає на Bybit">⚠</span>' : "";
     var chCell = '<span class="rec-ch"><i style="width:' + ch + "%;background:linear-gradient(90deg,#a78bfa," + recChCol(ch) + ')"></i></span>' + rs(26, '<b style="color:' + recChCol(ch) + '">' + ch + "</b>", "r") + rs(30, chD ? '<small class="' + (chD > 0 ? "pp-up" : "pp-dn") + '">' + (chD > 0 ? "▲" : "▼") + Math.abs(chD) + "</small>" : "", "l");
     var pr = prob != null && isFinite(prob) ? prob : null;
     var prCell = pr == null ? rs(100, "—", "r") : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span>' + rs(40, '<b class="rec-' + dc + '">' + pr.toFixed(0) + "%</b>", "r");
     var g1 = recGroupCells(r, up, "g1"), g15 = recGroupCells(r.m15 || { wait: true }, up, "g15");
     var tpCell = Number(r.tp) > 0 ? '<span class="rec-lv tp">' + rs(84, fmtPrice(r.tp), "r") + rs(58, "<small>" + recPct(r.tp_pct) + "</small>", "r") + "</span>" : rs(142, '<span class="muted" title="Цілі в бік угоди немає">—</span>', "r");
-    return '<tr class="rec-row ' + dc + '"><td class="sym">' + icon + tvSym(r.symbol) + nb + "</td>" +
+    return '<tr class="rec-row ' + dc + (ai && ai.ready ? " ai-pick" : "") + '"><td class="sym">' + aiCell + icon + tvSym(r.symbol) + nb + "</td>" +
       '<td><span class="rec-dir ' + dc + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</span></td>" +
       '<td class="r">' + prCell + "</td>" + '<td class="r tpc">' + tpCell + "</td>" + g1 + g15 + '<td class="r">' + chCell + "</td></tr>";
   }

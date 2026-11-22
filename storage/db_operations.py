@@ -915,6 +915,60 @@ class DBOperations:
         finally:
             session.close()
 
+    def cleanup_ai_learning(self, now: float = None, episode_nosignal_days: int = 7,
+                            episode_days: int = 45, anom_aux_days: int = 2,
+                            research_other_days: int = 30, research_ai_days: int = 60,
+                            anom_done_days: int = 60, dry: bool = False) -> Dict:
+        """🧹 Автоочистка таблиць навчання ШІ (вимоги 22.11) — прибирає те, що
+        не вчить і лише заважає, а також ВІДПРАЦЬОВАНИЙ матеріал:
+          • епізоди ШІ БЕЗ сигналу > `episode_nosignal_days`;
+          • усі епізоди > `episode_days` (навчання їх уже спожило: модель
+            переучується раз на 15 хв, калібровка дивиться 30 днів);
+          • допоміжні аномалії (роль 🧭 dir / 👤 sub) > `anom_aux_days`;
+          • аномалії з ПОВНИМ наслідком (done) > `anom_done_days`;
+          • дослідження ЧУЖИХ (не ШІ) угод > `research_other_days`;
+          • дослідження угод ШІ > `research_ai_days` (стислий запис —
+            момент входу, план, шлях, вихід, події, уроки — уже в базі еталонів).
+        `dry=True` — лише ПОЗНАЧИТИ (порахувати, що буде видалено), нічого не
+        видаляючи. Кожне правило — у СВОЇЙ транзакції."""
+        import time as _t
+        now = float(now or _t.time())
+        out = {'episodes': 0, 'anomalies': 0, 'research': 0}
+
+        def _run(key, q):
+            session = get_session()
+            try:
+                qq = q(session)
+                out[key] += int((qq.count() if dry else qq.delete(synchronize_session=False)) or 0)
+                if not dry:
+                    session.commit()
+            except Exception as e:
+                session.rollback()
+                print(f"[DB] cleanup_ai_learning {key}: {e}")
+            finally:
+                session.close()
+        d = 86400
+        ep_all = now - int(episode_days) * d
+        # Без сигналу — лише ті, що НЕ підпадуть під загальне правило (без подвійного рахунку)
+        _run('episodes', lambda se: se.query(AiEpisode).filter(
+            AiEpisode.ended_at < now - int(episode_nosignal_days) * d,
+            AiEpisode.ended_at >= ep_all, AiEpisode.signal_side.is_(None)))
+        _run('episodes', lambda se: se.query(AiEpisode).filter(AiEpisode.ended_at < ep_all))
+        done_cut = now - int(anom_done_days) * d
+        for role in ('dir', 'sub'):
+            _run('anomalies', lambda se, r=role: se.query(VolAnomaly).filter(
+                VolAnomaly.ts < now - int(anom_aux_days) * d, VolAnomaly.ts >= done_cut,
+                VolAnomaly.ctx.like(f'%"role": "{r}"%')))
+        _run('anomalies', lambda se: se.query(VolAnomaly).filter(
+            VolAnomaly.ts < done_cut, VolAnomaly.done.is_(True)))
+        _run('research', lambda se: se.query(TradeResearch).filter(
+            TradeResearch.closed_at < now - int(research_other_days) * d,
+            ~TradeResearch.opened_by.like('ai%')))
+        _run('research', lambda se: se.query(TradeResearch).filter(
+            TradeResearch.closed_at < now - int(research_ai_days) * d,
+            TradeResearch.opened_by.like('ai%')))
+        return out
+
     # === READINESS STRATEGY LOG (Готовність) ===
 
     def log_readiness(self, symbol: str, signal_dir: str = None,

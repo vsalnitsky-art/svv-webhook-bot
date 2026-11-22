@@ -142,7 +142,7 @@ def test_engine_brain_veto_blocks_signal_and_is_logged_once():
     e.tick(L.NOW)
     e.tick(L.NOW + 30)
     ep = e._eps['XUSDT']
-    _check(not tm.sig and not sc.calls, 'мозок проти → ворота й on_signal не кличуться')
+    _check(not tm.opened and not tm.sig and not sc.calls, 'мозок проти → угоди немає')
     vetoes = [x for x in ep.get('ev') or [] if x.get('k') == 'brain_veto']
     _check(len(vetoes) == 1, f'подія вето — один раз, поки причина та сама: {vetoes}')
     row = e.state()['coins'][0]
@@ -151,10 +151,10 @@ def test_engine_brain_veto_blocks_signal_and_is_logged_once():
 
 def test_engine_signal_carries_plan_to_trade():
     e, sc, tm = L._engine(True)
-    got = {}
-    tm.set_ai_professional_context = lambda S, side, ctx, plan=None: got.update(S=S, plan=plan)
     e.tick(L.NOW)
-    _check(tm.sig and got.get('plan') and got['plan']['stop'] == 99.0, got)
+    # 22.11: план кладе на угоду сам `tm.ai_open` (власний шлях ШІ)
+    got = tm.opened[0] if tm.opened else {}
+    _check(got.get('plan') and got['plan']['stop'] == 99.0, got)
     sig = e._eps['XUSDT']['signal']
     _check(sig['brain']['plan'] and sig['brain']['strict'] is not None, sig)
 
