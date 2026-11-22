@@ -169,6 +169,51 @@ def live_enable(side: Optional[str], source: str = '') -> Tuple[bool, str]:
         return False, f'не вдалося увімкнути: {e}'
 
 
+def live_set_only(side: Optional[str], source: str = '', tm=None) -> Tuple[bool, str, bool]:
+    """⏰ Лишити увімкненою РІВНО кнопку `side`, другу — вимкнути (вимога 18.11:
+    «в сторону сигналу незалежно який стан кнопок був до будильника»).
+    → (ok, причина, змінено?).
+
+    Пише ТИМ САМИМ шляхом, що й кнопки на сторінці (`tm.update_settings` —
+    з персистом у БД), і ПЕРЕВІРЯЄ результат так, як його бачить УВЕСЬ
+    алгоритм: (1) живі налаштування TM (`get_settings` — їх читають сканер,
+    черги FF і `_side_allowed`), (2) запис у БД (переживе рестарт). Успіх —
+    лише коли обидва показують потрібний стан, а не «запит відправлено»."""
+    sd = (side or '').upper().strip()
+    if sd not in (LONG, SHORT):
+        return False, f'невідомий напрямок {side!r}', False
+    want = (sd == LONG, sd == SHORT)
+    if tm is None:
+        try:
+            from detection.trade_manager import get_trade_manager
+            tm = get_trade_manager()
+        except Exception as e:
+            return False, f'Trade Manager недоступний: {e}', False
+    if tm is None or not hasattr(tm, 'update_settings'):
+        return False, 'Trade Manager ще не піднявся', False
+    other = SHORT if sd == LONG else LONG
+    try:
+        cur = tm.get_settings() if hasattr(tm, 'get_settings') else {}
+        if gates_from(cur) == want:
+            return True, f'вже лише {sd}', False
+        tm.update_settings({KEY_LONG: want[0], KEY_SHORT: want[1]})
+        live = tm.get_settings() if hasattr(tm, 'get_settings') else {}
+        if gates_from(live) != want:
+            return False, 'Trade Manager не прийняв зміну (кнопки не змінились)', False
+        db = getattr(tm, 'db', None)
+        if db is not None and hasattr(db, 'get_setting'):
+            try:
+                from detection.trade_manager import DB_KEY_TM_SETTINGS as _K
+            except Exception:
+                _K = 'tm_settings'
+            stored = db.get_setting(_K, None)
+            if isinstance(stored, dict) and gates_from(stored) != want:
+                return False, 'кнопки змінено, але НЕ збережено в БД (після рестарту повернуться)', True
+        return True, f'увімкнено {sd}, вимкнено {other}', True
+    except Exception as e:
+        return False, f'не вдалося змінити кнопки: {e}', False
+
+
 def live_reason(side: Optional[str]) -> str:
     """Причина відмови ЗАРАЗ або '' (fail-open, якщо TM недоступний)."""
     s = live_settings()

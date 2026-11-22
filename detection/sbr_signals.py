@@ -140,10 +140,12 @@ def alarm_anom_symbol(settings) -> Optional[str]:
 
 
 def alarm_anom_match(settings, symbol, side) -> bool:
-    """⏰ Чи будить ⚠ сигнал «Аномалії обсягу» цієї монети й боку. ЧИСТА."""
+    """⏰ Чи будить ⚠ сигнал «Аномалії обсягу» цієї монети. ЧИСТА.
+    Бік НЕ обирається (вимога 18.11): будить сигнал БУДЬ-ЯКОГО боку, а кнопки
+    напрямку будильник ставить у бік самого сигналу (`live_set_only`)."""
     S = alarm_anom_symbol(settings)
     return bool(S) and str(symbol or '').upper() == S and \
-        str(side or '').upper() == str((settings or {}).get('alarm_side') or 'LONG').upper()
+        str(side or '').upper() in ALARM_SIDES
 
 
 def alarm_tfs_of(settings) -> tuple:
@@ -207,6 +209,23 @@ def alarm_set_tm(on: bool, tm=None):
         tm.update_settings({'enabled': want})
         if bool(tm.is_enabled()) != want:
             return False, 'Trade Manager не прийняв зміну (стан не змінився)', False
+        # 💾 Перевірка ЗАПИСУ (вимога 18.11): тумблер мусить пережити рестарт.
+        db = getattr(tm, 'db', None)
+        if db is not None and hasattr(db, 'get_setting'):
+            try:
+                from detection.trade_manager import DB_KEY_TM_SETTINGS as _K
+            except Exception:
+                _K = 'tm_settings'
+            stored = db.get_setting(_K, None)
+            if isinstance(stored, dict) and bool(stored.get('enabled')) != want:
+                return False, word + ', але НЕ збережено в БД (після рестарту повернеться)', True
+        # Увімкнено → монітор TM мусить працювати (`update_settings` сам його
+        # запускає; страхуємо — без двигуна «увімкнений» TM нічого б не робив).
+        if want and hasattr(tm, '_running') and not getattr(tm, '_running') and hasattr(tm, 'start'):
+            try:
+                tm.start()
+            except Exception as e:
+                return False, f'увімкнено, але монітор не запустився: {e}', True
         return True, word, True
     except Exception as e:
         return False, f'не вдалося змінити: {e}', False
@@ -996,9 +1015,9 @@ class SbrEngine:
 
     def alarm_from_anom(self, S: str, side: str, scenario: str = '', price=None,
                         now: Optional[float] = None) -> bool:
-        """⏰ ⚠ «Аномалії обсягу»: готовий сценарій входу по монеті будильника в
-        обраний бік → ТА САМА дія, що й на сигнал SBR (кнопка напрямку + Trade
-        Manager з перевіркою). → чи будильник спрацював."""
+        """⏰ ⚠ «Аномалії обсягу»: готовий сценарій входу по монеті будильника
+        (БУДЬ-ЯКИЙ бік) → лишити увімкненою лише кнопку боку сигналу + дія над
+        Trade Manager, обидва — з перевіркою реального стану. → чи спрацював."""
         now = time.time() if now is None else now
         with self._lock:
             s = dict(self._settings)
@@ -1031,7 +1050,14 @@ class SbrEngine:
             _sp = _ilu.spec_from_file_location('_sbr_dg', _p)
             _dg = _ilu.module_from_spec(_sp)
             _sp.loader.exec_module(_dg)
-        ok, note = _dg.live_enable(side, source='SBR alarm')
+        # ⚠ Аномалії: лишити увімкненою РІВНО кнопку боку сигналу, другу —
+        # вимкнути (незалежно від стану до будильника), з перевіркою живого
+        # стану й запису в БД. SBR — як і було: увімкнути обраний бік.
+        if anom:
+            ok, note, _dch = _dg.live_set_only(side, source='Alarm anomalies')
+        else:
+            ok, note = _dg.live_enable(side, source='SBR alarm')
+            _dch = bool(ok) and note != 'вже увімкнено'
         act = str(s.get('alarm_tm') or '')
         tm_res = None
         if act in ('on', 'off'):
@@ -1045,7 +1071,7 @@ class SbrEngine:
         with self._lock:
             self._settings['alarm_last'] = last
         self._save_settings()
-        dir_changed = bool(ok) and note != 'вже увімкнено'
+        dir_changed = bool(_dch)
         tm_changed = bool(tm_res and tm_res[2])
         tm_failed = bool(tm_res is not None and not tm_res[0])
         if ok and not dir_changed and not tm_changed and not tm_failed:
@@ -1054,8 +1080,9 @@ class SbrEngine:
                 else f"Score {float(sig.get('score') or 0):.2f}")
         txt = (f"⏰ Будильник {'⚠ Аномалії' if anom else 'SBR'}: {S} {side} {'' if anom else tf_lbl + ' '}"
                f"({what}) → "
-               + (f"головну кнопку {side} {note}" if ok
-                  else f"кнопку {side} НЕ увімкнено: {note}"))
+               + ((f"головні кнопки: {note}" if anom else f"головну кнопку {side} {note}") if ok
+                  else (f"головні кнопки НЕ змінено: {note}" if anom
+                        else f"кнопку {side} НЕ увімкнено: {note}")))
         if tm_res is not None:
             txt += (f" · Trade Manager {tm_res[1]}" if tm_res[0]
                     else f" · Trade Manager НЕ змінено: {tm_res[1]}")
@@ -1073,7 +1100,8 @@ class SbrEngine:
         # Manager — інша річ (реальна торгівля), тож його зміна пишеться завжди.
         notify = self._admin_notify or _default_admin_notify
         try:
-            notify(alarm_tg_text(S, side, tf, sig, ok, note, tm=tm_res, tm_act=act))
+            notify(alarm_tg_text(S, side, tf, sig, ok, note, tm=tm_res, tm_act=act,
+                                 dir_changed=dir_changed))
         except Exception:
             pass
 
@@ -1086,7 +1114,8 @@ def _default_fetch(sym: str, tf: str, limit: int):
     return get_market_data().fetch_klines(sym, limit=limit, interval=tf)
 
 
-def alarm_tg_text(S, side, tf, sig, ok=True, note='', tm=None, tm_act='') -> str:
+def alarm_tg_text(S, side, tf, sig, ok=True, note='', tm=None, tm_act='',
+                  dir_changed=False) -> str:
     """⏰ Текст будильника для особистого чату: сигнал без рядка про кнопку."""
     sd = str(side or '').upper()
     if tf == 'anom':          # ⚠ «Аномалії обсягу» (вимога 18.11)
@@ -1109,7 +1138,10 @@ def alarm_tg_text(S, side, tf, sig, ok=True, note='', tm=None, tm_act='') -> str
     if sig.get('sl') is not None:
         lines.append(f"🛑 SL: <code>{fmt_price(sig.get('sl'))}</code>")
     if not ok:
-        lines.append(f"⚠️ Кнопку {sd} НЕ увімкнено: {note}")
+        lines.append(f"⚠️ Головні кнопки НЕ змінено: {note}" if tf == 'anom'
+                     else f"⚠️ Кнопку {sd} НЕ увімкнено: {note}")
+    elif tf == 'anom' and dir_changed:
+        lines.append(f"🚦 Головні кнопки → лише <b>{sd}</b>")
     if tm is not None:
         if not tm[0]:
             lines.append(f"⚠️ Trade Manager НЕ змінено: {tm[1]}")

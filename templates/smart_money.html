@@ -21035,6 +21035,15 @@ function _sbrApplyAlarm(st) {
     // TF стосуються лише 🔔 SBR — для ⚠ «Аномалій» чипи гасимо (не діють)
     const tfBox = document.getElementById('sbr-alarm-tfs');
     if (tfBox) { tfBox.style.opacity = src === 'anom' ? '0.35' : ''; tfBox.style.pointerEvents = src === 'anom' ? 'none' : ''; }
+    // ⚠ «Аномалії» — бік НЕ обирається (вимога 18.11): будить сигнал будь-якого
+    // боку, а кнопки напрямку ставляться в бік сигналу. Вибір LONG/SHORT
+    // лишається лише для 🔔 SBR (у режимі «обидва» — підпис «SBR:»).
+    if (sd) {
+        sd.style.display = src === 'anom' ? 'none' : '';
+        sd.title = src === 'both'
+            ? 'Лише для 🔔 SBR: який сигнал чекаємо й яку кнопку вмикаємо. ⚠ Аномалії будять у будь-який бік і лишають увімкненою лише кнопку боку сигналу.'
+            : 'Який сигнал чекаємо — і яку кнопку вмикаємо';
+    }
     if (box) box.classList.toggle('armed', !!st.alarm_on);
     if (out) {
         const L = st.alarm_last;
@@ -21043,8 +21052,9 @@ function _sbrApplyAlarm(st) {
             const _srcLbl = src === 'anom' ? '⚠ Аномалії' : (src === 'both'
                 ? '🔔 ' + tfs.map(x => x.toUpperCase()).join('/') + ' або ⚠ Аномалії'
                 : tfs.map(x => x.toUpperCase()).join('/'));
-            out.textContent = '⏳ чекаю ' + _sbrAlarmShortSym(st.alarm_symbol) + ' ' + (st.alarm_side || 'LONG')
-                + ' ' + _srcLbl
+            out.textContent = '⏳ чекаю ' + _sbrAlarmShortSym(st.alarm_symbol)
+                + (src === 'anom' ? '' : ' ' + (st.alarm_side || 'LONG')) + ' ' + _srcLbl
+                + (src === 'sbr' ? '' : ' (будь-який бік → лише кнопка сигналу)')
                 + ({on: ' · +TM ON', off: ' · +TM OFF'}[st.alarm_tm] || '');
         } else if (L && L.at) {
             const t = new Date(_srvToPc(L.at) * 1000);
@@ -21052,7 +21062,7 @@ function _sbrApplyAlarm(st) {
             out.style.color = L.ok ? '#4ade80' : '#f87171';
             out.textContent = (L.ok ? '✅ ' : '⚠️ ') + hm + ' · ' + _sbrAlarmShortSym(L.symbol) + ' ' + L.side + ' ' + L.tf
                 + (L.dir_ok === false || (L.ok === false && L.dir_ok == null) ? ' · ' + (L.note || '')
-                   : ' → кнопка ' + L.side + ' ' + (L.note || ''))
+                   : (L.src === 'anom' ? ' → кнопки: ' : ' → кнопка ' + L.side + ' ') + (L.note || ''))
                 + (L.tm ? ' · TM ' + (L.tm_note || '') : '');
         } else {
             out.style.color = '#6b7280';

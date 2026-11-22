@@ -139,15 +139,39 @@ class _MemDB:
 
 
 class _FakeTM:
-    def __init__(self, on=False):
-        self.on = on
+    """Імітує TradeManager: налаштування в памʼяті + персист у БД, як справжній
+    `update_settings` (саме його читають сканер, черги FF і `_side_allowed`)."""
+    def __init__(self, on=False, long_on=True, short_on=True, persist=True, accept=True):
+        self.db = _MemDB()
+        self._running = False
+        self.persist, self.accept = persist, accept
+        self._settings = {'enabled': on, 'allow_long_entries': long_on, 'allow_short_entries': short_on}
+        self.db.set_setting('tm_settings', dict(self._settings))
+
+    @property
+    def on(self):
+        return bool(self._settings['enabled'])
 
     def is_enabled(self):
-        return self.on
+        return bool(self._settings['enabled'])
+
+    def get_settings(self):
+        return dict(self._settings)
+
+    def start(self):
+        self._running = True
 
     def update_settings(self, patch):
-        self.on = bool(patch.get('enabled', self.on))
-        return {'enabled': self.on}
+        if self.accept:
+            self._settings.update(patch)
+            if self._settings['enabled'] and not self._running:
+                self.start()
+        if self.persist:
+            self.db.set_setting('tm_settings', dict(self._settings))
+        return dict(self._settings)
+
+
+DG = _load('detection.direction_gate', 'detection/direction_gate.py')
 
 
 def test_alarm_source_rules():
@@ -158,36 +182,82 @@ def test_alarm_source_rules():
     _check(S.alarm_anom_symbol({**st, 'alarm_src': 'both'}) == 'BTCUSDT', 'монета для рушія ШІ')
     _check(S.alarm_anom_symbol(st) is None, 'джерело SBR → аномалії не ведемо')
     _check(S.alarm_anom_match({**st, 'alarm_src': 'anom'}, 'BTCUSDT', 'LONG'), 'збіг')
-    _check(not S.alarm_anom_match({**st, 'alarm_src': 'anom'}, 'BTCUSDT', 'SHORT'), 'інший бік')
+    _check(S.alarm_anom_match({**st, 'alarm_src': 'anom'}, 'BTCUSDT', 'SHORT'),
+           'бік НЕ обирається (18.11): будить будь-який бік')
+    _check(not S.alarm_anom_match({**st, 'alarm_src': 'anom'}, 'ETHUSDT', 'SHORT'), 'інша монета')
     _check(S.alarm_src_of({'alarm_src': 'xxx'}) == 'sbr', 'невідоме → sbr')
 
 
-def test_anomaly_signal_switches_tm_like_sbr():
+def _engine_with(tm):
+    """Рушій SBR, у якому кнопки й TM перемикає СПРАВЖНІЙ код
+    (`direction_gate.live_set_only`, `alarm_set_tm`) над фейковим TM."""
     dg = types.ModuleType('detection.direction_gate')
+    dg.live_set_only = lambda side, source='': DG.live_set_only(side, source, tm=tm)
     dg.live_enable = lambda side, source='': (True, 'увімкнено')
     pkg = sys.modules.setdefault('detection', types.ModuleType('detection'))
-    old = sys.modules.get('detection.direction_gate')
     sys.modules['detection.direction_gate'] = dg
     pkg.direction_gate = dg
-    sent, tm = [], _FakeTM(on=False)
+    sent = []
+    e = S.SbrEngine(_MemDB(), lambda: [], None, None)
+    e._admin_notify = lambda t: sent.append(t) or True
+    e._tm_switch = lambda on: S.alarm_set_tm(on, tm)
+    e.update_settings({'alarm_on': True, 'alarm_symbol': 'BTC', 'alarm_side': 'LONG',
+                       'alarm_tm': 'on', 'alarm_src': 'anom'})
+    return e, sent
+
+
+def _restore_dg():
+    sys.modules['detection.direction_gate'] = DG
+    sys.modules['detection'].direction_gate = DG
+
+
+def test_anomaly_alarm_leaves_only_the_signal_side_and_switches_tm():
+    """Вимога 18.11: бік не обирається; SHORT-сигнал при будь-якому стані кнопок
+    → увімкнено ЛИШЕ SHORT, LONG вимкнено; TM увімкнено. Перевіряємо ЖИВИЙ стан
+    (його читає весь алгоритм), запис у БД і запущений монітор, а не екран."""
     try:
-        e = S.SbrEngine(_MemDB(), lambda: [], None, None)
-        e._admin_notify = lambda t: sent.append(t) or True
-        e._tm_switch = lambda on: S.alarm_set_tm(on, tm)
-        e.update_settings({'alarm_on': True, 'alarm_symbol': 'BTC', 'alarm_side': 'LONG',
-                           'alarm_tm': 'on', 'alarm_src': 'anom'})
-        _check(e.alarm_anom_symbol() == 'BTCUSDT', 'монета будильника')
-        _check(not e.alarm_from_anom('BTCUSDT', 'SHORT', 'x', 1.0, 100.0), 'інший бік не будить')
-        _check(e.alarm_from_anom('BTCUSDT', 'LONG', '🔁 Розворот', 64000.0, 100.0), 'будить')
-        L_ = e.get_settings()['alarm_last']
-        _check(tm.on and L_['src'] == 'anom' and L_['tm_ok'] and L_['scenario'] == '🔁 Розворот', L_)
-        _check(sent and 'Будильник ⚠ Аномалії' in sent[-1] and 'УВІМКНЕНО' in sent[-1], sent)
-        e._on_signals('BTCUSDT', [('1h', {'side': 'LONG', 'score': 70, 'trigger': 1, 'sl': 1})], 200.0)
-        _check(len(sent) == 1, 'джерело ⚠ → сигнал SBR будильник не будить')
+        for before in ((True, True), (False, False), (True, False), (False, True)):
+            tm = _FakeTM(on=False, long_on=before[0], short_on=before[1])
+            e, sent = _engine_with(tm)
+            _check(e.alarm_from_anom('BTCUSDT', 'SHORT', '🔁 Розворот', 64000.0, 100.0), 'будить SHORT')
+            live = tm.get_settings()
+            _check(DG.gates_from(live) == (False, True), (before, live))
+            _check(DG.gates_from(tm.db.get_setting('tm_settings')) == (False, True), 'записано в БД')
+            _check(tm.is_enabled() and tm.db.get_setting('tm_settings')['enabled'] and tm._running,
+                   'TM увімкнено, збережено, монітор працює')
+            L_ = e.get_settings()['alarm_last']
+            _check(L_['src'] == 'anom' and L_['ok'] and L_['dir_ok'] and L_['tm_ok'], L_)
+            _check(sent and 'Будильник ⚠ Аномалії' in sent[-1], sent)
+            _check(('лише <b>SHORT</b>' in sent[-1]) == (before != (False, True)),
+                   ('рядок про кнопки — лише коли їх реально змінено', before, sent[-1]))
+        e.alarm_from_anom('BTCUSDT', 'LONG', 'x', 1.0, 200.0)
+        _check(DG.gates_from(tm.get_settings()) == (True, False), 'наступний LONG → лише LONG')
+        n = len(sent)
+        e.alarm_from_anom('BTCUSDT', 'LONG', 'x', 1.0, 300.0)
+        _check(len(sent) == n, 'стан уже такий → тиша')
+        e._on_signals('BTCUSDT', [('1h', {'side': 'SHORT', 'score': 70, 'trigger': 1, 'sl': 1})], 400.0)
+        _check(DG.gates_from(tm.get_settings()) == (True, False), 'джерело ⚠ → сигнал SBR не будить')
     finally:
-        if old is not None:
-            sys.modules['detection.direction_gate'] = old
-            pkg.direction_gate = old
+        _restore_dg()
+
+
+def test_alarm_reports_failure_when_state_did_not_really_change():
+    """«Лише відображення» неможливе: TM не прийняв зміну / не записав у БД →
+    будильник пише НЕВДАЧУ, а не «увімкнено»."""
+    try:
+        tm = _FakeTM(on=False, long_on=True, short_on=True, accept=False)
+        e, sent = _engine_with(tm)
+        e.alarm_from_anom('BTCUSDT', 'LONG', 'x', 1.0, 100.0)
+        L_ = e.get_settings()['alarm_last']
+        _check(not L_['ok'] and not L_['dir_ok'] and L_['tm_ok'] is False, L_)
+        _check('не прийняв' in L_['note'] and 'НЕ' in sent[-1], (L_, sent))
+        tm2 = _FakeTM(on=False, long_on=True, short_on=True, persist=False)
+        ok, why, ch = DG.live_set_only('SHORT', tm=tm2)
+        _check(not ok and 'БД' in why, why)
+        ok, why, ch = S.alarm_set_tm(True, tm2)
+        _check(not ok and 'БД' in why, why)
+    finally:
+        _restore_dg()
 
 
 def test_wiring_and_ui():

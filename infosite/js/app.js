@@ -2507,9 +2507,7 @@
     if (!b || b.tension == null || !isFinite(t)) return "";
     var lv = t >= 65 ? "hi" : t >= 45 ? "mid" : "lo";
     var n = Math.max(0, Math.min(100, Math.round(t)));
-    var tip = "Напруженість пружини: середній заряд усіх " + (b.total || 0) + " монет — " + t.toFixed(1) +
-      "% (0 — спокій · 45 — заряджається · 65 — заряджена). Заряджених зараз: " + (b.charged_n || 0) + ".";
-    return '<span class="spb-ready ' + lv + '" title="' + esc(tip) + '" role="img" aria-label="Readiness ' + n + ' percent">' +
+    return '<span class="spb-ready ' + lv + '" role="img" aria-label="Readiness ' + n + ' percent">' +
       '<span class="spb-ready-ring" style="--p:' + n + '"><b>' + n + '<i>%</i></b></span>' +
       '<small>READINESS</small></span>';
   }
@@ -2518,7 +2516,7 @@
     if (!b.ok) return head + '</div><div class="spb-empty muted">ще немає даних</div>';
     var dir = b.lean === "LONG" || b.lean === "SHORT", pl = Math.max(0, Math.min(100, Number(b.prob_long) || 50)), ps = 100 - pl;
     var st = b.lean === "LONG" ? ['<span class="spb-dot up"></span>LONG', "up"] : (b.lean === "SHORT" ? ['<span class="spb-dot dn"></span>SHORT', "dn"] : ["⚖ " + (b.enough ? "РІВНОВАГА" : "ЗАМАЛО"), "flat"]);
-    var tip = "▲ LONG " + pl.toFixed(1) + "% · ▼ SHORT " + ps.toFixed(1) + "% · заряджених " + b.coins + " з " + b.total + " (потрібно ≥ " + b.need + ") · у бік LONG " + b.n_long + " / SHORT " + b.n_short + (b.fired_long || b.fired_short ? " · 💥 вистрілили ▲" + b.fired_long + " / ▼" + b.fired_short : "");
+    var tip = "▲ LONG " + pl.toFixed(1) + "% · ▼ SHORT " + ps.toFixed(1) + "%";
     // Ширина кольору відповідає відсотку напрямку; центральний колір — колір LONG/SHORT.
     var right = b.ex === "bybit", longCol = "#08775b", shortCol = "#a92b3c";
     var innerLong = b.lean === "LONG", innerCol = innerLong ? longCol : shortCol, outerCol = innerLong ? shortCol : longCol;
