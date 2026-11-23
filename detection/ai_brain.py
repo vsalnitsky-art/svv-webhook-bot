@@ -62,6 +62,7 @@ CHECK_UA = {
 
 EXIT_VERDICT_UA = {
     'invalid': '🛑 стоп плану зламано — сценарій угоди скасовано',
+    'false_start': '🪤 хибний старт: свічка закрилась назад у коробці',
     'scenario': '🧩 сценарій виходу завершено',
     'combo': '🔥→🧽 підтверджений розворот проти угоди',
     'all': '✅ усі групи за вихід (аномалії · ціна · прибуток)',
@@ -76,7 +77,7 @@ EXIT_VERDICT_UA = {
     'wait': '⏳ ціна / прибуток без аномалій — чекаємо',
     'none': '· свідчень за вихід немає',
 }
-PROTECTIVE = ('invalid', 'scenario', 'combo', 'all')
+PROTECTIVE = ('invalid', 'false_start', 'scenario', 'combo', 'all')
 # 🌀 Заряд у бік угоди (22.11) стримує СЛАБКІ причини виходу; сильні —
 # стоп зламано, 🔥→🧽, усі групи, ціль плану, віддача від піку — діють завжди.
 CHARGE_HOLDABLE = ('scenario', 'close', 'reversal', 'time')
@@ -244,7 +245,8 @@ def plan_from_pro(pro_d: Optional[Dict]) -> Optional[Dict]:
 
 
 def exit_merge(side: str, anom: Optional[Dict], pro_d: Optional[Dict], mode: str = 'confirmed',
-               plan: Optional[Dict] = None, price=None, charge: Optional[Dict] = None) -> Dict:
+               plan: Optional[Dict] = None, price=None, charge: Optional[Dict] = None,
+               false_start: Optional[Dict] = None) -> Dict:
     """🤖 Рішення про вихід ОДНИМ мозком: вердикт ⚠ аномалій (`exit_score`) +
     супровід за планом (`manage_position`). Повертає вердикт, групи, чек-лист."""
     sd = str(side).upper()
@@ -265,8 +267,11 @@ def exit_merge(side: str, anom: Optional[Dict], pro_d: Optional[Dict], mode: str
     stop = _f((plan or {}).get('stop'))
     # Стоп / ціль судимо за ПЛАНОМ угоди; власні стоп і 2.2R мозку графіка —
     # лише коли угоду відкрито не сигналом ШІ (тоді план і є його план).
-    invalid = (stop is not None and px is not None and sg * (px - stop) <= 0) or (
-        pr == 'invalid' and not own_plan)
+    # 🛑 «SL з» ШІ вимкнено (23.11): стоп плану — лише орієнтир ризику, угоду
+    # він не закриває (і стоп мозку графіка теж — у угоди ШІ свій план).
+    stop_off = bool((plan or {}).get('stop_off'))
+    invalid = not stop_off and ((stop is not None and px is not None and sg * (px - stop) <= 0) or (
+        pr == 'invalid' and not own_plan))
     tgt = _f((plan or {}).get('target'))
     tgt_hit = (tgt is not None and px is not None and sg * (px - tgt) >= 0) or (
         pr == 'target' and not own_plan)
@@ -290,6 +295,10 @@ def exit_merge(side: str, anom: Optional[Dict], pro_d: Optional[Dict], mode: str
     av = anom.get('verdict') if anom.get('ready') else None
     if invalid:
         verdict = 'invalid'
+    elif false_start:
+        verdict = 'false_start'
+        notes.append(f"🪤 1h-свічка закрилась {false_start.get('close')} за межею пробою "
+                     f"{false_start.get('edge')} — розряд не відбувся")
     elif av in ('scenario', 'combo'):
         verdict = av
     elif anom_g and price_g and profit_g and hold < ANOM_GATE:
@@ -324,8 +333,10 @@ def exit_merge(side: str, anom: Optional[Dict], pro_d: Optional[Dict], mode: str
         close = False
     checklist = list(anom.get('checklist') or [])
     checklist += [
-        {'k': 'invalid', 'label': '🛑 стоп плану зламано', 'v': 1.0 if invalid else 0.0,
-         'say': 'close' if invalid else ''},
+        {'k': 'invalid', 'label': '🛑 стоп плану зламано' + (' (SL вимкнено — не діє)' if stop_off else ''),
+         'v': 1.0 if invalid else 0.0, 'say': 'close' if invalid else ''},
+        {'k': 'false_start', 'label': '🪤 хибний старт розряду', 'v': 1.0 if false_start else 0.0,
+         'say': 'close' if false_start else ''},
         {'k': 'reversal', 'label': '🔀 розворот 15m/1h (2 свічки)',
          'v': 1.0 if reversal else (0.5 if trend_turn else 0.0), 'say': 'close' if reversal or trend_turn else ''},
         {'k': 'tgt', 'label': '🎯 ціль плану', 'v': 1.0 if tgt_hit else 0.0, 'say': 'close' if tgt_hit else ''},
@@ -348,13 +359,14 @@ def exit_groups_text(m: Optional[Dict]) -> str:
 RULES = {
     'entry': [
         '🧭 Напрямок — натяг Пружини і комплекс реакцій ⚠ аномалій; вето: коробку пробито в протилежний бік, зустрічний 🔥→🧽, сильний зустрічний потік.',
+        '💥 Розряд (E2) — лише ПІДТВЕРДЖЕНИЙ: пробій коробки закритою 1h-свічкою і ще N закритих свічок утримали ціну за межею; повернення в коробку = хибний старт (вхід не беремо).',
         '🚀 Старт — сценарій входу пройдено повністю, остання реакція ≤ 2 свічки тому; дозволені сценарії — у налаштуваннях ШІ (деф. лише E2 «💥 Старт розряду»: інші спрацьовують запізно).',
         f'📋 Санітарні перевірки графіка (закриті 15m/1h/4h): дані свіжі · ATR 15m у межах {ATR_MIN_PCT}–{ATR_MAX_PCT}% · імпульс 15m не проти (≥ {MOMENTUM_AGAINST}) · запас до цілі: R після комісій ≥ {MIN_NET_RR} · навчена модель (коли готова) не проти.',
         f'🗺 План — стоп від структури / ATR останніх закритих 15m, ціль — «Ймовірний хід» Пружини (немає попереду → {FALLBACK_TARGET_R}R).',
         '🕶 Трендові вето (тренд на 3 TF, конфлікт 1h/4h, якість) НЕ блокують: на старті розряду тренд ще плаский. Вони пишуться «тіньовим вердиктом» для досліджень, а старші TF — у впевненість.',
     ],
     'exit': [
-        'Захисне (обидва режими): 🛑 ціна зламала стоп плану · 🧩 сценарій виходу (X1–X5) · підтверджений 🔥→🧽 · ✅ усі три групи (аномалії · ціна · прибуток).',
+        'Захисне (обидва режими): 🛑 ціна зламала стоп плану (лише коли «SL з» ШІ увімкнено) · 🪤 хибний старт (E2: закрита 1h-свічка повернулась у коробку) · 🧩 сценарій виходу (X1–X5) · підтверджений 🔥→🧽 · ✅ усі три групи (аномалії · ціна · прибуток).',
         '«Аномалії + підтвердження» ще закриває: аномалії + ціна або прибуток · 🔀 підтверджений розворот 15m/1h (дві закриті свічки) · 💸 віддача ≥ ½ піку (пік ≥ 1R) · 🎯 ціль плану · ⏳ 8 год без результату, сильніший протилежний бік.',
         'Свіже ⚡/📈 продовження ЗА угодою тримає все, крім захисного. Немає даних графіка — працюють аномалії, стоп плану і далі діє.',
         '🌀 Поки заряд Пружини в бік угоди ≥ порогу (налаштування ШІ), слабкі причини (сценарій виходу, аномалії + підтвердження, розворот 15m/1h, час) — «ще зарано»; стоп плану, 🔥→🧽, усі групи, ціль і віддача від піку діють завжди.',

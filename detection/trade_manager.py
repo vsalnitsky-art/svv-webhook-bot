@@ -4248,6 +4248,29 @@ class TradeManager:
                 f"💥 Пружина вистрілила {'▲' if fs == 'LONG' else '▼'} {fs} "
                 f"({rel}){lvl} · {src} · стиснення {fire.get('pre_sq')} бар.")
 
+    def _rdy_open_mark(self, symbol: str, pos: Dict) -> None:
+        """🧩 Знімок блоку «МММ-Готовність» на відкритті угоди (`rdy_open` =
+        {on, dir банера, coin вкладка монети}) — для статистики «за / проти
+        банера» (вимога 23.11). Лише читання готового знімка FF, без мережі."""
+        if 'rdy_open' in pos:
+            return
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            v = ff.mm_gate_view(symbol, book='rdy') if ff else None
+        except Exception:
+            v = None
+        if isinstance(v, dict):
+            pos['rdy_open'] = {'on': bool(v.get('on')), 'dir': v.get('dir'), 'coin': v.get('coin')}
+
+    def rdy_stats(self) -> Dict:
+        """📊 Закриті угоди (real + paper) за банером «МММ-Готовність» на вході."""
+        from detection import ai_signals
+        with self._lock:
+            rows = [dict(c, book='real') for c in self._closed_trades] + \
+                   [dict(c, book='paper') for c in self._shadow_closed]
+        return ai_signals.rdy_trade_stats(rows)
+
     def _spring_open_mark(self, symbol: str, pos: Dict) -> None:
         """🌀 Запамʼятати «Заряд» і ЦІЛЬ «Ймовірного ходу» Пружини на відкритті
         угоди (`spring_open`, `spring_open_tgt`). Монета ще не порахована →
@@ -4702,6 +4725,17 @@ class TradeManager:
                           'min': _hp, 'state': rec.get('state'), 'charge': rec.get('charge')}
         except Exception:
             charge = None
+        # 🪤 Хибний старт (23.11): угода з E2, закрита після входу 1h-свічка
+        # повернулась у коробку за межу пробою → вихід (захисний).
+        fs = None
+        _dsc = pos.get('ai_discharge') or {}
+        if ai_s.get('false_start_exit', True) and _dsc.get('edge') and opened:
+            try:
+                eng0 = ai_signals.get_ai_engine()
+                if eng0 is not None and hasattr(eng0, 'false_start_check'):
+                    fs = eng0.false_start_check(symbol, pos.get('side'), _dsc['edge'], opened)
+            except Exception:
+                fs = None
         # 🧠 супровід за планом мозку графіка (кеш барів; немає → HOLD)
         pro_d = self._ai_plan_follow(symbol, pos, current_price, ai_signals)
         _sibm = getattr(ai_signals, '_sib', None)
@@ -4711,7 +4745,7 @@ class TradeManager:
             from detection import ai_brain
         try:
             m = ai_brain.exit_merge(pos.get('side'), r, pro_d, mode, pos.get('ai_plan'),
-                                    current_price, charge=charge)
+                                    current_price, charge=charge, false_start=fs)
         except TypeError:                     # старіший ai_brain без charge=
             m = ai_brain.exit_merge(pos.get('side'), r, pro_d, mode, pos.get('ai_plan'), current_price)
         pos['ai_exit'] = {'score': r['score'], 'parts': r['parts'], 'ready': m['close'],
@@ -5609,7 +5643,8 @@ class TradeManager:
     def ai_open(self, symbol: str, side: str, plan: Optional[Dict] = None,
                 book: str = 'auto', sl_fallback_pct=2.0, feat: Optional[Dict] = None,
                 scenario: Optional[str] = None, scenario_name: Optional[str] = None,
-                context: Optional[Dict] = None, entry: Optional[Dict] = None) -> Dict:
+                context: Optional[Dict] = None, entry: Optional[Dict] = None,
+                place_sl: bool = True) -> Dict:
         """🤖 ВІДКРИТТЯ УГОДИ ШІ (22.11) — власний шлях ШІ: ворота бота, кнопки
         напрямку й черги FF НЕ діють (`by_hand`-шлях `manual_open`), книга — з
         налаштувань ШІ ('auto' = правило TRD · TM · Test Mode). Стоп плану одразу
@@ -5622,6 +5657,8 @@ class TradeManager:
         if not px:
             return {'ok': False, 'reason': f'{sym}: немає ціни'}
         stop, slbl = self.ai_stop_level(sd, px, plan, sl_fallback_pct)
+        if not place_sl:          # 🛑 «SL з» ШІ вимкнено (23.11): Manual SL не ставимо
+            stop, slbl = None, ''
         forced = book if book in ('real', 'paper') else None
         res = self.manual_open(sym, sd, bypass_gates=True, opened_by='ai',
                                manual_sl=stop, by_hand=True, book=forced)
@@ -5641,6 +5678,13 @@ class TradeManager:
                 pos['ai_scenario_name'] = scenario_name
                 if context:
                     pos['professional_entry'] = context
+                if not place_sl:
+                    pos['ai_sl_off'] = True
+                ds = (entry or {}).get('discharge') or {}
+                if scenario == 'E2' and ds.get('edge'):
+                    # 🪤 межа пробою коробки — за нею вихід «хибний старт»
+                    pos['ai_discharge'] = {'edge': ds.get('edge'), 't': ds.get('t'),
+                                           'state': ds.get('state')}
                 if entry:
                     pos['ai_entry'] = entry      # 📸 момент входу → у базу еталонів
                     try:
@@ -6950,6 +6994,7 @@ class TradeManager:
             'decision': {k: es.get(k) for k in ('verdict', 'recommended', 'prob_long',
                                                  'prob_short', 'headline')} if es else None,
             'ctr_open': pos.get('ctr_open'), 'ff_kind': pos.get('ff_kind'),
+            'rdy_open': pos.get('rdy_open'),
             'ob4h_open': pos.get('ob4h_open'), 'manual_sl': pos.get('manual_sl'),
             'manual_tp': pos.get('manual_tp'), 'manual_tp1': pos.get('manual_tp1'),
             'manual_sl_hist': pos.get('manual_sl_hist'), 'leverage': pos.get('leverage'),
@@ -7203,6 +7248,7 @@ class TradeManager:
         # ⚡ CTR entry-gate reading at open (for the хронологія modal).
         position['ctr_open'] = self._ctr_snapshot(symbol)
         self._spring_open_mark(symbol, position)
+        self._rdy_open_mark(symbol, position)
         # ⚪ POC (Volume Profile) знімок на вході — фіксуємо як на панелі.
         position['entry_poc'] = self._poc_snapshot(symbol, side, entry_price)
 
@@ -7274,7 +7320,7 @@ class TradeManager:
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
             'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=False),
             'exit_decision': self._decision_snapshot(symbol),
-            'ctr_open': pos.get('ctr_open'),
+            'ctr_open': pos.get('ctr_open'), 'rdy_open': pos.get('rdy_open'),
             'ctr_close': self._ctr_snapshot(symbol),
             # All Manual SL/TP levels that applied during the trade (+ final) —
             # shown in the trade-history modal.
@@ -8162,7 +8208,7 @@ class TradeManager:
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=False),
             'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=False),
             'exit_decision': self._decision_snapshot(symbol),
-            'ctr_open': pos.get('ctr_open'),
+            'ctr_open': pos.get('ctr_open'), 'rdy_open': pos.get('rdy_open'),
             'ctr_close': self._ctr_snapshot(symbol),
             # All Manual SL/TP levels that applied during the trade (+ final) —
             # shown in the trade-history modal.
@@ -8439,6 +8485,7 @@ class TradeManager:
         pos['ff_mm_open'] = self._ff_mm_snapshot(symbol)
         pos['ctr_open'] = self._ctr_snapshot(symbol)
         self._spring_open_mark(symbol, pos)
+        self._rdy_open_mark(symbol, pos)
         # ⚪ POC (Volume Profile) знімок на вході (paper) — як на панелі.
         pos['entry_poc'] = self._poc_snapshot(symbol, side, entry_price)
         pos['origin_trace'] = self._take_origin_trace(symbol)
@@ -8714,7 +8761,7 @@ class TradeManager:
                 symbol, pos, reason, round(pnl_pct, 4), is_shadow=True),
             'peak_pnl_pct': self._peak_pnl(symbol, round(pnl_pct, 4), is_shadow=True),
             'exit_decision': self._decision_snapshot(symbol),
-            'ctr_open': pos.get('ctr_open'),
+            'ctr_open': pos.get('ctr_open'), 'rdy_open': pos.get('rdy_open'),
             'ctr_close': self._ctr_snapshot(symbol),
             # 🧪 Risk-sizing snapshot (at open) + net $ result (with commissions).
             'paper_sizing': _psz,

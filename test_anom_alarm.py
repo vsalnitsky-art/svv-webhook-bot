@@ -265,7 +265,7 @@ def test_wiring_and_ui():
     app = _src('web/flask_app.py')
     js = _src('infosite/js/app.js')
     _check('id="sbr-alarm-src"' in html and "alarm_src: (document.getElementById('sbr-alarm-src')" in html, 'бот UI')
-    _check("'alarm_tm', 'alarm_src')" in app, 'маршрут приймає джерело')
+    _check("'alarm_tm', 'alarm_src'," in app and "'alarm_ai')" in app, 'маршрут приймає джерело')
     _check('data-bellanom' in js and 'saveMine({ anom: { symbol: sym, on: on } })' in js, 'кабінет')
     ai = _src('detection/ai_signals.py')
     _check('self._anom_alarm(S, side' in ai and 'self._anom_personal(subs' in ai, 'рушій ШІ')

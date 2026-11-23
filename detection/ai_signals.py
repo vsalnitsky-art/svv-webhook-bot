@@ -56,9 +56,22 @@ AI_DEFAULTS = {
     # 🛑 «SL з» ШІ (22.11): plan — структура / ATR 15m мозку графіка · ob — OB
     # 1H → 15m → 5m (той самий ланцюг, що глобальне «🛑 SL з» бота) · pct — % від входу.
     'sl_source': 'ob',
+    # 🛑 «SL з» ШІ — головний вимикач (23.11, деф. ВИМК): вимкнено → Manual SL на
+    # угоду ШІ НЕ ставиться і стоп плану НЕ закриває угоду; стоп плану лишається
+    # лише орієнтиром ризику (R, гейт R ≥ 1.3, база еталонів).
+    'sl_enabled': False,
     'sl_min_pct': 0.8,         # стоп не ближче N % від входу (шум 15m не вибиває)
     'sl_max_pct': 4.0,         # стоп не далі N % (0 = без стелі)
     'min_conf': 40,            # 🎯 впевненість мозку ≥ N, інакше вхід не беремо (0 = вимк)
+    # 🧩 Фільтр за блоком «МММ-Готовність» (23.11): off · banner (бік угоди =
+    # банер) · coin (вкладка монети = бік) · both (обидва).
+    'rdy_filter': 'off',
+    # 💥 Підтвердження розряду (23.11): пробій коробки рахується лише ЗАКРИТОЮ
+    # 1h-свічкою, а вхід — коли ще `discharge_bars` закритих свічок утримали
+    # ціну за межею. Повернення в коробку = хибний старт.
+    'discharge_confirm': True,
+    'discharge_bars': 1,
+    'false_start_exit': True,   # угода ШІ з E2: ціна повернулась у коробку → вихід
     'learning_enabled': True,  # 🎓 champion/challenger на архівах
     'etalon_enabled': True,    # 🏆 база еталонів відмінних угод (самопоповнення)
     'etalon_min_r': 1.5,       # «відмінна» = результат ≥ N R від стопа плану
@@ -67,6 +80,14 @@ AI_DEFAULTS = {
     'cleanup_enabled': True,   # 🧹 автоочистка таблиць навчання
 }
 AI_SL_SOURCES = ('plan', 'ob', 'pct')
+AI_RDY_FILTERS = ('off', 'banner', 'coin', 'both')
+AI_RDY_FILTER_UA = {'off': 'вимк', 'banner': 'за банером', 'coin': 'за вкладкою монети',
+                    'both': 'банер + вкладка монети'}
+DISCHARGE_LOOK = 6             # закритих 1h-свічок назад — шукаємо пробій коробки
+DISCHARGE_BOX = 24             # коробка перед пробоєм — 24 закриті 1h-свічки
+DISCHARGE_STATE_UA = {'none': 'пробою немає', 'live': 'пробій лише на живій свічці',
+                      'pending': 'пробій закрито, чекаємо підтвердження',
+                      'confirmed': 'розряд підтверджено', 'false': 'хибний старт'}
 AI_SL_SOURCE_UA = {'plan': 'структура / ATR 15m', 'ob': 'OB 1H → 15m → 5m', 'pct': '% від входу'}
 ETALON_DB = 'ai_etalon_v1'
 ETALON_MAX = 300
@@ -107,7 +128,8 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
     s = dict(AI_DEFAULTS)
     r = raw if isinstance(raw, dict) else {}
     for k in ('enabled', 'exit_enabled', 'allow_long', 'allow_short', 'learning_enabled',
-              'etalon_enabled', 'cleanup_enabled'):
+              'etalon_enabled', 'cleanup_enabled', 'sl_enabled', 'discharge_confirm',
+              'false_start_exit'):
         if k in r:
             s[k] = bool(r[k])
     if r.get('exit_mode') in ('confirmed', 'all'):
@@ -116,6 +138,8 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
         s['book'] = r['book']
     if r.get('sl_source') in AI_SL_SOURCES:
         s['sl_source'] = r['sl_source']
+    if r.get('rdy_filter') in AI_RDY_FILTERS:
+        s['rdy_filter'] = r['rdy_filter']
     sc = r.get('scenarios')
     if isinstance(sc, (list, tuple)):
         got = [x for x in AI_SCENARIOS if x in {str(v).upper() for v in sc}]
@@ -125,7 +149,8 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
                             ('hold_pot', 0, 100, float), ('sl_fallback_pct', 0.2, 20.0, float),
                             ('etalon_min_r', 0.5, 10.0, float), ('etalon_min_sim', 0.0, 1.0, float),
                             ('etalon_min_p', 0.3, 0.95, float), ('sl_min_pct', 0.0, 10.0, float),
-                            ('sl_max_pct', 0.0, 20.0, float), ('min_conf', 0, 100, int)):
+                            ('sl_max_pct', 0.0, 20.0, float), ('min_conf', 0, 100, int),
+                            ('discharge_bars', 1, 4, int)):
         if k in r:
             try:
                 s[k] = cast(max(lo, min(hi, float(r[k]))))
@@ -153,7 +178,8 @@ def ai_settings_migrate(scanner_s: Optional[Dict], tm_s: Optional[Dict]) -> Dict
 
 def ai_entry_block(ep: Optional[Dict], side: str, s: Dict, brain: Optional[Dict],
                    eb: Optional[Dict], open_n: int, opens: List[float],
-                   last: Optional[tuple], now: float) -> str:
+                   last: Optional[tuple], now: float, rdy: Optional[Dict] = None,
+                   discharge: Optional[Dict] = None, scen_key: str = '') -> str:
     """ЧОМУ готова точка входу НЕ стала угодою (22.11) — '' = відкриваємо. ЧИСТА.
     Те саме правило, що в `_try_signal`: показ у таблиці / огляді / тумблері
     пояснює кожен «тихий» пропуск, а не лише ті, що доходять до біржі."""
@@ -161,6 +187,15 @@ def ai_entry_block(ep: Optional[Dict], side: str, s: Dict, brain: Optional[Dict]
     sd = str(side).upper()
     if not brain.get('ok'):
         return '🧠 мозок не пустив: ' + (brain.get('reason') or 'чек-лист не пройдено')
+    # 💥 E2 «Старт розряду»: лише ПІДТВЕРДЖЕНИЙ закритими свічками (23.11)
+    if scen_key == 'E2' and s.get('discharge_confirm', True):
+        ds = discharge or {}
+        if ds.get('state') != 'confirmed':
+            return '💥 розряд не підтверджено: ' + (ds.get('note') or
+                                                   DISCHARGE_STATE_UA.get(ds.get('state'), 'немає даних'))
+    rb = rdy_block(sd, rdy, s.get('rdy_filter') or 'off')
+    if rb:
+        return rb
     mc = float(s.get('min_conf') or 0)
     conf = brain.get('confidence')
     if mc > 0 and conf is not None and float(conf) < mc:
@@ -239,6 +274,191 @@ def ai_stop_for(side: str, price, plan: Optional[Dict], ob_stop=None, ob_label: 
                  'net_rr': round((reward - cost) / (dist + cost), 2) if dist > 0 else 0.0,
                  'stop_src': src, 'stop_label': label + (f' · {clamp}' if clamp else '')})
     return plan
+
+
+def rdy_block(side: str, view: Optional[Dict], mode: str) -> str:
+    """🧩 Фільтр ШІ за блоком «МММ-Готовність» (23.11). '' → можна. ЧИСТА.
+    `view` = `ff.mm_gate_view(sym, book='rdy')` → {on, dir (банер), coin
+    (вкладка монети LONG/SHORT/FLAT | None)}. Невідомо ≠ «за напрямком»:
+    блок вимкнено / монети немає в таблиці → відмова з причиною."""
+    if mode not in ('banner', 'coin', 'both'):
+        return ''
+    sd = str(side).upper()
+    v = view or {}
+    if not v.get('on'):
+        return '🧩 МММ-Готовність вимкнено — фільтр ШІ не може перевірити напрямок'
+    if mode in ('banner', 'both'):
+        d = v.get('dir')
+        if d not in ('LONG', 'SHORT'):
+            return f'🧩 банер МММ-Готовність без напрямку (⚖), а вхід {sd}'
+        if d != sd:
+            return f'🧩 банер МММ-Готовність {d}, а вхід {sd}'
+    if mode in ('coin', 'both'):
+        c = v.get('coin')
+        if c is None:
+            return '🧩 монети немає в таблиці МММ-Готовність'
+        if c != sd:
+            return f"🧩 монета у вкладці {'⚖' if c == 'FLAT' else c} МММ-Готовність, а вхід {sd}"
+    return ''
+
+
+def rdy_align(side: str, rdy: Optional[Dict]) -> str:
+    """Як угода стояла відносно банера «МММ-Готовність» на вході → 'with' /
+    'against' / 'flat' (банер без напрямку) / 'off' (блок вимкнено) /
+    'unknown' (знімка немає). ЧИСТА — для статистики угод."""
+    r = rdy or {}
+    if not r:
+        return 'unknown'
+    if not r.get('on'):
+        return 'off'
+    d = r.get('dir')
+    if d not in ('LONG', 'SHORT'):
+        return 'flat'
+    return 'with' if d == str(side).upper() else 'against'
+
+
+RDY_ALIGN_UA = {'with': '✅ за банером', 'against': '⛔ проти банера', 'flat': '⚖ банер без напрямку',
+                'off': '🔌 блок вимкнено', 'unknown': '— без знімка'}
+
+
+def rdy_trade_stats(trades: List[Dict]) -> Dict:
+    """📊 Закриті угоди за положенням відносно банера «МММ-Готовність» на
+    вході (`rdy_open`). ЧИСТА. → {groups: {align: {n, win, win_pct, avg,
+    sum}}, n, ai: та сама розбивка лише для угод ШІ}."""
+    def _grp(rows):
+        g = {}
+        for t in rows:
+            a = rdy_align(t.get('side'), t.get('rdy_open'))
+            try:
+                pnl = float(t.get('pnl_pct'))
+            except (TypeError, ValueError):
+                continue
+            x = g.setdefault(a, {'n': 0, 'win': 0, 'sum': 0.0})
+            x['n'] += 1
+            x['win'] += 1 if pnl > 0 else 0
+            x['sum'] += pnl
+        for x in g.values():
+            x['win_pct'] = round(100.0 * x['win'] / x['n'], 1) if x['n'] else None
+            x['avg'] = round(x['sum'] / x['n'], 3) if x['n'] else None
+            x['sum'] = round(x['sum'], 3)
+        return g
+    rows = [t for t in (trades or []) if isinstance(t, dict)]
+    ai = [t for t in rows if 'ai' == str(t.get('opened_by') or '').split(' ')[0]]
+    return {'groups': _grp(rows), 'n': len(rows), 'ai': _grp(ai), 'ai_n': len(ai),
+            'labels': RDY_ALIGN_UA}
+
+
+def _bar_close(b):
+    for k in ('p', 'c', 'close'):
+        try:
+            v = float((b or {}).get(k))
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
+def _bar_hl(b):
+    try:
+        return float(b.get('h', b.get('high'))), float(b.get('l', b.get('low')))
+    except (TypeError, ValueError, AttributeError):
+        return None, None
+
+
+def _bar_sec(b):
+    try:
+        t = int(float((b or {}).get('t')))
+    except (TypeError, ValueError):
+        return None
+    return t // 1000 if t > 10 ** 12 else t
+
+
+def discharge_state(closed: List[Dict], side: str, live_price=None, need: int = 1,
+                    look: int = DISCHARGE_LOOK, box: int = DISCHARGE_BOX) -> Dict:
+    """💥 Розряд Пружини справжній чи хибний старт (23.11). ЧИСТА.
+    `closed` — ЗАКРИТІ 1h-свічки (живу відкинуто). Пробій = закриття свічки за
+    межею коробки 24 попередніх свічок у бік `side`. Далі:
+    • наступна закрита свічка закрилась НАЗАД у коробці → 'false' (хибний старт);
+    • `need` закритих свічок після пробою втримали ціну за межею, і жива ціна
+      теж за межею → 'confirmed';
+    • пробій закрито, підтверджень ще замало (або жива ціна в коробці) → 'pending';
+    • закритого пробою немає, лише жива свічка за межею → 'live'; нічого → 'none'.
+    → {state, edge, box_lo, box_hi, t (пробій), held, need, note}."""
+    sd = str(side).upper()
+    sg = 1.0 if sd == 'LONG' else -1.0
+    bars = [b for b in (closed or []) if _bar_close(b) is not None and _bar_hl(b)[0] is not None]
+    out = {'state': 'none', 'edge': None, 'box_hi': None, 'box_lo': None, 't': None,
+           'held': 0, 'need': int(need), 'note': ''}
+    n = len(bars)
+    if n < box + 2:
+        out['note'] = 'замало закритих свічок'
+        return out
+
+    def _box(k):
+        hs = [_bar_hl(b)[0] for b in bars[k - box:k]]
+        ls = [_bar_hl(b)[1] for b in bars[k - box:k]]
+        return max(hs), min(ls)
+
+    cur = None
+    for k in range(max(box, n - look), n):
+        c = _bar_close(bars[k])
+        if cur is None or cur['state'] == 'false':
+            hi, lo = _box(k)
+            edge = hi if sd == 'LONG' else lo
+            if sg * (c - edge) > 0:
+                cur = {'state': 'pending', 'edge': edge, 'box_hi': hi, 'box_lo': lo,
+                       't': _bar_sec(bars[k]), 'held': 0, 'k': k}
+            continue
+        if sg * (c - cur['edge']) <= 0:
+            cur['state'] = 'false'
+            cur['false_t'] = _bar_sec(bars[k])
+        else:
+            cur['held'] += 1
+    try:
+        lp = float(live_price) if live_price is not None else None
+    except (TypeError, ValueError):
+        lp = None
+    if cur is None:
+        hi, lo = _box(n)
+        edge = hi if sd == 'LONG' else lo
+        if lp and sg * (lp - edge) > 0:
+            out.update(state='live', edge=edge, box_hi=hi, box_lo=lo,
+                       note='пробій коробки лише на живій (незакритій) свічці')
+        else:
+            out['note'] = 'закритого пробою коробки немає'
+        return out
+    out.update({k: cur.get(k) for k in ('state', 'edge', 'box_hi', 'box_lo', 't', 'held')})
+    if cur['state'] == 'false':
+        out['note'] = 'свічка закрилась назад у коробці — хибний старт'
+        out['false_t'] = cur.get('false_t')
+    elif cur['held'] >= need:
+        if lp is not None and sg * (lp - cur['edge']) <= 0:
+            out['state'], out['note'] = 'pending', 'ціна зараз повернулась у коробку'
+        else:
+            out['state'], out['note'] = 'confirmed', f"пробій утримано {cur['held']} св."
+    else:
+        out['note'] = f"пробій закрито, утримано {cur['held']}/{need} св."
+    return out
+
+
+def false_start_hit(side: str, edge, closed: List[Dict], opened_at) -> Optional[Dict]:
+    """🪤 Хибний старт ПІСЛЯ входу (23.11): закрита 1h-свічка, що закінчилась
+    після відкриття угоди, закрилась назад за межею пробою (у коробці) → вихід.
+    ЧИСТА. → {t, close, edge} | None."""
+    try:
+        e = float(edge)
+        oa = float(opened_at)
+    except (TypeError, ValueError):
+        return None
+    sg = 1.0 if str(side).upper() == 'LONG' else -1.0
+    for b in closed or []:
+        t, c = _bar_sec(b), _bar_close(b)
+        if t is None or c is None or t + 3600 <= oa:
+            continue
+        if sg * (c - e) <= 0:
+            return {'t': t, 'close': c, 'edge': e}
+    return None
 
 
 def scen_allowed(r: Optional[Dict], allowed) -> bool:
@@ -1863,6 +2083,37 @@ class AiEngine:
     def _pro_market(self, symbol: str, now: float, fetch: bool = True) -> Dict:
         return {tf: self._pro_fetch_bars(symbol, tf, now, fetch) for tf in PRO_TFS}
 
+    def closed_1h(self, symbol: str, now: Optional[float] = None) -> List[Dict]:
+        """ЗАКРИТІ 1h-свічки монети з кешу рушія (жива відкинута). Без мережі."""
+        now = self._clock() if now is None else now
+        with self._pro_lock:
+            hit = (self._pro_bars.get(str(symbol or '').upper()) or {}).get('1h')
+        rows = list(hit[1]) if hit else []
+        while rows and (_bar_sec(rows[-1]) or 0) + 3600 > now:
+            rows.pop()
+        return rows
+
+    def discharge_for(self, symbol: str, side: str, now: Optional[float] = None,
+                      live_price=None) -> Dict:
+        """💥 Стан розряду монети в бік `side` (закриті 1h-свічки з кешу)."""
+        s = self.ai_settings()
+        return discharge_state(self.closed_1h(symbol, now), side, live_price,
+                               need=int(s.get('discharge_bars') or 1))
+
+    def false_start_check(self, symbol: str, side: str, edge, opened_at) -> Optional[Dict]:
+        """🪤 Для виходу з угоди ШІ (TM): закрита після входу свічка повернулась
+        у коробку за межу пробою. Лише кеш (монітор у мережу не ходить)."""
+        return false_start_hit(side, edge, self.closed_1h(symbol), opened_at)
+
+    def rdy_view(self, symbol: str) -> Optional[Dict]:
+        """🧩 Що каже блок «МММ-Готовність» про монету (банер + вкладка)."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+            return ff.mm_gate_view(symbol, book='rdy') if ff else None
+        except Exception:
+            return None
+
     def _pro_exit_on(self) -> bool:
         """Чи увімкнено «🤖 Вихід з угоди ШІ» у Trade Manager — супровід угоди
         за планом мозку графіка тепер його частина (бари треба готувати)."""
@@ -2182,6 +2433,11 @@ class AiEngine:
                 view[S]['confidence'] = bc.get('confidence')
                 if view[S]['etalon'].get('mature') and view[S]['etalon'].get('verdict') != 'take':
                     view[S]['ready'] = False          # 🏆🧠 головний мозок сказав «ні»
+                _skey = (best.get('scenario') or {}).get('key') or ''
+                ds = (self.discharge_for(S, best['side'], now, _px(vw, rec))
+                      if _skey == 'E2' else None)
+                rv = self.rdy_view(S) if (s.get('rdy_filter') or 'off') != 'off' else None
+                view[S]['discharge'] = ds
                 if ready and bc.get('ok'):
                     # ЧОМУ готова точка не стане угодою (показ: таблиця · огляд · тумблер)
                     view[S]['block'] = ('ШІ вимкнено головним тумблером' if not s.get('enabled')
@@ -2189,7 +2445,8 @@ class AiEngine:
                                               if ep is None else None)
                                         or ai_entry_block(ep, best['side'], s, bc, view[S]['etalon'],
                                                             _open_n, self._ai_opens,
-                                                            self._ai_last.get(S), now))
+                                                            self._ai_last.get(S), now, rdy=rv,
+                                                            discharge=ds, scen_key=_skey))
                 if ep is not None:
                     for x in (el, es):
                         sc = x.get('scenario') or {}
@@ -2201,7 +2458,8 @@ class AiEngine:
                                     name=sc.get('name'), score=x.get('score'))
                 if s.get('enabled') and ep is not None and ready:
                     self._try_signal(S, best, rec, vw, ep, now, professional=pro, brain=bc,
-                                     feat=feat, sim=sim, anti_sim=anti_sim, eb=view[S]['etalon'])
+                                     feat=feat, sim=sim, anti_sim=anti_sim, eb=view[S]['etalon'],
+                                     rdy=rv, discharge=ds)
                 if ep is not None:
                     why = episode_done(ep, now, charged)
                     if why:
@@ -2295,7 +2553,7 @@ class AiEngine:
         return chosen[0], str(chosen[1] or 'OB')
 
     def _try_signal(self, S, sc_res, rec, vw, ep, now, professional=None, brain=None,
-                    feat=None, sim=None, anti_sim=None, eb=None):
+                    feat=None, sim=None, anti_sim=None, eb=None, rdy=None, discharge=None):
         """🤖 ВЛАСНИЙ СЦЕНАРІЙ ШІ (22.11): ворота бота (кнопки напрямку, МММ,
         Пружини, OB/PD/…, черги) НЕ діють — ШІ відкриває СВОЮ угоду за своїми
         правилами (налаштування ШІ) і далі супроводжує лише її."""
@@ -2324,18 +2582,31 @@ class AiEngine:
         # ухвалює остаточне рішення на вхід (k-NN за відмінними й невдалими угодами).
         if eb is None and feat is not None:
             eb = etalon_brain(feat, self._etalon, self._anti, side, s)
+        _skey = (sc_res.get('scenario') or {}).get('key') or ''
+        if discharge is None and _skey == 'E2':
+            discharge = self.discharge_for(S, side, now, _px(vw, rec))
+        if rdy is None:
+            rdy = self.rdy_view(S)
         why = ai_entry_block(ep, side, s, brain, eb, open_n, self._ai_opens,
-                             self._ai_last.get(S), now)
+                             self._ai_last.get(S), now, rdy=rdy, discharge=discharge,
+                             scen_key=_skey)
         if why:
             if not (ep.get('signal') or {}).get('own'):   # уже відкрита угода — не шумимо
                 self._ai_block_note(S, side, why, now)
                 self._ai_block_ev(ep, side, why, now)
             return
-        # 🛑 «SL з» ШІ: стоп за обраним джерелом + межі мін / макс → перерахунок R
+        # 🛑 «SL з» ШІ: стоп за обраним джерелом + межі мін / макс → перерахунок R.
+        # Вимкнено (деф.) → стоп плану (структура / ATR 15m у межах мін / макс) —
+        # ЛИШЕ орієнтир ризику: на угоду не ставиться і її не закриває.
         px0 = _px(vw, rec)
-        ob_stop, ob_label = (self._ai_ob_stop(S, side, px0) if s.get('sl_source') == 'ob'
-                             else (None, ''))
-        plan0 = ai_stop_for(side, px0, brain.get('plan') or {}, ob_stop, ob_label, s)
+        sl_on = bool(s.get('sl_enabled'))
+        ob_stop, ob_label = (self._ai_ob_stop(S, side, px0)
+                             if sl_on and s.get('sl_source') == 'ob' else (None, ''))
+        plan0 = ai_stop_for(side, px0, brain.get('plan') or {}, ob_stop, ob_label,
+                            s if sl_on else dict(s, sl_source='plan'))
+        if not sl_on:
+            plan0['stop_off'] = True
+            plan0['stop_label'] = 'SL вимкнено · орієнтир ризику ' + (plan0.get('stop_label') or '')
         brain = dict(brain, plan=plan0)
         mrr = getattr(_sib('ai_brain'), 'MIN_NET_RR', 1.3)
         if plan0.get('net_rr') is not None and plan0['net_rr'] < mrr:
@@ -2371,14 +2642,15 @@ class AiEngine:
         res = None
         try:
             res = tm.ai_open(S, side, plan=plan or None, book=s.get('book') or 'auto',
-                             sl_fallback_pct=s.get('sl_fallback_pct'),
+                             sl_fallback_pct=s.get('sl_fallback_pct'), place_sl=sl_on,
                              feat=feat, scenario=scen.get('key'),
                              scenario_name=scen.get('name'), context=pro_compact or {},
                              entry={**ai_entry_snapshot(side, sc_res, rec, brain, sim, px, now,
                                                         self.anomaly_dir(S), anti_sim),
                                     'etalon': {k: (eb or {}).get(k) for k in
                                                ('mature', 'verdict', 'p_good', 'exp_r', 'tp_r', 'reason')},
-                                    'plan_final': plan or None})
+                                    'plan_final': plan or None,
+                                    'discharge': discharge, 'rdy': rdy})
         except Exception as e:
             res = {'ok': False, 'reason': f'помилка відкриття: {e}'}
             self._stat['last_err'] = f'ai_open {S}: {e}'[:200]
@@ -2801,7 +3073,12 @@ class AiEngine:
                    (tm.ai_open_positions() if tm and hasattr(tm, 'ai_open_positions') else [])]
         except Exception:
             own = []
+        try:
+            rdy_stats = tm.rdy_stats() if tm and hasattr(tm, 'rdy_stats') else None
+        except Exception:
+            rdy_stats = None
         return {'ok': True, 'settings': self.settings(), 'ai': self.ai_settings(),
+                'rdy_stats': rdy_stats,
                 'ai_defaults': AI_DEFAULTS, 'scenario_keys': list(AI_SCENARIOS),
                 'etalon': self.etalon_state(), 'cleanup': dict(self._cleanup_stat),
                 'cleanup_rules': CLEANUP_RULES, 'cleanup_rules_ua': CLEANUP_RULES_UA,

@@ -9565,3 +9565,38 @@ SHORT не потрібний… в результаті напрямку сиг
   (`vol_anomaly.ai_min_charge` / `is_charged`): нижчий «заряд ≥» ШІ інакше давав
   монети без аномалій → сценарій не складався.
 Тести: `test_ai_own_scenario.py` (+3), `test_ai_signals.py` (+3).
+
+## 💥 ПІДТВЕРДЖЕННЯ РОЗРЯДУ · 🪤 ХИБНИЙ СТАРТ · 🛑 «SL з» ШІ ВИМИКАЄТЬСЯ · 🧩 МММ-ГОТОВНІСТЬ · ⏰ БУДИЛЬНИК → ШІ (23.11)
+- **Корінь хибних стартів:** E2 «💥 Старт розряду» зараховував імпульс за
+  пробоєм коробки на ЖИВІЙ 1h-свічці (`imp_t = bar_t`, будь-яка підтверджена
+  реакція = продовження) — свічка закривалась назад у коробці, угода в мінус.
+- ЧИСТА `ai_signals.discharge_state(closed_1h, side, live_price, need)`: пробій =
+  ЗАКРИТТЯ свічки за межею коробки 24 попередніх; далі закрита свічка назад у
+  коробці → `false`; `need` (`discharge_bars`, деф. 1) закритих свічок утримали
+  і жива ціна за межею → `confirmed`; інакше `pending` / `live` / `none`.
+  Бари — `AiEngine.closed_1h` (кеш `_pro_bars[S]['1h']`, жива відкинута, без мережі).
+- `discharge_confirm` (деф. УВІМК): E2 відкривається лише на `confirmed`
+  (`ai_entry_block(..., discharge=, scen_key=)`); причина «💥 розряд не
+  підтверджено: …» — у таблиці, огляді, тумблері. Рядок таблиці — `_aiDisLine`.
+- 🪤 `false_start_exit` (деф. УВІМК): угода ШІ з E2 несе `pos['ai_discharge']`
+  {edge}; закрита ПІСЛЯ входу 1h-свічка повернулась за межу (`false_start_hit`,
+  `eng.false_start_check`) → `exit_merge(..., false_start=)` → вердикт
+  `false_start` (PROTECTIVE: обидва режими, попри 🌀 заряд). Значок 🪤 у 🚨.
+- 🛑 `sl_enabled` (деф. **ВИМК**): Manual SL на угоду ШІ НЕ ставиться
+  (`ai_open(place_sl=False)`, `pos['ai_sl_off']`); стоп плану = структура / ATR
+  15m у межах мін / макс з `stop_off: True` — ЛИШЕ орієнтир (R ≥ 1.3, еталони),
+  `exit_merge` не дає вердикт `invalid`. Угоду закриває вихід ШІ. UI `aip-sl-on`
+  (гасить джерело).
+- 🧩 `rdy_filter` off|banner|coin|both (деф. off) — ЧИСТА `rdy_block` над
+  `ff.mm_gate_view(S,'rdy')`; блок вимкнено / ⚖ / немає монети → відмова.
+  Кожна угода (real + paper) на відкритті отримує `rdy_open` {on, dir, coin}
+  (`_rdy_open_mark`), він іде в закриті записи; `rdy_trade_stats` / `tm.rdy_stats()`
+  → `/api/ai/state.rdy_stats` → `#aip-rdy-stats` (за / проти / ⚖ банера: N, % у
+  плюсі, сер. %; усі угоди і окремо ШІ). Дані — з нових угод.
+- ⏰ `alarm_ai` '' | on | off — `alarm_set_ai` (той самий `update_ai_settings`,
+  перевірка запису `ai_settings_v1` у БД, старт потоку), лог / TG «🤖 ШІ →».
+  UI `sbr-alarm-ai`, маршрут приймає `alarm_ai`.
+- Таблиця ШІ: рядок «вчиться N/10 · M/5» прибрано (`_aiEtalonCell` → '' поки
+  мозок не зрілий; стан — у KPI панелі).
+Тест: `test_ai_discharge_2311.py` (11); заглушки `discharge_for`/`rdy_view` — у
+`test_ai_signals._engine`, `test_professional_integration._engine`.

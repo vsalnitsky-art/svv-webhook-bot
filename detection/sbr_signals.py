@@ -37,6 +37,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -111,6 +112,9 @@ DEFAULT_SETTINGS = {
     # 🏦 Дія над головним тумблером Trade Manager (вимога 16.11): '' — не
     # чіпати · 'on' — увімкнути · 'off' — вимкнути. Деф. не чіпати.
     'alarm_tm': '',
+    # 🤖 Дія над ГОЛОВНИМ ТУМБЛЕРОМ ШІ (вимога 23.11): '' — не чіпати · 'on' —
+    # увімкнути · 'off' — вимкнути. Деф. не чіпати.
+    'alarm_ai': '',
     # ⏰ ДЖЕРЕЛО будильника (вимога 18.11): 'sbr' — свіжий сигнал 🔔 SBR (як і
     # було) · 'anom' — ⚠ «Аномалії обсягу» (готовий сценарій входу ШІ по монеті
     # будильника, той самий сигнал, що й особисті сповіщення) · 'both'.
@@ -226,6 +230,54 @@ def alarm_set_tm(on: bool, tm=None):
                 tm.start()
             except Exception as e:
                 return False, f'увімкнено, але монітор не запустився: {e}', True
+        return True, word, True
+    except Exception as e:
+        return False, f'не вдалося змінити: {e}', False
+
+
+def alarm_set_ai(on: bool, eng=None):
+    """🤖 Будильник перемикає ГОЛОВНИЙ тумблер ШІ (вимога 23.11). → (ok,
+    причина, змінено?). Пише тим самим шляхом, що тумблер на сторінці
+    (`AiEngine.update_ai_settings({'enabled': …})`), і ПЕРЕВІРЯЄ: налаштування,
+    які читає такт ШІ, і запис у БД (переживе рестарт); увімкнено → потік ШІ
+    мусить працювати."""
+    want = bool(on)
+    if eng is None:
+        try:
+            from detection.ai_signals import get_ai_engine
+            eng = get_ai_engine()
+        except Exception as e:
+            return False, f'ШІ недоступний: {e}', False
+    if eng is None or not hasattr(eng, 'update_ai_settings'):
+        return False, 'рушій ШІ ще не піднявся', False
+    word = 'увімкнено' if want else 'вимкнено'
+    try:
+        if bool(eng.ai_settings().get('enabled')) == want:
+            return True, 'вже ' + word, False
+        eng.update_ai_settings({'enabled': want})
+        if bool(eng.ai_settings().get('enabled')) != want:
+            return False, 'ШІ не прийняв зміну (стан не змінився)', False
+        db = getattr(eng, 'db', None)
+        if db is not None and hasattr(db, 'get_setting'):
+            try:
+                from detection.ai_signals import AI_DB_SETTINGS as _K
+            except Exception:
+                _K = 'ai_settings_v1'
+            stored = db.get_setting(_K, None)
+            if isinstance(stored, str):
+                try:
+                    stored = json.loads(stored)
+                except Exception:
+                    stored = None
+            if isinstance(stored, dict) and bool(stored.get('enabled')) != want:
+                return False, word + ', але НЕ збережено в БД (після рестарту повернеться)', True
+        if want and hasattr(eng, 'start'):
+            th = getattr(eng, '_thread', None)
+            if not (th and th.is_alive()):
+                try:
+                    eng.start()
+                except Exception as e:
+                    return False, f'увімкнено, але потік ШІ не запустився: {e}', True
         return True, word, True
     except Exception as e:
         return False, f'не вдалося змінити: {e}', False
@@ -523,6 +575,7 @@ class SbrEngine:
         self._notify = notify          # (text) → (ok, why)
         self._admin_notify = None      # ⏰ будильник → особисто адміну (None = за замовч.)
         self._tm_switch = None         # ⏰ (on) → (ok, причина, змінено) — для тестів
+        self._ai_switch = None         # ⏰ 🤖 те саме для головного тумблера ШІ
         self._clock = clock or time.time
         self._lock = threading.Lock()
         self._state: Dict[str, Dict] = {}      # {SYM: {'1h': snap, '4h': snap}}
@@ -573,6 +626,8 @@ class SbrEngine:
         s['alarm_side'] = sd if sd in ALARM_SIDES else 'LONG'
         tm = str(s.get('alarm_tm') or '').lower()
         s['alarm_tm'] = tm if tm in ALARM_TM else ''
+        ai = str(s.get('alarm_ai') or '').lower()
+        s['alarm_ai'] = ai if ai in ALARM_TM else ''
         s['alarm_src'] = alarm_src_of(s)
         if not isinstance(s.get('alarm_last'), dict):
             s['alarm_last'] = None
@@ -610,7 +665,7 @@ class SbrEngine:
                 self._settings['tg_symbols'] = sorted(
                     {str(x).upper() for x in patch['tg_symbols'] if x})
             for k in ('alarm_on', 'alarm_symbol', 'alarm_tf', 'alarm_tfs', 'alarm_side',
-                      'alarm_tm', 'alarm_src'):
+                      'alarm_tm', 'alarm_src', 'alarm_ai'):
                 if k in patch:
                     self._settings[k] = patch[k]
             if 'alarm_tf' in patch and 'alarm_tfs' not in patch:
@@ -1062,19 +1117,30 @@ class SbrEngine:
         tm_res = None
         if act in ('on', 'off'):
             tm_res = (self._tm_switch or alarm_set_tm)(act == 'on')
+        act_ai = str(s.get('alarm_ai') or '')
+        ai_res = None
+        if act_ai in ('on', 'off'):
+            ai_res = (self._ai_switch or alarm_set_ai)(act_ai == 'on')
         last = {'at': now, 'symbol': S, 'side': side, 'tf': tf_lbl, 'src': 'anom' if anom else 'sbr',
                 'scenario': sig.get('scenario') if anom else None,
                 'ok': bool(ok) and (tm_res is None or bool(tm_res[0])), 'note': note,
                 'dir_ok': bool(ok), 'score': sig.get('score'), 'trigger': sig.get('trigger'),
                 'tm': act, 'tm_ok': None if tm_res is None else bool(tm_res[0]),
-                'tm_note': None if tm_res is None else tm_res[1]}
+                'tm_note': None if tm_res is None else tm_res[1],
+                'ai': act_ai, 'ai_ok': None if ai_res is None else bool(ai_res[0]),
+                'ai_note': None if ai_res is None else ai_res[1]}
+        if ai_res is not None and not ai_res[0]:
+            last['ok'] = False
         with self._lock:
             self._settings['alarm_last'] = last
         self._save_settings()
         dir_changed = bool(_dch)
         tm_changed = bool(tm_res and tm_res[2])
         tm_failed = bool(tm_res is not None and not tm_res[0])
-        if ok and not dir_changed and not tm_changed and not tm_failed:
+        ai_changed = bool(ai_res and ai_res[2])
+        ai_failed = bool(ai_res is not None and not ai_res[0])
+        if ok and not dir_changed and not tm_changed and not tm_failed \
+                and not ai_changed and not ai_failed:
             return      # усе й так у потрібному стані — без рядка в лозі й без TG
         what = (f"{sig.get('scenario') or 'сценарій входу'}" if anom
                 else f"Score {float(sig.get('score') or 0):.2f}")
@@ -1086,12 +1152,15 @@ class SbrEngine:
         if tm_res is not None:
             txt += (f" · Trade Manager {tm_res[1]}" if tm_res[0]
                     else f" · Trade Manager НЕ змінено: {tm_res[1]}")
+        if ai_res is not None:
+            txt += (f" · 🤖 ШІ {ai_res[1]}" if ai_res[0]
+                    else f" · 🤖 ШІ НЕ змінено: {ai_res[1]}")
         print(f"[SBR] {txt}")
         try:
             from detection.activity_log import log_activity
             log_activity(S, 'signal', txt, side=side, source='SBR',
                          extra={'alarm': True, 'ok': bool(last['ok']), 'tm': act,
-                                'tm_ok': last['tm_ok']})
+                                'tm_ok': last['tm_ok'], 'ai': act_ai, 'ai_ok': last['ai_ok']})
         except Exception:
             pass
         # 📨 Будильник — ОСОБИСТО адміну в головний бот, а НЕ в групу (вимога
@@ -1101,7 +1170,7 @@ class SbrEngine:
         notify = self._admin_notify or _default_admin_notify
         try:
             notify(alarm_tg_text(S, side, tf, sig, ok, note, tm=tm_res, tm_act=act,
-                                 dir_changed=dir_changed))
+                                 dir_changed=dir_changed, ai=ai_res, ai_act=act_ai))
         except Exception:
             pass
 
@@ -1115,7 +1184,7 @@ def _default_fetch(sym: str, tf: str, limit: int):
 
 
 def alarm_tg_text(S, side, tf, sig, ok=True, note='', tm=None, tm_act='',
-                  dir_changed=False) -> str:
+                  dir_changed=False, ai=None, ai_act='') -> str:
     """⏰ Текст будильника для особистого чату: сигнал без рядка про кнопку."""
     sd = str(side or '').upper()
     if tf == 'anom':          # ⚠ «Аномалії обсягу» (вимога 18.11)
@@ -1148,6 +1217,11 @@ def alarm_tg_text(S, side, tf, sig, ok=True, note='', tm=None, tm_act='',
         elif tm[2]:
             lines.append("🏦 Trade Manager → <b>" + ('УВІМКНЕНО' if tm_act == 'on' else 'ВИМКНЕНО')
                          + "</b>")
+    if ai is not None:
+        if not ai[0]:
+            lines.append(f"⚠️ ШІ НЕ змінено: {ai[1]}")
+        elif ai[2]:
+            lines.append("🤖 ШІ → <b>" + ('УВІМКНЕНО' if ai_act == 'on' else 'ВИМКНЕНО') + "</b>")
     return "\n".join(lines)
 
 

@@ -1639,6 +1639,9 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <select id="sbr-alarm-tm" class="sm-alarm-in sm-alarm-tm" onchange="sbrAlarmTmChange()" title="Що ще зробити з головним тумблером 💼 Trade Manager у момент спрацювання. Бот перемикає його тим самим шляхом, що й тумблер на сторінці, і ПЕРЕВІРЯЄ, що стан справді змінився; результат — у 🧾 Лозі й особисто вам у Telegram.">
                     <option value="">💼 TM не чіпати</option><option value="on">💼 + увімкнути TM</option><option value="off">💼 + вимкнути TM</option>
                 </select>
+                <select id="sbr-alarm-ai" class="sm-alarm-in sm-alarm-tm" onchange="sbrAlarmAiChange()" title="Що зробити з головним тумблером 🤖 ШІ в момент спрацювання будильника. Бот перемикає його тим самим шляхом, що й тумблер на сторінці, і ПЕРЕВІРЯЄ збережений стан; результат — у 🧾 Лозі й особисто вам у Telegram.">
+                    <option value="">🤖 ШІ не чіпати</option><option value="on">🤖 + увімкнути ШІ</option><option value="off">🤖 + вимкнути ШІ</option>
+                </select>
                 <span class="sm-alarm-st" id="sbr-alarm-status"></span>
             </span>
         </div>
@@ -4998,6 +5001,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <label title="Стоп для «SL з: % від входу» і запасний, коли іншого стопа немає">стоп % <input type="number" id="aip-slfb" min="0.2" max="20" step="0.1" style="width:52px" onchange="aipSave()"> %</label>
         </div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
+            <label class="sm-checkbox" title="🛑 Головний вимикач «SL з» ШІ (дефолт ВИМК). Вимкнено → на угоду ШІ Manual SL НЕ ставиться, а стоп плану (структура / ATR 15m у межах мін / макс) лишається ЛИШЕ орієнтиром ризику: R до цілі (гейт ≥ 1.3) і база еталонів. Угоду закриває вихід ШІ (сценарії, 🔥→🧽, 🪤 хибний старт, розворот, ціль…). Увімкнено → Manual SL з обраного джерела і вихід на зламі стопа плану."><input type="checkbox" id="aip-sl-on" onchange="aipSave()"> 🛑</label>
             <label title="🛑 Звідки ШІ бере стоп угоди. OB — той самий ланцюг, що глобальне «🛑 SL з» бота: блок 1H → 15m → 5m (буфер з налаштувань Черги-3), рівень лише з правильного боку ціни; блоку немає → структура / ATR 15m. Структура / ATR 15m — стоп мозку графіка (найближчий, часто тісний). % від входу — фіксований відсоток.">🛑 SL з <select id="aip-sl-src" onchange="aipSave()">
                 <option value="ob">OB 1H → 15m → 5m</option><option value="plan">структура / ATR 15m</option><option value="pct">% від входу</option></select></label>
             <label title="Стоп не ближче N % від входу: тісніший стоп відсувається до цієї відстані (шум 15m не вибиває угоду). 0 = без мінімуму.">не ближче <input type="number" id="aip-sl-min" min="0" max="10" step="0.1" style="width:52px" onchange="aipSave()"> %</label>
@@ -5005,6 +5009,13 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <label title="🎯 Впевненість мозку (0-100) = 40% сила сценарію входу (бал аномалій) + 20% натяг Пружини в бік угоди + 25% старші TF 1h/4h за угодою + 15% участь обсягу. Нижче порогу — вхід не беремо. 0 = вимкнено.">🎯 впевненість ≥ <input type="number" id="aip-min-conf" min="0" max="100" step="1" style="width:52px" onchange="aipSave()"></label>
             <span style="font-size:11px;color:#6b7280">Після зміни стопа R до цілі перераховується: якщо стає менше 1.3 — вхід не беремо.</span>
         </div>
+        <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
+            <label class="sm-checkbox" title="💥 «Старт розряду» (E2) — лише ПІДТВЕРДЖЕНИЙ: пробій 24-год коробки має закритись 1h-свічкою, і ще N закритих свічок мусять утримати ціну за межею. Пробій лише на живій (незакритій) свічці або повернення в коробку = хибний старт, угоду не відкриваємо."><input type="checkbox" id="aip-dis-on" onchange="aipSave()"> 💥 розряд лише підтверджений</label>
+            <label title="Скільки закритих 1h-свічок після пробою мусять утримати ціну за межею коробки">утримати ≥ <input type="number" id="aip-dis-bars" min="1" max="4" step="1" style="width:42px" onchange="aipSave()"> св.</label>
+            <label class="sm-checkbox" title="🪤 Угода ШІ, відкрита на «Старті розряду»: якщо закрита після входу 1h-свічка повернулась у коробку за межу пробою — розряду не було, вихід одразу (захисний, діє в обох режимах і попри заряд)."><input type="checkbox" id="aip-fs-exit" onchange="aipSave()"> 🪤 вихід на хибному старті</label>
+            <label title="🧩 Відкривати угоду ШІ лише в бік блоку «МММ-Готовність»: за банером (підтверджений напрямок банера), за вкладкою монети в таблиці блоку, або обидва. Блок вимкнено / банер ⚖ / монети немає в таблиці → вхід не беремо.">🧩 МММ-Готовність <select id="aip-rdy" onchange="aipSave()"><option value="off">не враховувати</option><option value="banner">за банером</option><option value="coin">за вкладкою монети</option><option value="both">банер + вкладка</option></select></label>
+        </div>
+        <div id="aip-rdy-stats" style="margin-top:8px;font-size:11px;color:#8b93a7"></div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
             <label class="sm-checkbox" title="ШІ супроводжує й закриває СВОЇ угоди: аномалії + план угоди (стоп / ціль). Інші правила виходу бота угод ШІ не чіпають; Manual SL / TP працюють."><input type="checkbox" id="aip-exit" onchange="aipSave()"> вихід ШІ</label>
             <label title="Коли закривати">закривати: <select id="aip-exit-mode" onchange="aipSave()"><option value="confirmed">аномалії + підтвердження</option><option value="all">лише коли всі показники за вихід</option></select></label>
@@ -6974,13 +6985,27 @@ function _aiDecision(c) {
     if (sc && sc.done) return `<span style="color:#fbbf24">⏳ ${arrow} формується ${sc.done}/${sc.total}</span>`;
     return '<span style="color:#6b7280">очікує</span>';
 }
+// 💥 Стан розряду для «💥 Старт розряду» (E2): пробій закрито й утримано /
+// чекаємо підтвердження / лише жива свічка / 🪤 хибний старт (вимога 23.11).
+const _AI_DIS = {confirmed: ['💥 розряд підтверджено', '#4ade80'], pending: ['⏳ розряд: чекаємо підтвердження', '#fbbf24'],
+    live: ['⏳ пробій лише на живій свічці', '#fbbf24'], false: ['🪤 хибний старт', '#f87171'], none: ['· пробою коробки немає', '#6b7280']};
+function _aiDisLine(c) {
+    const ds = c && c.discharge;
+    if (!ds || !_AI_DIS[ds.state]) return '';
+    const [t, col] = _AI_DIS[ds.state];
+    const tip = (ds.note || '') + (ds.edge ? ' · межа пробою ' + fmtPriceJS(ds.edge) : '')
+        + (ds.t ? ' · пробій ' + _pcDM(ds.t) + ' ' + _pcHM(ds.t) : '');
+    return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t}${ds.state === 'pending' ? ' ' + (ds.held || 0) + '/' + (ds.need || 1) : ''}</div>`;
+}
 // 🏆🧠 Вердикт ГОЛОВНОГО МОЗКУ (база еталонів) для монети.
 function _aiEtalonCell(e) {
     if (!e) return '';
     const tip = ('🏆🧠 Мозок еталонів: ' + (e.reason || '') + (e.p_good != null ? '\nСеред схожих входів відмінних ' + Math.round(e.p_good * 100) + '%' : '')
         + (e.exp_r != null ? ' · очікувано ' + e.exp_r + 'R' : '') + (e.tp_r != null ? '\nЦіль з досвіду ' + e.tp_r + 'R' : '')
         + ((e.nearest || []).length ? '\nНайближчі: ' + e.nearest.map(n => (n.good ? '🏆' : '❌') + (n.sym || '').replace('USDT', '') + (n.r != null ? ' ' + n.r + 'R' : '')).join(' · ') : '')).replace(/"/g, '&quot;');
-    if (!e.mature) return `<div title="${tip}" style="font-size:10px;color:#8b93a7">${AI_BRAND_IMG} вчиться ${e.n_good || 0}/${e.need_good || 10} · ${e.n_anti || 0}/${e.need_anti || 5}</div>`;
+    // 23.11: поки мозок вчиться — у рядку нічого (той самий стан для всіх
+    // монет; він є в KPI панелі «🏆🧠 мозок вчиться N/10 · M/5»).
+    if (!e.mature) return '';
     const ok = e.verdict === 'take';
     return `<div title="${tip}" style="font-size:10px;color:${ok ? '#4ade80' : '#f87171'};font-weight:700">${AI_BRAND_IMG} ${ok ? 'бере' : 'ні'}${e.p_good != null ? ' ' + Math.round(e.p_good * 100) + '%' : ''}</div>`;
 }
@@ -7074,6 +7099,8 @@ function aipApply(d) {
         vl('aip-min-charge', a.min_charge); vl('aip-book', a.book); vl('aip-max-open', a.max_open);
         vl('aip-max-30', a.max_per_30m); vl('aip-flip', a.flip_cooldown_min); vl('aip-slfb', a.sl_fallback_pct);
         vl('aip-exit-mode', a.exit_mode); vl('aip-hold', a.hold_pot); vl('aip-et-r', a.etalon_min_r);
+        ck('aip-sl-on', a.sl_enabled); ck('aip-dis-on', a.discharge_confirm !== false); ck('aip-fs-exit', a.false_start_exit !== false);
+        vl('aip-dis-bars', a.discharge_bars); vl('aip-rdy', a.rdy_filter || 'off');
         vl('aip-sl-src', a.sl_source); vl('aip-sl-min', a.sl_min_pct); vl('aip-sl-max', a.sl_max_pct); vl('aip-min-conf', a.min_conf);
         vl('aip-et-sim', a.etalon_min_sim); vl('aip-et-p', a.etalon_min_p);
         document.querySelectorAll('[data-aip-side]').forEach(c => c.classList.toggle('on', a[c.dataset.aipSide] !== false));
@@ -7085,6 +7112,9 @@ function aipApply(d) {
                 `<span class="aip-chip${on.has(k) ? ' on' : ''}" data-aip-scen="${k}" onclick="aipChip(this)">${nm[k] || k}</span>`).join(' ');
         }
     }
+    _aipSlSync();
+    const rs = g('aip-rdy-stats');
+    if (rs) rs.innerHTML = _aipRdyStatsHTML(d.rdy_stats);
     const et = d.etalon || {}, cl = d.cleanup || {}, own = d.own_trades || [];
     const kp = g('aip-kpi');
     if (kp) {
@@ -7117,6 +7147,29 @@ function aipApply(d) {
           + ((et.anti_last || []).length ? ' &nbsp; ❌ ' + et.anti_last.map(e => `${_aipEsc((e.sym || '').replace('USDT', ''))} ${e.r != null ? e.r + 'R' : (e.pnl != null ? e.pnl + '%' : '')}`).join(' · ') : '')
         : '🏆 Еталонів ще немає. Бот сам додає відмінні угоди ШІ (≥ ' + (a.etalon_min_r || 1.5) + 'R) в еталони, невдалі (≤ −0.5R) — в антибазу. Поки баз мало, вирішують правила; коли зібрано — рішення ухвалює мозок еталонів.';
 }
+// 🛑 «SL з» вимкнено → джерело стопа ні на що не впливає (гасимо).
+function _aipSlSync() {
+    const on = !!(document.getElementById('aip-sl-on') || {}).checked;
+    const e = document.getElementById('aip-sl-src');
+    if (e) { e.disabled = !on; e.style.opacity = on ? '' : '0.4'; }
+    const b = document.getElementById('aip-dis-bars');
+    const dc = !!(document.getElementById('aip-dis-on') || {}).checked;
+    if (b) { b.disabled = !dc; b.style.opacity = dc ? '' : '0.4'; }
+}
+// 📊 Закриті угоди за банером «МММ-Готовність» на вході (вимога 23.11).
+function _aipRdyStatsHTML(st) {
+    if (!st) return '';
+    const L = st.labels || {}, order = ['with', 'against', 'flat', 'off', 'unknown'];
+    const row = (g, n, title) => {
+        const parts = order.filter(k => g && g[k] && g[k].n).map(k => {
+            const x = g[k], c = x.avg > 0 ? '#4ade80' : (x.avg < 0 ? '#f87171' : '#cbd5e1');
+            return `<span style="margin-right:10px">${L[k] || k}: <b>${x.n}</b> угод · у плюсі <b>${x.win_pct}%</b> · сер. <b style="color:${c}">${x.avg > 0 ? '+' : ''}${x.avg}%</b></span>`;
+        });
+        return `<div>📊 <b>${title}</b> (${n}): ${parts.length ? parts.join('') : 'знімків банера ще немає — пишуться з кожною новою угодою'}</div>`;
+    };
+    return row(st.groups, st.n, 'Усі закриті угоди за банером 🧩 МММ-Готовність на вході')
+        + row(st.ai, st.ai_n, 'Угоди ШІ');
+}
 function aipChip(el) {
     el.classList.toggle('on');
     if (el.dataset.aipScen && !document.querySelector('[data-aip-scen].on')) el.classList.add('on');   // хоч один сценарій
@@ -7135,6 +7188,9 @@ async function aipSave() {
         book: (g('aip-book') || {}).value || 'auto', max_open: n('aip-max-open', 5),
         max_per_30m: n('aip-max-30', 3), flip_cooldown_min: n('aip-flip', 180), hold_pot: n('aip-hold', 40),
         sl_fallback_pct: n('aip-slfb', 2), sl_source: (g('aip-sl-src') || {}).value || 'ob',
+        sl_enabled: !!(g('aip-sl-on') || {}).checked, discharge_confirm: !!(g('aip-dis-on') || {}).checked,
+        discharge_bars: n('aip-dis-bars', 1), false_start_exit: !!(g('aip-fs-exit') || {}).checked,
+        rdy_filter: (g('aip-rdy') || {}).value || 'off',
         sl_min_pct: n('aip-sl-min', 0.8), sl_max_pct: n('aip-sl-max', 4), min_conf: n('aip-min-conf', 40), learning_enabled: !!(g('aip-learn') || {}).checked,
         etalon_enabled: !!(g('aip-etalon') || {}).checked, etalon_min_r: n('aip-et-r', 1.5),
         etalon_min_sim: n('aip-et-sim', 0.35), etalon_min_p: n('aip-et-p', 0.6), cleanup_enabled: !!(g('aip-clean') || {}).checked,
@@ -7211,7 +7267,7 @@ async function aiLoad() {
             return `<tr><td><div class="ai-2l"><div class="ai-ell">${typeof tvSym === 'function' ? tvSym(c.symbol) : c.symbol}</div>`
                 + `<div class="ai-sub">${c.src === 'scan' ? '🔭 скан' : '🌀 WATCHLIST'} · заряд <b style="color:#e2e8f0">${c.charge != null ? Math.round(c.charge) : '—'}</b></div></div></td>`
                 + `<td>${_aiScenCell(c.long, c.best === 'LONG')}</td><td>${_aiScenCell(c.short, c.best === 'SHORT')}</td>`
-                + `<td><div class="ai-2l">${_aiDecision(c)}${proHTML}${_aiEtalonCell(c.etalon)}</div></td>`
+                + `<td><div class="ai-2l">${_aiDecision(c)}${_aiDisLine(c)}${proHTML}${_aiEtalonCell(c.etalon)}</div></td>`
                 + `<td>${_aiSignalCell(c.signal)}</td>`
                 + `<td style="font-family:monospace">${_aiAge(c.episode_age)}</td></tr>`;
         }).join('');
@@ -19543,9 +19599,9 @@ function springTradeCellHTML(p) {
 // 🤖 Вихід ШІ (17.11): стан рішення за аномаліями — значок у колонці 🚨.
 // Три крапки = групи свідчень «аномалії · ціна · прибуток» (зелена — за вихід);
 // у підказці — вердикт і повний чек-лист.
-const _AIX_ICON = {invalid: '🛑', scenario: '🧩', all: '✅', combo: '🔥', close: '⚠', reversal: '🔀',
+const _AIX_ICON = {invalid: '🛑', false_start: '🪤', scenario: '🧩', all: '✅', combo: '🔥', close: '⚠', reversal: '🔀',
                    giveback: '💸', target: '🎯', time: '⏳', hold: '⚡', watch: '👁', wait: '⏳', charged: '🌀', none: '·'};
-const _AIX_COL = {invalid: '#f87171', scenario: '#f87171', all: '#f87171', combo: '#f87171', close: '#fb923c',
+const _AIX_COL = {invalid: '#f87171', false_start: '#f87171', scenario: '#f87171', all: '#f87171', combo: '#f87171', close: '#fb923c',
                   reversal: '#fb923c', giveback: '#fb923c', target: '#fb923c', time: '#fb923c', hold: '#4ade80',
                   watch: '#fbbf24', wait: '#94a3b8', charged: '#4ade80', none: '#64748b'};
 function aiExitChipHTML(p) {
@@ -21272,6 +21328,8 @@ function _sbrApplyAlarm(st) {
     });
     if (sd && act !== sd) sd.value = st.alarm_side || 'LONG';
     if (tmSel && act !== tmSel) tmSel.value = st.alarm_tm || '';
+    const aiSel = document.getElementById('sbr-alarm-ai');
+    if (aiSel && act !== aiSel) aiSel.value = st.alarm_ai || '';
     const srcSel = document.getElementById('sbr-alarm-src');
     const src = ['sbr', 'anom', 'both'].indexOf(st.alarm_src) >= 0 ? st.alarm_src : 'sbr';
     if (srcSel && act !== srcSel) srcSel.value = src;
@@ -21298,7 +21356,8 @@ function _sbrApplyAlarm(st) {
             out.textContent = '⏳ чекаю ' + _sbrAlarmShortSym(st.alarm_symbol)
                 + (src === 'anom' ? '' : ' ' + (st.alarm_side || 'LONG')) + ' ' + _srcLbl
                 + (src === 'sbr' ? '' : ' (будь-який бік → лише кнопка сигналу)')
-                + ({on: ' · +TM ON', off: ' · +TM OFF'}[st.alarm_tm] || '');
+                + ({on: ' · +TM ON', off: ' · +TM OFF'}[st.alarm_tm] || '')
+                + ({on: ' · +ШІ ON', off: ' · +ШІ OFF'}[st.alarm_ai] || '');
         } else if (L && L.at) {
             const t = new Date(_srvToPc(L.at) * 1000);
             const hm = t.toLocaleString('uk-UA', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
@@ -21306,7 +21365,8 @@ function _sbrApplyAlarm(st) {
             out.textContent = (L.ok ? '✅ ' : '⚠️ ') + hm + ' · ' + _sbrAlarmShortSym(L.symbol) + ' ' + L.side + ' ' + L.tf
                 + (L.dir_ok === false || (L.ok === false && L.dir_ok == null) ? ' · ' + (L.note || '')
                    : (L.src === 'anom' ? ' → кнопки: ' : ' → кнопка ' + L.side + ' ') + (L.note || ''))
-                + (L.tm ? ' · TM ' + (L.tm_note || '') : '');
+                + (L.tm ? ' · TM ' + (L.tm_note || '') : '')
+                + (L.ai ? ' · ШІ ' + (L.ai_note || '') : '');
         } else {
             out.style.color = '#6b7280';
             out.textContent = 'вимкнено';
@@ -21330,6 +21390,14 @@ function sbrAlarmTmChange() {
     }
     sbrSaveAlarm();
 }
+function sbrAlarmAiChange() {
+    const sel = document.getElementById('sbr-alarm-ai');
+    if (sel && sel.value === 'on' && !confirm(
+        '⚠️ Будильник УВІМКНЕ ШІ — він почне відкривати СВОЇ угоди (книга — з налаштувань ШІ).\n\nПродовжити?')) {
+        sel.value = '';
+    }
+    sbrSaveAlarm();
+}
 async function sbrSaveAlarm() {
     const on = document.getElementById('sbr-alarm-on');
     let tfs = Array.from(document.querySelectorAll('#sbr-alarm-tfs input[data-atf]'))
@@ -21344,6 +21412,7 @@ async function sbrSaveAlarm() {
         alarm_tfs: tfs,
         alarm_side: (document.getElementById('sbr-alarm-side') || {}).value || 'LONG',
         alarm_tm: (document.getElementById('sbr-alarm-tm') || {}).value || '',
+        alarm_ai: (document.getElementById('sbr-alarm-ai') || {}).value || '',
         alarm_src: (document.getElementById('sbr-alarm-src') || {}).value || 'sbr',
     };
     try {
