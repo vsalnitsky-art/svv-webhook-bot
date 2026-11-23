@@ -5011,11 +5011,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
             <label class="sm-checkbox" title="💥 «Старт розряду» (E2) — лише ПІДТВЕРДЖЕНИЙ: пробій 24-год коробки має закритись 1h-свічкою, і ще N закритих свічок мусять утримати ціну за межею. Пробій лише на живій (незакритій) свічці або повернення в коробку = хибний старт, угоду не відкриваємо."><input type="checkbox" id="aip-dis-on" onchange="aipSave()"> 💥 розряд лише підтверджений</label>
-            <label title="Скільки закритих 1h-свічок після пробою мусять утримати ціну за межею коробки">утримати ≥ <input type="number" id="aip-dis-bars" min="1" max="4" step="1" style="width:42px" onchange="aipSave()"> св.</label>
+            <label title="TF, закриттям свічок якого підтверджується розряд. Рівень пробою — завжди межа 24-год коробки 1h (як і сама Пружина). 1H — надійніше, вхід до ~1-2 год пізніше; 15m — вхід на 30-45 хв раніше, але більше хибних стартів. Вихід на хибному старті — завжди за закриттям 1h. Обидва варіанти бот веде в тіньовій статистиці нижче.">підтвердження <select id="aip-dis-tf" onchange="aipSave()"><option value="1h">1H (закриття)</option><option value="15m">15m (закриття)</option></select></label>
+            <label id="aip-dis-bars-l" title="Скільки закритих 1h-свічок після пробою мусять утримати ціну за межею коробки">утримати ≥ <input type="number" id="aip-dis-bars" min="1" max="4" step="1" style="width:42px" onchange="aipSave()"> св. 1H</label>
+            <label id="aip-dis-bars15-l" title="Скільки закритих 15m-свічок після пробою мусять утримати ціну за межею коробки 1h">утримати ≥ <input type="number" id="aip-dis-bars15" min="1" max="8" step="1" style="width:42px" onchange="aipSave()"> св. 15m</label>
             <label class="sm-checkbox" title="🪤 Угода ШІ, відкрита на «Старті розряду»: якщо закрита після входу 1h-свічка повернулась у коробку за межу пробою — розряду не було, вихід одразу (захисний, діє в обох режимах і попри заряд)."><input type="checkbox" id="aip-fs-exit" onchange="aipSave()"> 🪤 вихід на хибному старті</label>
             <label title="🧩 Відкривати угоду ШІ лише в бік блоку «МММ-Готовність»: за банером (підтверджений напрямок банера), за вкладкою монети в таблиці блоку, або обидва. Блок вимкнено / банер ⚖ / монети немає в таблиці → вхід не беремо.">🧩 МММ-Готовність <select id="aip-rdy" onchange="aipSave()"><option value="off">не враховувати</option><option value="banner">за банером</option><option value="coin">за вкладкою монети</option><option value="both">банер + вкладка</option></select></label>
         </div>
         <div id="aip-rdy-stats" style="margin-top:8px;font-size:11px;color:#8b93a7"></div>
+        <div id="aip-dis-stats" style="margin-top:6px;font-size:11px;color:#8b93a7"></div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
             <label class="sm-checkbox" title="ШІ супроводжує й закриває СВОЇ угоди: аномалії + план угоди (стоп / ціль). Інші правила виходу бота угод ШІ не чіпають; Manual SL / TP працюють."><input type="checkbox" id="aip-exit" onchange="aipSave()"> вихід ШІ</label>
             <label title="Коли закривати">закривати: <select id="aip-exit-mode" onchange="aipSave()"><option value="confirmed">аномалії + підтвердження</option><option value="all">лише коли всі показники за вихід</option></select></label>
@@ -6993,9 +6996,12 @@ function _aiDisLine(c) {
     const ds = c && c.discharge;
     if (!ds || !_AI_DIS[ds.state]) return '';
     const [t, col] = _AI_DIS[ds.state];
+    const alt = ds.alt || {};
     const tip = (ds.note || '') + (ds.edge ? ' · межа пробою ' + fmtPriceJS(ds.edge) : '')
-        + (ds.t ? ' · пробій ' + _pcDM(ds.t) + ' ' + _pcHM(ds.t) : '');
-    return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t}${ds.state === 'pending' ? ' ' + (ds.held || 0) + '/' + (ds.need || 1) : ''}</div>`;
+        + (ds.t ? ' · пробій ' + _pcDM(ds.t) + ' ' + _pcHM(ds.t) : '')
+        + (alt.state ? '\nНа ' + String(alt.tf || '').toUpperCase() + ' (тінь): ' + ((_AI_DIS[alt.state] || [alt.state])[0]) + (alt.note ? ' — ' + alt.note : '') : '');
+    const altTxt = alt.state && _AI_DIS[alt.state] ? ` <span style="color:#6b7280">· ${String(alt.tf || '').toUpperCase()}: ${alt.state === 'confirmed' ? '✓' : (alt.state === 'false' ? '🪤' : '⏳')}</span>` : '';
+    return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t} <b>${String(ds.tf || '1h').toUpperCase()}</b>${ds.state === 'pending' ? ' ' + (ds.held || 0) + '/' + (ds.need || 1) : ''}${altTxt}</div>`;
 }
 // 🏆🧠 Вердикт ГОЛОВНОГО МОЗКУ (база еталонів) для монети.
 function _aiEtalonCell(e) {
@@ -7100,7 +7106,8 @@ function aipApply(d) {
         vl('aip-max-30', a.max_per_30m); vl('aip-flip', a.flip_cooldown_min); vl('aip-slfb', a.sl_fallback_pct);
         vl('aip-exit-mode', a.exit_mode); vl('aip-hold', a.hold_pot); vl('aip-et-r', a.etalon_min_r);
         ck('aip-sl-on', a.sl_enabled); ck('aip-dis-on', a.discharge_confirm !== false); ck('aip-fs-exit', a.false_start_exit !== false);
-        vl('aip-dis-bars', a.discharge_bars); vl('aip-rdy', a.rdy_filter || 'off');
+        vl('aip-dis-bars', a.discharge_bars); vl('aip-dis-bars15', a.discharge_bars_15m);
+        vl('aip-dis-tf', a.discharge_tf || '1h'); vl('aip-rdy', a.rdy_filter || 'off');
         vl('aip-sl-src', a.sl_source); vl('aip-sl-min', a.sl_min_pct); vl('aip-sl-max', a.sl_max_pct); vl('aip-min-conf', a.min_conf);
         vl('aip-et-sim', a.etalon_min_sim); vl('aip-et-p', a.etalon_min_p);
         document.querySelectorAll('[data-aip-side]').forEach(c => c.classList.toggle('on', a[c.dataset.aipSide] !== false));
@@ -7115,6 +7122,8 @@ function aipApply(d) {
     _aipSlSync();
     const rs = g('aip-rdy-stats');
     if (rs) rs.innerHTML = _aipRdyStatsHTML(d.rdy_stats);
+    const dsx = g('aip-dis-stats');
+    if (dsx) dsx.innerHTML = _aipDisStatsHTML(d.dis_shadow);
     const et = d.etalon || {}, cl = d.cleanup || {}, own = d.own_trades || [];
     const kp = g('aip-kpi');
     if (kp) {
@@ -7152,9 +7161,31 @@ function _aipSlSync() {
     const on = !!(document.getElementById('aip-sl-on') || {}).checked;
     const e = document.getElementById('aip-sl-src');
     if (e) { e.disabled = !on; e.style.opacity = on ? '' : '0.4'; }
-    const b = document.getElementById('aip-dis-bars');
     const dc = !!(document.getElementById('aip-dis-on') || {}).checked;
-    if (b) { b.disabled = !dc; b.style.opacity = dc ? '' : '0.4'; }
+    const tf = (document.getElementById('aip-dis-tf') || {}).value || '1h';
+    const l1 = document.getElementById('aip-dis-bars-l'), l15 = document.getElementById('aip-dis-bars15-l');
+    if (l1) l1.style.display = tf === '15m' ? 'none' : '';
+    if (l15) l15.style.display = tf === '15m' ? '' : 'none';
+    ['aip-dis-bars', 'aip-dis-bars15', 'aip-dis-tf'].forEach(id => {
+        const e = document.getElementById(id);
+        if (e) { e.disabled = !dc; e.style.opacity = dc ? '' : '0.4'; }
+    });
+}
+// 📊 Тіньове порівняння підтвердження розряду 1H проти 15m (23.11): кожна точка,
+// де розряд став «підтвердженим» на своєму TF, і рух ціни за 24 год у бік входу.
+function _aipDisStatsHTML(sh) {
+    const st = (sh || {}).stats || {};
+    const f = v => v == null ? '—' : ((v > 0 ? '+' : '') + v + '%');
+    const c = v => v == null ? '#cbd5e1' : (v > 0 ? '#4ade80' : (v < 0 ? '#f87171' : '#cbd5e1'));
+    const row = tf => {
+        const x = st[tf] || {};
+        if (!x.n) return `<span style="margin-right:14px"><b>${tf.toUpperCase()}</b>: точок ще немає</span>`;
+        return `<span style="margin-right:14px"><b>${tf.toUpperCase()}</b>: ${x.n} точок (${x.done} завершено) · у плюсі <b>${x.win_pct}%</b>`
+            + ` · сер. <b style="color:${c(x.avg_last)}">${f(x.avg_last)}</b> · макс ↑ ${f(x.avg_mfe)} · макс ↓ ${f(x.avg_mae)}`
+            + ` · 🪤 хибних <b>${x.false_pct}%</b>`
+            + (x.avg_lead_min != null ? ` · 15m раніше на ${x.avg_lead_min} хв` : '') + '</span>';
+    };
+    return `<div title="Угод не відкриває — лише записує, що було б, якби вхід підтверджувався на кожному TF. Рух — % від ціни в момент підтвердження в бік входу, за 24 год; 🪤 хибний — закрита після цього 1h-свічка повернулась у коробку.">📊 <b>Тінь розряду 1H / 15m</b>: ${row('1h')}${row('15m')}</div>`;
 }
 // 📊 Закриті угоди за банером «МММ-Готовність» на вході (вимога 23.11).
 function _aipRdyStatsHTML(st) {
@@ -7190,6 +7221,7 @@ async function aipSave() {
         sl_fallback_pct: n('aip-slfb', 2), sl_source: (g('aip-sl-src') || {}).value || 'ob',
         sl_enabled: !!(g('aip-sl-on') || {}).checked, discharge_confirm: !!(g('aip-dis-on') || {}).checked,
         discharge_bars: n('aip-dis-bars', 1), false_start_exit: !!(g('aip-fs-exit') || {}).checked,
+        discharge_tf: (g('aip-dis-tf') || {}).value || '1h', discharge_bars_15m: n('aip-dis-bars15', 2),
         rdy_filter: (g('aip-rdy') || {}).value || 'off',
         sl_min_pct: n('aip-sl-min', 0.8), sl_max_pct: n('aip-sl-max', 4), min_conf: n('aip-min-conf', 40), learning_enabled: !!(g('aip-learn') || {}).checked,
         etalon_enabled: !!(g('aip-etalon') || {}).checked, etalon_min_r: n('aip-et-r', 1.5),

@@ -206,6 +206,74 @@ def test_trade_manager_wiring():
     assert 'place_sl=sl_on' in ai and "plan0['stop_off'] = True" in ai
 
 
+def _bars15(closes, t0, pad=0.05):
+    return [{'t': (t0 + i * 900) * 1000, 'p': c, 'h': c + pad, 'l': c - pad, 'o': c}
+            for i, c in enumerate(closes)]
+
+
+def test_ltf_confirmation_uses_the_1h_box_level():
+    h = _bars(FLAT)                                   # коробка 1h 99.8 … 100.2
+    t0 = h[-1]['t'] // 1000 + 3600                    # 15m-свічки після останньої 1h
+    s = A.ai_settings_norm({})
+    assert s['discharge_tf'] == '1h' and s['discharge_bars_15m'] == 2
+    assert A.ai_settings_norm({'discharge_tf': '5m'})['discharge_tf'] == '1h'
+    # 15m: пробій 100.3 + дві свічки втримали → confirmed (на 1h ще нічого)
+    r = A.discharge_state_ltf(h, _bars15([100.1, 100.3, 100.4, 100.5], t0), 'LONG', 100.5, need=2)
+    assert r['state'] == 'confirmed' and r['tf'] == '15m' and abs(r['edge'] - 100.2) < 1e-9
+    assert A.discharge_state(h, 'LONG', 100.5)['state'] == 'live'
+    # одна свічка ще замало
+    assert A.discharge_state_ltf(h, _bars15([100.3, 100.4], t0), 'LONG', 100.4, need=2)['state'] == 'pending'
+    # повернулась у коробку → хибний старт
+    assert A.discharge_state_ltf(h, _bars15([100.3, 100.1], t0), 'LONG', 100.1, need=2)['state'] == 'false'
+    # SHORT дзеркально
+    assert A.discharge_state_ltf(h, _bars15([99.7, 99.6, 99.5], t0), 'SHORT', 99.5, need=2)['state'] == 'confirmed'
+
+
+def test_shadow_record_follow_and_stats():
+    h = _bars(FLAT)
+    rec = {'S': 'X', 'side': 'LONG', 'tf': '15m', 't': h[-1]['t'] // 1000 + 3600,
+           'px': 100.0, 'edge': 100.2, 'last': 0.0, 'mfe': 0.0, 'mae': 0.0}
+    A.dis_shadow_update(rec, 102.0, h, rec['t'] + 600)
+    A.dis_shadow_update(rec, 99.0, h, rec['t'] + 1200)
+    assert rec['mfe'] == 2.0 and rec['mae'] == -1.0 and rec['last'] == -1.0 and not rec.get('done')
+    # закрита після підтвердження 1h-свічка назад у коробці → хибний старт
+    h2 = h + [{'t': (rec['t'] + 60) * 1000, 'p': 100.0, 'h': 100.3, 'l': 99.9, 'o': 100.1}]
+    A.dis_shadow_update(rec, 100.0, h2, rec['t'] + 4000)
+    assert rec.get('false_t')
+    A.dis_shadow_update(rec, 100.0, h2, rec['t'] + 25 * 3600)
+    assert rec['done']
+    st = A.dis_shadow_stats([rec, {'tf': '1h', 'last': 1.5, 'mfe': 2, 'mae': -0.5, 'lead_min': 40}])
+    assert st['15m']['n'] == 1 and st['15m']['false_pct'] == 100.0
+    assert st['1h']['win_pct'] == 100.0 and st['1h']['avg_lead_min'] == 40.0
+
+
+def test_engine_shadow_and_selected_tf():
+    NOW_E = 1.8e9
+    eng = A.AiEngine(db=None, clock=lambda: NOW_E)
+    eng._ai_s = A.ai_settings_norm({'discharge_tf': '15m'})
+    eng._ai_s_at = 1e15
+    h = _bars(FLAT, t0=int(NOW_E) - 40 * 3600)
+    t0 = h[-1]['t'] // 1000 + 3600
+    l15 = _bars15([100.3, 100.4, 100.5], t0)
+    eng._pro_bars['X'] = {'1h': (NOW_E, h), '15m': (NOW_E, l15)}
+    d = eng.discharge_for('X', 'LONG', NOW_E, 100.5)
+    assert d['tf'] == '15m' and d['state'] == 'confirmed' and d['alt']['tf'] == '1h'
+    both = eng.discharge_both('X', 'LONG', NOW_E, 100.5)
+    eng._dis_shadow_tick('X', 'LONG', both, 100.5, NOW_E)
+    eng._dis_shadow_tick('X', 'LONG', both, 100.6, NOW_E + 30)        # той самий пробій — без дубля
+    assert len(eng._dis_shadow) == 1 and eng._dis_shadow[0]['tf'] == '15m'
+    eng._dis_shadow_follow({'X': 101.5}, NOW_E + 60)
+    assert eng._dis_shadow[0]['mfe'] > 0
+    assert eng.dis_shadow_state()['stats']['15m']['n'] == 1
+
+
+def test_page_has_tf_choice_and_shadow():
+    src = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    for k in ('aip-dis-tf', 'aip-dis-bars15', 'aip-dis-stats', '_aipDisStatsHTML',
+              'discharge_tf:', 'discharge_bars_15m:', 'ds.alt'):
+        assert k in src, k
+
+
 if __name__ == '__main__':
     n = 0
     for k, f in list(globals().items()):

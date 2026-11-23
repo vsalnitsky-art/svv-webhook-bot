@@ -9600,3 +9600,24 @@ SHORT не потрібний… в результаті напрямку сиг
   мозок не зрілий; стан — у KPI панелі).
 Тест: `test_ai_discharge_2311.py` (11); заглушки `discharge_for`/`rdy_view` — у
 `test_ai_signals._engine`, `test_professional_integration._engine`.
+
+### 💥 TF ПІДТВЕРДЖЕННЯ РОЗРЯДУ 1H / 15m + 📊 ТІНЬОВЕ ПОРІВНЯННЯ (23.11, друга правка)
+Питання «а якщо молодший TF — гірші результати?» → рішення користувача: «зроби як
+радиш» (вибір + тіньова статистика, перемикати за цифрами).
+- `discharge_tf` '1h' (деф.) | '15m' + `discharge_bars_15m` (деф. 2). ЧИСТІ
+  `discharge_state_ltf(closed_1h, closed_15m, …)` і спільна `_discharge_walk`:
+  РІВЕНЬ — завжди межа 24-год коробки 1h (для кожної 15m-свічки — 24 закриті 1h
+  до її відкриття), ТАЙМІНГ — закриття обраного TF. `AiEngine.discharge_both`
+  (обидва TF, кеш `_pro_bars` 1h/15m, без мережі) · `discharge_for` (обраний +
+  `alt`). Вхід E2 гейтиться ОБРАНИМ TF; 🪤 вихід на хибному старті — ЗАВЖДИ за
+  закриттям 1h (межа та сама), щоб 15m-шум не вибивав угоди.
+- 📊 Тінь: `_dis_shadow` (персист у `ai_engine_state_v1`, ≤400) — точка, де
+  розряд став «підтвердженим» на КОЖНОМУ TF (ключ S|бік|TF|час пробою), далі
+  24 год `dis_shadow_update` (рух % у бік входу: last / mfe / mae, хибний старт
+  за 1h), для 1h — `lead_min` (на скільки 15m був раніше). `dis_shadow_stats` →
+  `/api/ai/state.dis_shadow` → `#aip-dis-stats`. Угод не відкриває.
+- UI: `aip-dis-tf` + поле «утримати» свого TF; рядок таблиці ШІ `_aiDisLine` —
+  стан обраного TF + ✓/⏳/🪤 іншого.
+Тест: `test_ai_discharge_2311.py` (15); заглушки `discharge_both` у
+`test_ai_signals._engine`, `test_professional_integration._engine`.
+

@@ -71,6 +71,8 @@ AI_DEFAULTS = {
     # ціну за межею. Повернення в коробку = хибний старт.
     'discharge_confirm': True,
     'discharge_bars': 1,
+    'discharge_tf': '1h',       # TF підтвердження розряду: '1h' | '15m' (рівень — коробка 1h)
+    'discharge_bars_15m': 2,    # для 15m: закритих 15m-свічок утримали ціну за межею
     'false_start_exit': True,   # угода ШІ з E2: ціна повернулась у коробку → вихід
     'learning_enabled': True,  # 🎓 champion/challenger на архівах
     'etalon_enabled': True,    # 🏆 база еталонів відмінних угод (самопоповнення)
@@ -84,6 +86,10 @@ AI_RDY_FILTERS = ('off', 'banner', 'coin', 'both')
 AI_RDY_FILTER_UA = {'off': 'вимк', 'banner': 'за банером', 'coin': 'за вкладкою монети',
                     'both': 'банер + вкладка монети'}
 DISCHARGE_LOOK = 6             # закритих 1h-свічок назад — шукаємо пробій коробки
+DISCHARGE_LOOK_LTF = 16        # закритих 15m-свічок назад (4 год)
+DISCHARGE_TFS = ('1h', '15m')  # TF підтвердження розряду (рівень — завжди коробка 1h)
+DIS_SHADOW_HOURS = 24          # тіньовий запис ведемо 24 год від підтвердження
+DIS_SHADOW_MAX = 400
 DISCHARGE_BOX = 24             # коробка перед пробоєм — 24 закриті 1h-свічки
 DISCHARGE_STATE_UA = {'none': 'пробою немає', 'live': 'пробій лише на живій свічці',
                       'pending': 'пробій закрито, чекаємо підтвердження',
@@ -138,6 +144,8 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
         s['book'] = r['book']
     if r.get('sl_source') in AI_SL_SOURCES:
         s['sl_source'] = r['sl_source']
+    if r.get('discharge_tf') in DISCHARGE_TFS:
+        s['discharge_tf'] = r['discharge_tf']
     if r.get('rdy_filter') in AI_RDY_FILTERS:
         s['rdy_filter'] = r['rdy_filter']
     sc = r.get('scenarios')
@@ -150,7 +158,7 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
                             ('etalon_min_r', 0.5, 10.0, float), ('etalon_min_sim', 0.0, 1.0, float),
                             ('etalon_min_p', 0.3, 0.95, float), ('sl_min_pct', 0.0, 10.0, float),
                             ('sl_max_pct', 0.0, 20.0, float), ('min_conf', 0, 100, int),
-                            ('discharge_bars', 1, 4, int)):
+                            ('discharge_bars', 1, 4, int), ('discharge_bars_15m', 1, 8, int)):
         if k in r:
             try:
                 s[k] = cast(max(lo, min(hi, float(r[k]))))
@@ -374,6 +382,64 @@ def _bar_sec(b):
     return t // 1000 if t > 10 ** 12 else t
 
 
+def _discharge_walk(seq, side: str, live_price, need: int, box_now, tf: str) -> Dict:
+    """Спільна машина станів розряду (23.11). `seq` — закриті свічки вікна
+    [(t, close, box_hi, box_lo)] за часом; `box_now` — (hi, lo) коробки зараз.
+    → {state, edge, box_hi, box_lo, t, held, need, tf, note}."""
+    sd = str(side).upper()
+    sg = 1.0 if sd == 'LONG' else -1.0
+    out = {'state': 'none', 'edge': None, 'box_hi': None, 'box_lo': None, 't': None,
+           'held': 0, 'need': int(need), 'tf': tf, 'note': ''}
+    cur = None
+    for t, c, hi, lo in seq:
+        if cur is None or cur['state'] == 'false':
+            edge = hi if sd == 'LONG' else lo
+            if sg * (c - edge) > 0:
+                cur = {'state': 'pending', 'edge': edge, 'box_hi': hi, 'box_lo': lo,
+                       't': t, 'held': 0}
+            continue
+        if sg * (c - cur['edge']) <= 0:
+            cur['state'] = 'false'
+            cur['false_t'] = t
+        else:
+            cur['held'] += 1
+    try:
+        lp = float(live_price) if live_price is not None else None
+    except (TypeError, ValueError):
+        lp = None
+    if cur is None:
+        if box_now:
+            hi, lo = box_now
+            edge = hi if sd == 'LONG' else lo
+            if lp and sg * (lp - edge) > 0:
+                out.update(state='live', edge=edge, box_hi=hi, box_lo=lo,
+                           note='пробій коробки лише на живій (незакритій) свічці')
+                return out
+        out['note'] = 'закритого пробою коробки немає'
+        return out
+    out.update({k: cur.get(k) for k in ('state', 'edge', 'box_hi', 'box_lo', 't', 'held')})
+    if cur['state'] == 'false':
+        out['note'] = f'свічка {tf} закрилась назад у коробці — хибний старт'
+        out['false_t'] = cur.get('false_t')
+    elif cur['held'] >= need:
+        if lp is not None and sg * (lp - cur['edge']) <= 0:
+            out['state'], out['note'] = 'pending', 'ціна зараз повернулась у коробку'
+        else:
+            out['state'], out['note'] = 'confirmed', f"пробій утримано {cur['held']} св. {tf}"
+    else:
+        out['note'] = f"пробій закрито, утримано {cur['held']}/{need} св. {tf}"
+    return out
+
+
+def _clean_bars(bars):
+    return [b for b in (bars or []) if _bar_close(b) is not None and _bar_hl(b)[0] is not None
+            and _bar_sec(b) is not None]
+
+
+def _hl_box(bars):
+    return max(_bar_hl(b)[0] for b in bars), min(_bar_hl(b)[1] for b in bars)
+
+
 def discharge_state(closed: List[Dict], side: str, live_price=None, need: int = 1,
                     look: int = DISCHARGE_LOOK, box: int = DISCHARGE_BOX) -> Dict:
     """💥 Розряд Пружини справжній чи хибний старт (23.11). ЧИСТА.
@@ -384,62 +450,96 @@ def discharge_state(closed: List[Dict], side: str, live_price=None, need: int = 
       теж за межею → 'confirmed';
     • пробій закрито, підтверджень ще замало (або жива ціна в коробці) → 'pending';
     • закритого пробою немає, лише жива свічка за межею → 'live'; нічого → 'none'.
-    → {state, edge, box_lo, box_hi, t (пробій), held, need, note}."""
-    sd = str(side).upper()
-    sg = 1.0 if sd == 'LONG' else -1.0
-    bars = [b for b in (closed or []) if _bar_close(b) is not None and _bar_hl(b)[0] is not None]
-    out = {'state': 'none', 'edge': None, 'box_hi': None, 'box_lo': None, 't': None,
-           'held': 0, 'need': int(need), 'note': ''}
+    → {state, edge, box_lo, box_hi, t (пробій), held, need, tf, note}."""
+    bars = _clean_bars(closed)
     n = len(bars)
     if n < box + 2:
-        out['note'] = 'замало закритих свічок'
-        return out
-
-    def _box(k):
-        hs = [_bar_hl(b)[0] for b in bars[k - box:k]]
-        ls = [_bar_hl(b)[1] for b in bars[k - box:k]]
-        return max(hs), min(ls)
-
-    cur = None
+        return {'state': 'none', 'edge': None, 'box_hi': None, 'box_lo': None, 't': None,
+                'held': 0, 'need': int(need), 'tf': '1h', 'note': 'замало закритих свічок'}
+    seq = []
     for k in range(max(box, n - look), n):
-        c = _bar_close(bars[k])
-        if cur is None or cur['state'] == 'false':
-            hi, lo = _box(k)
-            edge = hi if sd == 'LONG' else lo
-            if sg * (c - edge) > 0:
-                cur = {'state': 'pending', 'edge': edge, 'box_hi': hi, 'box_lo': lo,
-                       't': _bar_sec(bars[k]), 'held': 0, 'k': k}
+        hi, lo = _hl_box(bars[k - box:k])
+        seq.append((_bar_sec(bars[k]), _bar_close(bars[k]), hi, lo))
+    return _discharge_walk(seq, side, live_price, need, _hl_box(bars[n - box:n]), '1h')
+
+
+def discharge_state_ltf(closed_1h: List[Dict], closed_ltf: List[Dict], side: str,
+                        live_price=None, need: int = 2, look: int = DISCHARGE_LOOK_LTF,
+                        box: int = DISCHARGE_BOX, ltf: str = '15m') -> Dict:
+    """💥 Те саме підтвердження розряду на МОЛОДШОМУ TF (23.11). ЧИСТА.
+    РІВЕНЬ — межа 24-год коробки 1h (як і Пружина): для кожної закритої
+    свічки `ltf` коробка = 24 закриті 1h-свічки, що закінчились до її
+    відкриття. ТАЙМІНГ — закриття `ltf`: пробій = закриття свічки за межею,
+    `need` закритих свічок утримали → 'confirmed', назад у коробці → 'false'."""
+    h = _clean_bars(closed_1h)
+    lt = _clean_bars(closed_ltf)
+    if len(h) < box or not lt:
+        return {'state': 'none', 'edge': None, 'box_hi': None, 'box_lo': None, 't': None,
+                'held': 0, 'need': int(need), 'tf': ltf, 'note': 'замало закритих свічок'}
+    ends = [_bar_sec(b) + 3600 for b in h]
+    seq = []
+    for b in lt[-look:]:
+        t = _bar_sec(b)
+        j = 0
+        while j < len(h) and ends[j] <= t:
+            j += 1
+        if j < box:
             continue
-        if sg * (c - cur['edge']) <= 0:
-            cur['state'] = 'false'
-            cur['false_t'] = _bar_sec(bars[k])
-        else:
-            cur['held'] += 1
-    try:
-        lp = float(live_price) if live_price is not None else None
-    except (TypeError, ValueError):
-        lp = None
-    if cur is None:
-        hi, lo = _box(n)
-        edge = hi if sd == 'LONG' else lo
-        if lp and sg * (lp - edge) > 0:
-            out.update(state='live', edge=edge, box_hi=hi, box_lo=lo,
-                       note='пробій коробки лише на живій (незакритій) свічці')
-        else:
-            out['note'] = 'закритого пробою коробки немає'
-        return out
-    out.update({k: cur.get(k) for k in ('state', 'edge', 'box_hi', 'box_lo', 't', 'held')})
-    if cur['state'] == 'false':
-        out['note'] = 'свічка закрилась назад у коробці — хибний старт'
-        out['false_t'] = cur.get('false_t')
-    elif cur['held'] >= need:
-        if lp is not None and sg * (lp - cur['edge']) <= 0:
-            out['state'], out['note'] = 'pending', 'ціна зараз повернулась у коробку'
-        else:
-            out['state'], out['note'] = 'confirmed', f"пробій утримано {cur['held']} св."
-    else:
-        out['note'] = f"пробій закрито, утримано {cur['held']}/{need} св."
+        hi, lo = _hl_box(h[j - box:j])
+        seq.append((t, _bar_close(b), hi, lo))
+    return _discharge_walk(seq, side, live_price, need, _hl_box(h[-box:]), ltf)
+
+
+def dis_shadow_stats(recs: List[Dict]) -> Dict:
+    """📊 Тіньове порівняння підтвердження розряду 1H проти 15m (23.11). ЧИСТА.
+    Кожен запис — точка, де розряд став «підтвердженим» на своєму TF, і що ціна
+    робила далі (у % у бік входу). → {tf: {n, done, win_pct, avg_last, avg_mfe,
+    avg_mae, false_pct, avg_lead_min}}."""
+    out = {}
+    for tf in DISCHARGE_TFS:
+        rs = [r for r in recs or [] if r.get('tf') == tf]
+        n = len(rs)
+        if not n:
+            out[tf] = {'n': 0}
+            continue
+        def _avg(k):
+            v = [float(r[k]) for r in rs if r.get(k) is not None]
+            return round(sum(v) / len(v), 3) if v else None
+        lead = [float(r['lead_min']) for r in rs if r.get('lead_min') is not None]
+        out[tf] = {'n': n, 'done': sum(1 for r in rs if r.get('done')),
+                   'win_pct': round(100.0 * sum(1 for r in rs if (r.get('last') or 0) > 0) / n, 1),
+                   'avg_last': _avg('last'), 'avg_mfe': _avg('mfe'), 'avg_mae': _avg('mae'),
+                   'false_pct': round(100.0 * sum(1 for r in rs if r.get('false_t')) / n, 1),
+                   'avg_lead_min': round(sum(lead) / len(lead), 1) if lead else None}
     return out
+
+
+def dis_shadow_update(rec: Dict, price, closed_1h, now: float,
+                      horizon: float = None) -> Dict:
+    """Оновити тіньовий запис ціною і закритими 1h-свічками. ЧИСТА (мутує rec).
+    Рух — % від ціни підтвердження в бік входу; хибний старт — закрита після
+    підтвердження 1h-свічка назад за межею пробою (те саме правило, що вихід)."""
+    horizon = DIS_SHADOW_HOURS * 3600 if horizon is None else horizon
+    if rec.get('done'):
+        return rec
+    sg = 1.0 if rec.get('side') == 'LONG' else -1.0
+    try:
+        px0, px = float(rec['px']), float(price)
+        if px0 > 0 and px > 0:
+            mv = sg * (px / px0 - 1) * 100.0
+            rec['last'] = round(mv, 3)
+            rec['mfe'] = round(max(float(rec.get('mfe') or 0.0), mv), 3)
+            rec['mae'] = round(min(float(rec.get('mae') or 0.0), mv), 3)
+    except (TypeError, ValueError, KeyError):
+        pass
+    if not rec.get('false_t'):
+        fs = false_start_hit(rec.get('side'), rec.get('edge'), closed_1h or [], rec.get('t'))
+        if fs:
+            rec['false_t'] = fs['t']
+            rec['false_last'] = rec.get('last')
+    if now - float(rec.get('t') or now) >= horizon:
+        rec['done'] = True
+    return rec
 
 
 def false_start_hit(side: str, edge, closed: List[Dict], opened_at) -> Optional[Dict]:
@@ -1926,6 +2026,7 @@ class AiEngine:
         self._lock = threading.Lock()
         self._eps: Dict[str, Dict] = {}
         self._live: Dict[str, tuple] = {}     # S → (ts, rec, vw)
+        self._dis_shadow: List[Dict] = []     # 📊 тіньове порівняння розряду 1H / 15m
         self._view: Dict[str, Dict] = {}      # S → останні бали (для UI)
         self._pro = None                       # ProfessionalBrain, лінивий import
         self._learner = None                   # champion/challenger на архівах
@@ -2083,22 +2184,89 @@ class AiEngine:
     def _pro_market(self, symbol: str, now: float, fetch: bool = True) -> Dict:
         return {tf: self._pro_fetch_bars(symbol, tf, now, fetch) for tf in PRO_TFS}
 
-    def closed_1h(self, symbol: str, now: Optional[float] = None) -> List[Dict]:
-        """ЗАКРИТІ 1h-свічки монети з кешу рушія (жива відкинута). Без мережі."""
+    def closed_bars(self, symbol: str, tf: str = '1h', now: Optional[float] = None) -> List[Dict]:
+        """ЗАКРИТІ свічки `tf` монети з кешу рушія (жива відкинута). Без мережі."""
         now = self._clock() if now is None else now
+        sec = {'15m': 900, '1h': 3600, '4h': 14400}.get(tf, 3600)
         with self._pro_lock:
-            hit = (self._pro_bars.get(str(symbol or '').upper()) or {}).get('1h')
+            hit = (self._pro_bars.get(str(symbol or '').upper()) or {}).get(tf)
         rows = list(hit[1]) if hit else []
-        while rows and (_bar_sec(rows[-1]) or 0) + 3600 > now:
+        while rows and (_bar_sec(rows[-1]) or 0) + sec > now:
             rows.pop()
         return rows
 
+    def closed_1h(self, symbol: str, now: Optional[float] = None) -> List[Dict]:
+        return self.closed_bars(symbol, '1h', now)
+
+    def discharge_both(self, symbol: str, side: str, now: Optional[float] = None,
+                       live_price=None) -> Dict:
+        """💥 Стан розряду в бік `side` на ОБОХ TF підтвердження {'1h', '15m'}
+        (рівень — коробка 1h). Лише кеш рушія, без мережі."""
+        s = self.ai_settings()
+        h = self.closed_bars(symbol, '1h', now)
+        return {'1h': discharge_state(h, side, live_price, need=int(s.get('discharge_bars') or 1)),
+                '15m': discharge_state_ltf(h, self.closed_bars(symbol, '15m', now), side, live_price,
+                                           need=int(s.get('discharge_bars_15m') or 2))}
+
     def discharge_for(self, symbol: str, side: str, now: Optional[float] = None,
                       live_price=None) -> Dict:
-        """💥 Стан розряду монети в бік `side` (закриті 1h-свічки з кешу)."""
-        s = self.ai_settings()
-        return discharge_state(self.closed_1h(symbol, now), side, live_price,
-                               need=int(s.get('discharge_bars') or 1))
+        """💥 Стан розряду на ОБРАНОМУ TF (`discharge_tf`); поруч — `alt`
+        (інший TF, для показу й тіньового порівняння)."""
+        tf = self.ai_settings().get('discharge_tf') or '1h'
+        both = self.discharge_both(symbol, side, now, live_price)
+        out = dict(both.get(tf) or both['1h'])
+        alt = '15m' if tf == '1h' else '1h'
+        out['alt'] = {k: (both.get(alt) or {}).get(k) for k in ('state', 'tf', 'held', 'need', 't', 'note')}
+        return out
+
+    def _dis_shadow_tick(self, S: str, side: str, both: Dict, price, now: float) -> None:
+        """📊 Тіньовий журнал (23.11): точка, де розряд став «підтвердженим» на
+        КОЖНОМУ TF, і що ціна робила далі. Угод не відкриває. Для 1h рахуємо, на
+        скільки хвилин раніше той самий пробій підтвердив 15m (`lead_min`)."""
+        try:
+            px = float(price)
+        except (TypeError, ValueError):
+            return
+        if px <= 0:
+            return
+        for tf in DISCHARGE_TFS:
+            d = both.get(tf) or {}
+            if d.get('state') != 'confirmed' or not d.get('t'):
+                continue
+            key = f"{S}|{side}|{tf}|{int(d['t'])}"
+            if any(r.get('key') == key for r in self._dis_shadow):
+                continue
+            rec = {'key': key, 'S': S, 'side': side, 'tf': tf, 't': int(now), 'brk_t': int(d['t']),
+                   'px': px, 'edge': d.get('edge'), 'last': 0.0, 'mfe': 0.0, 'mae': 0.0}
+            if tf == '1h':
+                early = [r for r in self._dis_shadow if r.get('S') == S and r.get('side') == side
+                         and r.get('tf') == '15m' and 0 <= now - float(r.get('t') or 0) <= 4 * 3600]
+                if early:
+                    rec['lead_min'] = round((now - float(early[-1]['t'])) / 60.0, 1)
+            self._dis_shadow.append(rec)
+            self._dirty = True
+        if len(self._dis_shadow) > DIS_SHADOW_MAX:
+            self._dis_shadow = self._dis_shadow[-DIS_SHADOW_MAX:]
+
+    def _dis_shadow_follow(self, prices: Dict, now: float) -> None:
+        """Ведемо відкриті тіньові записи ціною монети (з такту) і 1h-свічками."""
+        for r in self._dis_shadow:
+            if r.get('done'):
+                continue
+            S = r.get('S')
+            px = prices.get(S)
+            if px is None:
+                if now - float(r.get('t') or now) >= DIS_SHADOW_HOURS * 3600:
+                    r['done'] = True
+                continue
+            dis_shadow_update(r, px, self.closed_1h(S, now), now)
+            self._dirty = True
+
+    def dis_shadow_state(self) -> Dict:
+        recs = list(self._dis_shadow)
+        return {'stats': dis_shadow_stats(recs), 'n': len(recs),
+                'last': [{k: r.get(k) for k in ('S', 'side', 'tf', 't', 'px', 'last', 'mfe', 'mae',
+                                                 'false_t', 'lead_min', 'done')} for r in recs[-12:]]}
 
     def false_start_check(self, symbol: str, side: str, edge, opened_at) -> Optional[Dict]:
         """🪤 Для виходу з угоди ШІ (TM): закрита після входу свічка повернулась
@@ -2434,8 +2602,15 @@ class AiEngine:
                 if view[S]['etalon'].get('mature') and view[S]['etalon'].get('verdict') != 'take':
                     view[S]['ready'] = False          # 🏆🧠 головний мозок сказав «ні»
                 _skey = (best.get('scenario') or {}).get('key') or ''
-                ds = (self.discharge_for(S, best['side'], now, _px(vw, rec))
-                      if _skey == 'E2' else None)
+                ds = None
+                if _skey == 'E2':
+                    _both = self.discharge_both(S, best['side'], now, _px(vw, rec))
+                    _tf = s.get('discharge_tf') or '1h'
+                    ds = dict(_both.get(_tf) or _both['1h'])
+                    _alt = '15m' if _tf == '1h' else '1h'
+                    ds['alt'] = {k: (_both.get(_alt) or {}).get(k)
+                                 for k in ('state', 'tf', 'held', 'need', 't', 'note')}
+                    self._dis_shadow_tick(S, best['side'], _both, _px(vw, rec), now)
                 rv = self.rdy_view(S) if (s.get('rdy_filter') or 'off') != 'off' else None
                 view[S]['discharge'] = ds
                 if ready and bc.get('ok'):
@@ -2470,6 +2645,11 @@ class AiEngine:
                 self._stat['last_err'] = f'{S}: {type(e).__name__}: {e}'[:200]
                 print(f'[AI] {S}: {e}')
 
+        try:
+            self._dis_shadow_follow({S: _px(lv[1], lv[0]) for S, lv in lives.items()
+                                     if lv and (lv[0] or lv[1])}, now)
+        except Exception as e:
+            self._stat['last_err'] = f'тінь розряду: {e}'[:200]
         try:
             self._anom_personal(subs, scored, lives, anoms, now)
         except Exception as e:
@@ -2967,7 +3147,8 @@ class AiEngine:
                                            'anom_last': self._anom_last,
                                            'ai_opens': self._ai_opens[-50:],
                                            'ai_last': self._ai_last,
-                                           'cleanup_at': self._cleanup_at})
+                                           'cleanup_at': self._cleanup_at,
+                                           'dis_shadow': self._dis_shadow[-DIS_SHADOW_MAX:]})
         except Exception:
             pass
 
@@ -2988,6 +3169,9 @@ class AiEngine:
             if isinstance(al, dict):
                 self._ai_last = {str(k).upper(): list(v) for k, v in al.items()
                                  if isinstance(v, (list, tuple)) and len(v) == 2}
+            dsh = st.get('dis_shadow')
+            if isinstance(dsh, list):
+                self._dis_shadow = [r for r in dsh if isinstance(r, dict) and r.get('key')][-DIS_SHADOW_MAX:]
             try:
                 self._cleanup_at = float(st.get('cleanup_at') or 0)
             except (TypeError, ValueError):
@@ -3078,7 +3262,7 @@ class AiEngine:
         except Exception:
             rdy_stats = None
         return {'ok': True, 'settings': self.settings(), 'ai': self.ai_settings(),
-                'rdy_stats': rdy_stats,
+                'rdy_stats': rdy_stats, 'dis_shadow': self.dis_shadow_state(),
                 'ai_defaults': AI_DEFAULTS, 'scenario_keys': list(AI_SCENARIOS),
                 'etalon': self.etalon_state(), 'cleanup': dict(self._cleanup_stat),
                 'cleanup_rules': CLEANUP_RULES, 'cleanup_rules_ua': CLEANUP_RULES_UA,
