@@ -33,6 +33,7 @@ SIGNAL_BADGES = {
     'liq_vob':    '💧 VOB + Сканер ліквідності',
     'ob_alert':   '🆕 Новий OB',          # 🆕 Новий 1H-OB (за збігом TF)
     'ai':         '🤖 Сигнал ШІ',         # 🤖 розряд зарядженої Пружини (17.11)
+    'anom':       '⚠ Аномалії обсягу',    # ⚠ сценарій входу → торгівля з кабінету (24.11)
     'vob':        '💰 Volumized OB',      # funding-VOB (kind='vob')
     'poc':        '🎯 POC-сетап',         # POC-сетап → черга FF (kind='poc')
     'opp':        '🔄 Реверс',
@@ -77,6 +78,7 @@ SIGNAL_ICONS = {
     'vob': '💰',
     'ob_alert': '🆕',
     'ai': '🤖',
+    'anom': '⚠',
     'poc': '🎯',
     'opp': '🔄',
     'external': '🔌',

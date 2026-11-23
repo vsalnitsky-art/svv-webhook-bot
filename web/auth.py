@@ -486,6 +486,31 @@ def info_anom_subscribers():
         s.close()
 
 
+def info_trade_subscribers():
+    """🤖 Торгівля з кабінету (вимога 24.11): [(uid, email, trade)] — ЛИШЕ
+    АКТИВНІ АДМІНІСТРАТОРИ з увімкненою торгівлею. На цьому етапі можливість
+    є тільки в адміністратора, тож prefs звичайного користувача (навіть
+    підроблені через /api/me/prefs) сюди не потрапляють."""
+    s = get_session()
+    try:
+        out = []
+        for u in s.query(User).filter(User.is_admin == True).all():  # noqa: E712
+            if not _is_active(u):
+                continue
+            try:
+                prefs = json.loads(u.prefs or '{}')
+            except Exception:
+                prefs = {}
+            t = prefs.get('trade')
+            if isinstance(t, dict) and t.get('enabled') and t.get('coins'):
+                out.append((u.id, u.email, t))
+        return out
+    except Exception:
+        return []
+    finally:
+        s.close()
+
+
 def is_blocked(u):
     """ЧИСТА від I/O: акаунт ЗАБЛОКОВАНО (не плутати з «очікує схвалення»):
     вимкнено адміністратором · строк доступу минув · схвалення знято після

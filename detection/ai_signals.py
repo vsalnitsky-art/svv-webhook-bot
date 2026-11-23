@@ -2339,6 +2339,15 @@ def anom_watch_symbols() -> List[str]:
         a = None
     if a and a not in out:
         out.append(a)
+    # 🤖 монети торгівлі з кабінету (24.11) — сигнал рахується й без ⚠ підписки
+    ut = sys.modules.get('web.user_trading')
+    try:
+        for S in (ut.trade_symbols() or []) if ut is not None else []:
+            S = str(S).upper()
+            if S not in out:
+                out.append(S)
+    except Exception:
+        pass
     return out
 
 
@@ -2352,6 +2361,15 @@ def _anom_alarm_default(symbol, side, scenario, price, now):
     return bool(eng.alarm_from_anom(symbol, side, scenario, price, now))
 
 
+def _anom_trade_default(symbol, side, scenario, price, now):
+    """🤖 Торгівля з кабінету (24.11): ⚠ сигнал → `web.user_trading.trade_execute`."""
+    import sys
+    ut = sys.modules.get('web.user_trading')
+    if ut is None:
+        return []
+    return ut.trade_execute(symbol, side, note=f'⚠ {scenario}' if scenario else '⚠ Аномалії обсягу')
+
+
 def _anom_send_default(symbol, text):
     import sys
     ip = sys.modules.get('web.info_portal')
@@ -2362,8 +2380,9 @@ def _anom_send_default(symbol, text):
 
 class AiEngine:
     def __init__(self, db=None, md=None, scanner=None, tm=None, clock=time.time,
-                 anom_subs=None, anom_send=None, anom_alarm=None):
+                 anom_subs=None, anom_send=None, anom_alarm=None, anom_trade=None):
         self._anom_subs = anom_subs or _anom_sub_default
+        self._anom_trade = anom_trade or _anom_trade_default
         self._anom_send = anom_send or _anom_send_default
         self._anom_alarm = anom_alarm or _anom_alarm_default
         self._anom_sent: Dict[str, float] = {}   # 'S|side|key|last_t' → коли надіслано
@@ -3514,6 +3533,13 @@ class AiEngine:
                 self._anom_alarm(S, side, sc.get('name') or '', px, now)
             except Exception as e:
                 self._stat['last_err'] = f'⚠ будильник {S}: {e}'[:200]
+            # 🤖 торгівля з кабінету (24.11): той самий НОВИЙ сценарій → одна дія
+            # (немає угоди — відкрити · той самий бік — тримати · протилежний —
+            # закрити й відкрити). Кулдаун Telegram на торгівлю не діє.
+            try:
+                self._anom_trade(S, side, sc.get('name') or '', px, now)
+            except Exception as e:
+                self._stat['last_err'] = f'🤖 торгівля {S}: {e}'[:200]
             if now - self._anom_last.get(f'{S}|{side}', 0) < ANOM_SUB_COOLDOWN:
                 continue
             text = anom_tg_text(S, side, r, px, adir)

@@ -10374,6 +10374,90 @@ class TradeManager:
         t0 = self._last_close_at.get((symbol or '').upper())
         return bool(t0 and (time.time() - t0) < cd * 60.0)
 
+    @staticmethod
+    def cab_trade_action(cur_side: Optional[str], side: str) -> str:
+        """ЧИСТА (вимога 24.11): що робити з сигналом при наявній угоді В ТІЙ
+        САМІЙ книзі. Угоди немає → 'open'; той самий бік → 'hold' (нічого не
+        робимо); протилежний → 'reverse' (закрити поточну, відкрити нову)."""
+        c = str(cur_side or '').upper()
+        if c not in ('LONG', 'SHORT'):
+            return 'open'
+        return 'hold' if c == str(side or '').upper() else 'reverse'
+
+    def cab_signal_trade(self, symbol: str, side: str, book: str,
+                         opened_by: str = 'anom', note: str = '') -> Dict:
+        """🤖 Торгівля з особистого кабінету за сигналом (вимога 24.11).
+
+        Книгу обрала людина в кабінеті (`real` / `paper`) — правило TRD тут не
+        діє (як у кожного ✋ явного вибору книги), ворота бота теж (це рішення
+        власника кабінету). Правило користувача:
+          • угоди в цій книзі немає → відкриваємо;
+          • угода в той самий бік → НІЧОГО не робимо;
+          • угода в протилежний бік → закриваємо поточну і відкриваємо нову.
+        Реальна книга: стару спершу закриваємо НА БІРЖІ й чекаємо підтвердження
+        (`_flatten_on_exchange`) — без нього нову не відкриваємо (one-way режим
+        Bybit інакше лише зменшив би стару). Далі угоду ведуть звичайні правила
+        Trade Manager (авто-SL, виходи, автопілот).
+        → {ok, status: opened|reversed|hold|rejected, reason, mode}."""
+        from detection.activity_log import log_activity
+        S = (symbol or '').upper().strip()
+        sd = (side or '').upper().strip()
+        bk = forced_book(book)
+        if not S or sd not in ('LONG', 'SHORT') or not bk:
+            return {'ok': False, 'status': 'rejected', 'reason': 'невірні параметри'}
+        is_shadow = bk == 'paper'
+        tag = '🧪 paper' if is_shadow else '🏦 реальна'
+        with self._lock:
+            cur = (self._shadow_positions if is_shadow else self._positions).get(S)
+            cur_side = (cur or {}).get('side')
+        act = self.cab_trade_action(cur_side, sd)
+        sfx = f' · {note}' if note else ''
+        if act == 'hold':
+            log_activity(S, 'skipped', f'🤖 Кабінет: сигнал {sd} — угода {sd} ({tag}) вже '
+                         f'відкрита, нічого не робимо{sfx}', side=sd, source='CAB')
+            return {'ok': True, 'status': 'hold', 'mode': bk,
+                    'reason': f'{S}: угода {sd} уже відкрита'}
+        if act == 'reverse':
+            log_activity(S, 'signal', f'🤖 Кабінет: протилежний сигнал {sd} — закриваю '
+                         f'{cur_side} ({tag}) і відкриваю {sd}{sfx}', side=sd, source='CAB')
+            if is_shadow:
+                try:
+                    px = self._get_current_price(S) or cur.get('entry_price')
+                    self._close_shadow(S, px, reason='reverse_signal')
+                except Exception as e:
+                    return {'ok': False, 'status': 'rejected', 'mode': bk,
+                            'reason': f'{S}: paper {cur_side} не закрилась — {e}'}
+            else:
+                ok, why = self._flatten_on_exchange(S)
+                if not ok:
+                    log_activity(S, 'rejected', f'🤖 Кабінет: реверс зупинено — {cur_side} на '
+                                 f'біржі НЕ закрилась ({why}), {sd} НЕ відкриваємо',
+                                 side=sd, source='CAB')
+                    self._notify(f"⚠️ 🤖 Реверс з кабінету <b>#{S}</b> зупинено: {cur_side} на "
+                                 f"біржі не закрилась ({why}). {sd} не відкрито.",
+                                 category='trades')
+                    return {'ok': False, 'status': 'rejected', 'mode': bk,
+                            'reason': f'{S}: {cur_side} на біржі не закрилась — {why}'}
+                try:
+                    px = self._get_current_price(S) or cur.get('entry_price')
+                    self._close_position(S, px, reason='reverse_signal', exchange_done=True)
+                except Exception as e:
+                    return {'ok': False, 'status': 'rejected', 'mode': bk,
+                            'reason': f'{S}: облік закриття {cur_side} не вдався — {e}'}
+        res = self.manual_open(S, sd, bypass_gates=True, opened_by=opened_by,
+                               by_hand=True, book=bk) or {}
+        if not res.get('ok') or res.get('queued'):
+            why = res.get('reason') or 'невідома відмова'
+            log_activity(S, 'rejected', f'🤖 Кабінет: {sd} ({tag}) не відкрито — {why}{sfx}',
+                         side=sd, source='CAB')
+            return {'ok': False, 'status': 'rejected', 'mode': bk, 'reason': why}
+        st = 'reversed' if act == 'reverse' else 'opened'
+        log_activity(S, 'opened', f'🤖 Кабінет: відкрито {sd} ({tag})'
+                     + (f' після закриття {cur_side}' if st == 'reversed' else '') + sfx,
+                     side=sd, source='CAB')
+        return {'ok': True, 'status': st, 'mode': bk,
+                'reason': f'{S}: {sd} відкрито ({tag})'}
+
     def manual_open(self, symbol: str, side: str, bypass_gates: bool = False,
                     opened_by: Optional[str] = None,
                     manual_sl=None, manual_tp=None, by_hand: bool = False,

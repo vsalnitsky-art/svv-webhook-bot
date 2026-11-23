@@ -92,10 +92,8 @@
             <div class="settings-section">
                 <h2>🔐 Bybit API Credentials</h2>
                 <p class="section-desc">
-                    Manage your Bybit API keys. Keys can be entered in plain form
-                    (the bot encrypts them with Fernet and stores in DB) or pasted
-                    already-encrypted. The DB-stored keys override ENV vars, so UI
-                    changes always take effect immediately.
+                    Стан ключів Bybit, якими торгує бот, і перевірка на біржі. Внесення
+                    й видалення ключів — в особистому кабінеті адміністратора.
                 </p>
 
                 <!-- Current status block — populated by JS from /api/credentials/status -->
@@ -148,82 +146,21 @@
                     </div>
                 </div>
 
-                <!-- Tab strip for entry mode -->
-                <div style="border-bottom: 1px solid #444; margin-bottom: 16px;">
-                    <button type="button" class="creds-subtab active" data-subtab="plain"
-                            onclick="switchCredsSubtab('plain')"
-                            style="background: none; border: none; color: #fff; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid #4a9eff;">
-                        Enter plain keys (bot encrypts)
-                    </button>
-                    <button type="button" class="creds-subtab" data-subtab="encrypted"
-                            onclick="switchCredsSubtab('encrypted')"
-                            style="background: none; border: none; color: #888; padding: 10px 16px; cursor: pointer; border-bottom: 2px solid transparent;">
-                        Import pre-encrypted
-                    </button>
-                </div>
-
-                <!-- Plain entry subtab — bot encrypts before storing -->
-                <div id="creds-subtab-plain" class="creds-subtab-content">
-                    <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 14px;">
-                        Paste the API Key and Secret from your Bybit account.
-                        The bot encrypts them server-side with Fernet (using
-                        the <code>ENCRYPTION_KEY</code> env var) before storing
-                        in the database. Plaintext is never logged or echoed back.
+                <!-- 🔐 Введення ключів Bybit ПЕРЕНЕСЕНО в особистий кабінет
+                     адміністратора (вимога 24.11). Тут лишились стан і перевірка;
+                     збереження/видалення — картка «🤖 Торгівля з кабінету». Сховище
+                     те саме (Fernet → БД), реалізація одна: web/exchange_keys.py. -->
+                <div id="creds-moved" style="background: rgba(74,158,255,0.08); border: 1px solid rgba(74,158,255,0.4); border-radius: 6px; padding: 14px;">
+                    <div style="font-weight: 600; margin-bottom: 6px; color: #93c5fd;">
+                        🔐 Ключі Bybit тепер у вашому особистому кабінеті
+                    </div>
+                    <p style="margin: 0 0 10px 0; font-size: 0.9rem;">
+                        Внесення, заміна й видалення ключів — у кабінеті, картка
+                        <b>«🤖 Торгівля з кабінету» → «🔐 API-ключі біржі»</b> (лише адміністратор).
+                        Ключі шифруються так само (Fernet, <code>ENCRYPTION_KEY</code>) і зберігаються
+                        в тій самій базі — бот одразу торгує з ними.
                     </p>
-                    <div class="form-group">
-                        <label for="creds-plain-key">API Key</label>
-                        <input type="password" id="creds-plain-key" class="form-control"
-                               placeholder="e.g. xJ8aBcDeFgHiJkLmNo" autocomplete="off">
-                        <small>Click the eye icon in your browser's password field to peek.</small>
-                    </div>
-                    <div class="form-group">
-                        <label for="creds-plain-secret">API Secret</label>
-                        <input type="password" id="creds-plain-secret" class="form-control"
-                               placeholder="36-character secret" autocomplete="off">
-                    </div>
-                    <button type="button" class="btn btn-primary" onclick="saveCredentialsPlain()"
-                            id="creds-save-plain-btn">
-                        💾 Encrypt & Save to DB
-                    </button>
-                </div>
-
-                <!-- Pre-encrypted entry subtab — paste Fernet blobs directly -->
-                <div id="creds-subtab-encrypted" class="creds-subtab-content" style="display: none;">
-                    <p style="font-size: 0.9rem; color: #aaa; margin-bottom: 14px;">
-                        Paste already-encrypted blobs (Fernet tokens starting with
-                        <code>gAAAA...</code>). The bot verifies they decrypt with
-                        the current <code>ENCRYPTION_KEY</code> before storing —
-                        you'll get an error if they were encrypted with a different key.
-                    </p>
-                    <div class="form-group">
-                        <label for="creds-enc-key">Encrypted API Key</label>
-                        <input type="text" id="creds-enc-key" class="form-control"
-                               placeholder="gAAAAA..." autocomplete="off"
-                               style="font-family: monospace; font-size: 0.85rem;">
-                    </div>
-                    <div class="form-group">
-                        <label for="creds-enc-secret">Encrypted API Secret</label>
-                        <input type="text" id="creds-enc-secret" class="form-control"
-                               placeholder="gAAAAA..." autocomplete="off"
-                               style="font-family: monospace; font-size: 0.85rem;">
-                    </div>
-                    <button type="button" class="btn btn-primary" onclick="saveCredentialsEncrypted()"
-                            id="creds-save-enc-btn">
-                        💾 Save Encrypted Blobs to DB
-                    </button>
-                </div>
-
-                <!-- Danger zone — clear DB-stored keys to fall back to ENV -->
-                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #333;">
-                    <h3 style="font-size: 1rem; color: #ff6b6b;">Danger zone</h3>
-                    <p style="font-size: 0.85rem; color: #888; margin-bottom: 10px;">
-                        Clear DB-stored keys to fall back to ENV vars
-                        (<code>BYBIT_API_KEY</code> or <code>BYBIT_API_KEY_ENCRYPTED</code>).
-                        Useful when reverting to env-based config.
-                    </p>
-                    <button type="button" class="btn btn-secondary" onclick="clearCredentials()">
-                        🗑️ Clear DB keys (fall back to ENV)
-                    </button>
+                    <a class="btn btn-primary" href="/info/#trade-card">👤 Відкрити кабінет</a>
                 </div>
             </div>
 
@@ -1998,9 +1935,6 @@ document.addEventListener('DOMContentLoaded', function() {
 // Five operations, all gated on the credentials tab being present so
 // this code is harmless to load on pages that don't expose it:
 //   loadCredentialsStatus()    — populate the status block
-//   saveCredentialsPlain()     — encrypt + save plain key/secret
-//   saveCredentialsEncrypted() — save pre-encrypted blobs (no re-encryption)
-//   clearCredentials()         — drop DB keys → fall back to ENV
 //   testCredentials()          — call Bybit auth API to verify keys work
 //   generateMasterKey()        — generate new ENCRYPTION_KEY for ENV
 //
@@ -2032,120 +1966,13 @@ async function loadCredentialsStatus() {
         masterEl.style.color = d.encryption_key_set ? '#4caf50' : '#f44336';
         document.getElementById('creds-no-master').style.display =
             d.encryption_key_set ? 'none' : 'block';
-        
-        // Disable the encrypted-save button if master key missing
-        const savePlainBtn = document.getElementById('creds-save-plain-btn');
-        const saveEncBtn = document.getElementById('creds-save-enc-btn');
-        if (savePlainBtn) savePlainBtn.disabled = !d.encryption_key_set;
-        if (saveEncBtn) saveEncBtn.disabled = !d.encryption_key_set;
+
     } catch (e) {
         console.error('Failed to load credentials status:', e);
     }
 }
 
-function switchCredsSubtab(name) {
-    document.querySelectorAll('.creds-subtab').forEach(btn => {
-        const active = btn.dataset.subtab === name;
-        btn.style.color = active ? '#fff' : '#888';
-        btn.style.borderBottomColor = active ? '#4a9eff' : 'transparent';
-    });
-    document.querySelectorAll('.creds-subtab-content').forEach(el => {
-        el.style.display = el.id === `creds-subtab-${name}` ? 'block' : 'none';
-    });
-}
-
-async function saveCredentialsPlain() {
-    const keyEl = document.getElementById('creds-plain-key');
-    const secretEl = document.getElementById('creds-plain-secret');
-    const apiKey = keyEl.value.trim();
-    const apiSecret = secretEl.value.trim();
-    if (!apiKey || !apiSecret) {
-        alert('Both API Key and Secret are required');
-        return;
-    }
-    const btn = document.getElementById('creds-save-plain-btn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Encrypting & saving…';
-    try {
-        const r = await fetch('/api/credentials/save', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({api_key: apiKey, api_secret: apiSecret}),
-        });
-        const d = await r.json();
-        if (d.ok) {
-            // Clear inputs so the secret doesn't sit in the DOM
-            keyEl.value = '';
-            secretEl.value = '';
-            showToast('✅ Keys encrypted and saved. Active immediately.');
-            await loadCredentialsStatus();
-        } else {
-            alert('Save failed: ' + (d.error || 'unknown error'));
-        }
-    } catch (e) {
-        alert('Network error: ' + e);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '💾 Encrypt & Save to DB';
-    }
-}
-
-async function saveCredentialsEncrypted() {
-    const keyEl = document.getElementById('creds-enc-key');
-    const secretEl = document.getElementById('creds-enc-secret');
-    const apiKeyEnc = keyEl.value.trim();
-    const apiSecretEnc = secretEl.value.trim();
-    if (!apiKeyEnc || !apiSecretEnc) {
-        alert('Both encrypted blobs are required');
-        return;
-    }
-    const btn = document.getElementById('creds-save-enc-btn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Verifying & saving…';
-    try {
-        const r = await fetch('/api/credentials/save-encrypted', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({
-                api_key_encrypted: apiKeyEnc,
-                api_secret_encrypted: apiSecretEnc,
-            }),
-        });
-        const d = await r.json();
-        if (d.ok) {
-            keyEl.value = '';
-            secretEl.value = '';
-            showToast('✅ Encrypted blobs verified and saved.');
-            await loadCredentialsStatus();
-        } else {
-            alert('Save failed: ' + (d.error || 'unknown error'));
-        }
-    } catch (e) {
-        alert('Network error: ' + e);
-    } finally {
-        btn.disabled = false;
-        btn.textContent = '💾 Save Encrypted Blobs to DB';
-    }
-}
-
-async function clearCredentials() {
-    if (!confirm('Clear DB-stored Bybit keys?\n\nNew keys will be loaded '
-                 + 'from ENV vars (BYBIT_API_KEY or BYBIT_API_KEY_ENCRYPTED). '
-                 + 'If ENV is not set, the bot will run in public-API mode '
-                 + '(no trading).')) return;
-    try {
-        const r = await fetch('/api/credentials/clear', {method: 'POST'});
-        const d = await r.json();
-        if (d.ok) {
-            showToast('✅ ' + d.message);
-            await loadCredentialsStatus();
-        } else {
-            alert('Clear failed: ' + (d.error || 'unknown'));
-        }
-    } catch (e) {
-        alert('Network error: ' + e);
-    }
-}
+// 🔐 Збереження / видалення ключів Bybit — в особистому кабінеті (24.11).
 
 // ====================================================================
 // 🦎 CoinGecko credentials

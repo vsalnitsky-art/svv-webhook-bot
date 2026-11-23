@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=228">
+  <link rel="stylesheet" href="css/style.css?v=229">
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true">
@@ -62,6 +62,7 @@
       <a href="#iw-layout" class="active">Термінал</a>
       <a href="#rec-card">Сигнали</a>
       <a href="#pp-card">P&amp;L</a>
+      <a href="#trade-card">Торгівля</a>
     </nav>
     <div class="top-actions">
       <button id="site-search" class="top-icon" type="button" title="Знайти монету" aria-label="Знайти монету"><svg><use href="#i-search"/></svg></button>
@@ -223,6 +224,11 @@
       <div class="pp-wrap" id="pp-closed-body" style="display:none"><table class="pp-tbl" id="pp-closed"><thead><tr><th>Закрито</th><th>Монета</th><th>Бік</th><th class="r">Вхід</th><th class="r">Вихід</th><th class="r">PnL</th><th class="r" title="Пік — найкращий рух ціни від входу">Пік</th><th>Причина</th></tr></thead><tbody></tbody></table></div>
     </section>
 
+    <section class="card" id="trade-card" style="display:none">
+      <h2 class="acc-h" id="trade-head" role="button" tabindex="0" aria-expanded="false"><svg class="h-ic"><use href="#i-sliders"/></svg>🤖 Торгівля з кабінету<span class="tr-state" id="trade-state"></span><span class="acc-caret">▸</span></h2>
+      <div id="trade-body" style="display:none"><div class="muted">Завантаження…</div></div>
+    </section>
+
     <section class="card" id="notify-card" style="display:none">
       <h2 class="acc-h" id="notify-head" role="button" tabindex="0" aria-expanded="false"><svg class="h-ic h-ic-ring"><use href="#i-bell"/></svg>Сповіщення в Telegram<span class="acc-caret" id="notify-caret">▸</span></h2>
       <div id="notify-body" style="display:none"><div class="muted">Завантаження…</div></div>
@@ -237,7 +243,7 @@
   <script src="js/vendor/lightweight-charts.js"></script>
   <script src="js/config.js?v=76"></script>
   <script src="js/demo.js?v=4"></script>
-  <script src="js/app.js?v=239"></script>
+  <script src="js/app.js?v=240"></script>
   <script src="js/chart-pro.js?v=213"></script>
   <script src="js/chart-tools.js?v=212"></script>
   <script src="js/ui.js?v=201"></script>

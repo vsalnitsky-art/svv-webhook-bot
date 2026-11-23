@@ -498,3 +498,16 @@ body{font-size:15px}
 #rec-tbl .rec-path{display:flex;align-items:center;gap:5px;min-width:0}
 #rec-tbl .rec-path .bar{flex:1 1 auto;width:auto;min-width:24px;max-width:110px}
 #rec-tbl .rec-prob{width:clamp(20px,3.5vw,50px)}
+/* 🤖 Торгівля з кабінету (24.11) */
+#trade-card{padding:0 16px}#trade-card h2{min-height:48px;margin:0;cursor:pointer;display:flex;align-items:center;gap:7px}#trade-card h2 svg{width:16px;height:16px}#trade-body{padding:4px 0 14px;font-size:12px;color:var(--txt-dim)}
+.tr-state{font:600 10px var(--mono);color:var(--muted);margin-left:8px}.tr-state.on{color:var(--long)}
+.tr-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:6px 0 10px}.tr-master{display:inline-flex;align-items:center;gap:7px;color:var(--txt);font-size:13px}
+.tr-rules{display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 10px;font-size:11px}.tr-rules span{background:var(--elev);border:1px solid var(--line);border-radius:5px;padding:5px 9px}
+.tr-status{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:11px;margin:0 0 10px}
+.tr-wrap{margin:0 0 12px}.tr-chk{display:inline-flex;align-items:center;gap:6px;font-family:var(--font)}
+.tr-book{background:var(--elev);border:1px solid var(--line);color:var(--txt);border-radius:4px;padding:2px 6px;font:600 11px var(--font)}.tr-book-real{border-color:var(--warn);color:var(--warn)}.tr-book-paper{border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
+.tr-keys{border:1px solid var(--line);border-radius:6px;padding:12px;background:var(--bg2)}.tr-kv{display:flex;gap:10px;align-items:baseline;margin:3px 0;font-size:11px}.tr-kv span{min-width:130px;color:var(--muted)}.tr-kv code{font-family:var(--mono);color:var(--txt)}
+.tr-kform{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:10px}.tr-kform label{display:flex;flex-direction:column;gap:4px;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.tr-kform input{background:var(--elev);border:1px solid var(--line);color:var(--txt);border-radius:4px;padding:7px 9px;font:12px var(--mono)}
+.tr-kbtns{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}.tr-del{color:var(--short)!important}.tr-note{font-size:10.5px;line-height:1.5;margin:10px 0 0}
+.tr-msg{margin:8px 0;padding:7px 10px;border-radius:5px;font-size:11px;border:1px solid color-mix(in srgb,var(--long) 35%,transparent);color:var(--long)}.tr-msg.bad{border-color:color-mix(in srgb,var(--short) 40%,transparent);color:var(--short)}
+.tr-log td{font-size:10px}.iw-bell-trade{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.iw-bell-trade label{font:500 12px var(--font)!important}

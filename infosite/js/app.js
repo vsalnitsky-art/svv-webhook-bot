@@ -105,9 +105,9 @@
       inner + "</a>";
   }
 
-  var SIGNAL_BADGES_JS = { "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS", "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB", "mm_vob": "🧮 VOB з МММ-монітора", "liq_vob": "💧 VOB + Сканер ліквідності", "ob_alert": "🆕 Новий OB", "ai": "🤖 Сигнал ШІ", "poc": "🎯 POC-сетап", "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний", "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний" };
+  var SIGNAL_BADGES_JS = { "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS", "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB", "mm_vob": "🧮 VOB з МММ-монітора", "liq_vob": "💧 VOB + Сканер ліквідності", "ob_alert": "🆕 Новий OB", "ai": "🤖 Сигнал ШІ", "anom": "⚠ Аномалії обсягу", "poc": "🎯 POC-сетап", "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний", "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний" };
   var ENGINE_BADGES_JS = { "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4", "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап", "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-Trend", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision", "MMR": "🧩 МММ-Готовність", "MMS": "🔔 МММ-SBR", "XSPR": "🔭 Пружина-скан", "SPR": "🌀 Пружина", "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий" };
-  var SIGNAL_ICON_JS = { "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰", "mm_vob": "🧮", "liq_vob": "💧", "ob_alert": "🆕", "ai": "🤖", "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋", "manual_ui": "✋", "manual_ui_overflow": "✋", "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥", "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
+  var SIGNAL_ICON_JS = { "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰", "mm_vob": "🧮", "liq_vob": "💧", "ob_alert": "🆕", "ai": "🤖", "anom": "⚠", "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋", "manual_ui": "✋", "manual_ui_overflow": "✋", "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥", "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
   var ENGINE_ICON_OVERRIDE_JS = { "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
   
   function signalCodeOf(raw) { return raw ? String(raw).split(" · ")[0].split(" → ")[0].trim() : ""; }
@@ -216,6 +216,197 @@
   function refreshNotify() {
     api("/api/me/notify").then(renderNotify).catch(function () { renderNotify({ ok: false }); });
   }
+
+  /* 🤖 ТОРГІВЛЯ З КАБІНЕТУ (вимога 24.11): угоди за сигналом ⚠ «сценарій входу»,
+     книга real / paper на монету, ключі Bybit із шифруванням. Поки що — лише
+     адміністратору (сервер вирішує: allowed). Правило: немає угоди → відкрити ·
+     той самий бік → нічого · протилежний → закрити поточну і відкрити нову. */
+  var TR = { allowed: null, enabled: false, coins: {}, tm: {}, log: [], keys: null, reason: "" };
+  var TR_KEY = "vsv_trade_open";
+  var TR_BOOK = { paper: "🧪 paper", real: "🏦 реальна" };
+  function trOpen() { try { return localStorage.getItem(TR_KEY) === "1"; } catch (e) { return false; } }
+  function trApplyAcc() {
+    var on = trOpen(), b = $("#trade-body"), h = $("#trade-head");
+    if (b) b.style.display = on ? "" : "none";
+    if (h) h.setAttribute("aria-expanded", on ? "true" : "false");
+  }
+  document.addEventListener("click", function (e) {
+    if (!e.target.closest || !e.target.closest("#trade-head")) return;
+    try { localStorage.setItem(TR_KEY, trOpen() ? "0" : "1"); } catch (x) {}
+    trApplyAcc();
+  });
+  // POST, що повертає JSON навіть на 4xx — причину відмови показуємо людині.
+  function apiPostJ(path, body) {
+    return fetch(BASE + path, {
+      method: "POST", credentials: CREDS,
+      headers: _headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify(body || {})
+    }).then(function (r) { return r.json().catch(function () { return { ok: false, error: "HTTP " + r.status }; }); });
+  }
+  function trApply(d) {
+    if (!d) return;
+    TR.allowed = !!d.allowed; TR.reason = d.reason || "";
+    if (d.allowed) {
+      TR.enabled = !!d.enabled; TR.coins = d.coins || {}; TR.tm = d.tm || {}; TR.log = d.log || [];
+    }
+  }
+  function trCoinOn(sym) { return !!(TR.allowed && TR.coins[sym]); }
+  function trBookSel(sym, attr) {
+    var b = TR.coins[sym] || "paper";
+    return '<select ' + attr + '="' + esc(sym) + '" class="tr-book tr-book-' + b + '">' +
+      ["paper", "real"].map(function (k) { return '<option value="' + k + '"' + (k === b ? " selected" : "") + ">" + TR_BOOK[k] + "</option>"; }).join("") + "</select>";
+  }
+  // ✋ підтвердження для реальних грошей — і при виборі книги, і при вмиканні
+  function trConfirmReal(sym) {
+    return window.confirm("🏦 РЕАЛЬНА угода по " + sym + " за сигналом ⚠ «сценарій входу»?\n\n" +
+      "Бот відкриватиме реальні угоди на Bybit (ключі бота): протилежний сигнал закриє поточну угоду і відкриє нову.");
+  }
+  function trSave(body) {
+    return apiPostJ("/api/me/trading", body).then(function (d) {
+      if (d && d.ok) trApply(d);
+      else trMsg("⚠️ " + ((d && (d.reason || d.error)) || "не вдалося зберегти"), true);
+      renderTrade(); renderList();
+      return d;
+    }, function () { trMsg("⚠️ Немає звʼязку з ботом", true); });
+  }
+  function trSetCoin(sym, on, book) {
+    if (on && book === "real" && !trConfirmReal(sym)) { renderTrade(); renderList(); return; }
+    return trSave({ coin: { symbol: sym, on: on, book: book } });
+  }
+  function trMsg(t, bad) {
+    var m = $("#tr-msg"); if (!m) return;
+    m.style.display = t ? "" : "none"; m.className = "tr-msg" + (bad ? " bad" : ""); m.textContent = t || "";
+  }
+  function trKeysHTML(k) {
+    if (!k) return '<div class="muted">Завантаження стану ключів…</div>';
+    var SRC = { db_encrypted: "🟢 збережено в боті (зашифровано)", env_plain: "🟡 змінна середовища (без шифрування)",
+                env_encrypted: "🟢 змінна середовища (зашифровано)", none: "🔴 не задано" };
+    var noMaster = !k.encryption_key_set;
+    return '<div class="tr-keys">' +
+      '<div class="tr-kv"><span>Біржа</span><b>Bybit (USDT-перпетуали)</b></div>' +
+      '<div class="tr-kv"><span>Джерело ключів</span><b>' + esc(SRC[k.source] || k.source || "—") + "</b></div>" +
+      '<div class="tr-kv"><span>API Key</span><code>' + esc(k.key_preview || "none") + "</code></div>" +
+      (noMaster ? '<p class="ntf-warn">⚠️ На сервері не задано <code>ENCRYPTION_KEY</code> — зашифрувати й зберегти ключі неможливо. Додайте змінну середовища й перезапустіть бота.</p>' : "") +
+      '<form class="tr-kform" id="tr-kform" autocomplete="off">' +
+        '<label>API Key<input type="password" id="tr-k" autocomplete="off" spellcheck="false" placeholder="ключ з Bybit"></label>' +
+        '<label>API Secret<input type="password" id="tr-s" autocomplete="off" spellcheck="false" placeholder="секрет з Bybit"></label>' +
+        '<div class="tr-kbtns"><button type="submit" class="tglink-btn"' + (noMaster ? " disabled" : "") + '>🔐 Зашифрувати і зберегти</button>' +
+        '<button type="button" class="tglink-btn" data-trk="test">🧪 Перевірити</button>' +
+        (k.db_has_stored ? '<button type="button" class="tglink-btn tr-del" data-trk="clear">🗑 Видалити з бота</button>' : "") + "</div>" +
+      "</form>" +
+      '<p class="muted tr-note">Ключі шифруються на сервері (Fernet) і зберігаються в базі бота — відкритий текст не повертається і не пишеться в лог. Це ті самі ключі, якими торгує бот. Потрібні дозволи <b>Read + Trade</b> (Unified Trading), без виводу коштів; бажано обмежити IP сервера.</p>' +
+      '<div id="tr-kmsg" class="tr-msg" style="display:none"></div></div>';
+  }
+  function trLogHTML() {
+    if (!TR.log.length) return '<div class="muted">Дій ще не було — угода зʼявиться на першому новому сигналі.</div>';
+    var ST = { opened: "✅ відкрито", reversed: "🔄 реверс", hold: "⏸ уже в угоді", rejected: "⛔ не відкрито" };
+    return '<table class="pp-tbl tr-log"><thead><tr><th>Час</th><th>Монета</th><th>Сигнал</th><th>Книга</th><th>Дія</th><th>Деталі</th></tr></thead><tbody>' +
+      TR.log.map(function (r) {
+        return "<tr><td>" + esc(new Date((r.ts || 0) * 1000).toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" })) +
+          '</td><td class="sym">' + esc(String(r.symbol || "").replace(/USDT$/, "")) +
+          '</td><td class="' + (r.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(r.side || "") +
+          "</td><td>" + esc(TR_BOOK[r.book] || r.book || "") + "</td><td>" + esc(ST[r.status] || r.status || "") +
+          '</td><td class="muted">' + esc(r.reason || "") + "</td></tr>";
+      }).join("") + "</tbody></table>";
+  }
+  function renderTrade() {
+    var card = $("#trade-card"), body = $("#trade-body");
+    if (!card || !body || TR.allowed === null) return;
+    card.style.display = ""; trApplyAcc();
+    var st = $("#trade-state");
+    if (!TR.allowed) {
+      if (st) st.textContent = "🔒";
+      body.innerHTML = '<div class="ntf-info"><p>🔒 ' + esc(TR.reason || "Торгівля з кабінету тимчасово доступна лише адміністратору") +
+        ". Сигнали ⚠ «Аномалії обсягу» у Telegram працюють як і раніше.</p></div>";
+      return;
+    }
+    var n = Object.keys(TR.coins).length, nReal = Object.keys(TR.coins).filter(function (s) { return TR.coins[s] === "real"; }).length;
+    if (st) st.textContent = TR.enabled ? (n ? "● " + n : "● 0") : "○ вимк.";
+    if (st) st.className = "tr-state" + (TR.enabled ? " on" : "");
+    var tm = TR.tm || {};
+    var warn = [];
+    if (TR.enabled && nReal && !tm.enabled) warn.push("Trade Manager вимкнено — 🏦 реальні угоди не відкриються");
+    if (TR.enabled && nReal && !tm.has_key) warn.push("ключі Bybit не задано — 🏦 реальні угоди не відкриються");
+    if (TR.enabled && n - nReal && !tm.test_mode) warn.push("Test Mode вимкнено — 🧪 paper-угоди не відкриються");
+    var rows = (IW.wl || []).map(function (sym) {
+      var on = !!TR.coins[sym];
+      return "<tr><td class=\"sym\">" + esc(sym.replace(/USDT$/, "")) + '</td><td><label class="tr-chk"><input type="checkbox" data-trcoin="' + esc(sym) + '"' + (on ? " checked" : "") + "> торгувати</label></td><td>" +
+        (on ? trBookSel(sym, "data-trbook") : '<span class="muted">—</span>') + "</td></tr>";
+    }).join("");
+    body.innerHTML =
+      '<div class="tr-top"><label class="tr-master"><input type="checkbox" id="tr-master"' + (TR.enabled ? " checked" : "") +
+        '> <b>Торгівля за сигналами</b></label><span class="muted">сигнал — ⚠ Аномалії обсягу · сценарій входу (LONG / SHORT)</span></div>' +
+      '<div class="tr-rules"><span>🟢 немає угоди → <b>відкрити</b></span><span>⏸ угода в той самий бік → <b>нічого не робимо</b></span><span>🔄 протилежний сигнал → <b>закрити поточну і відкрити нову</b></span></div>' +
+      '<div class="tr-status"><span>Trade Manager: <b class="' + (tm.enabled ? "pp-long" : "pp-short") + '">' + (tm.enabled ? "увімкнено" : "вимкнено") + "</b></span>" +
+        '<span>Test Mode: <b class="' + (tm.test_mode ? "pp-long" : "pp-short") + '">' + (tm.test_mode ? "увімкнено" : "вимкнено") + "</b></span>" +
+        '<span>Ключі Bybit: <b class="' + (tm.has_key ? "pp-long" : "pp-short") + '">' + (tm.has_key ? "є" : "немає") + "</b></span></div>" +
+      (warn.length ? '<p class="ntf-warn">⚠️ ' + esc(warn.join(" · ")) + "</p>" : "") +
+      '<div id="tr-msg" class="tr-msg" style="display:none"></div>' +
+      '<h3 class="pp-h">Монети WATCHLIST · куди йдуть сигнали</h3>' +
+      '<div class="pp-wrap tr-wrap"><table class="pp-tbl"><thead><tr><th>Монета</th><th>Торгівля</th><th>Книга</th></tr></thead><tbody>' +
+        (rows || '<tr><td colspan="3" class="muted">Додайте монети у WATCHLIST</td></tr>') + "</tbody></table></div>" +
+      '<h3 class="pp-h">🔐 API-ключі біржі</h3><div id="tr-keys-host">' + trKeysHTML(TR.keys) + "</div>" +
+      '<h3 class="pp-h">Останні дії</h3><div class="pp-wrap tr-wrap">' + trLogHTML() + "</div>";
+  }
+  function refreshTrade() {
+    api("/api/me/trading").then(function (d) {
+      trApply(d); renderTrade(); renderList();
+      if (TR.allowed && !TR.keys) refreshKeys();
+    }).catch(function () {});
+  }
+  function refreshKeys() {
+    api("/api/me/keys").then(function (k) {
+      TR.keys = k; var h = $("#tr-keys-host"); if (h) h.innerHTML = trKeysHTML(k);
+    }).catch(function () {});
+  }
+  function trKMsg(t, bad) {
+    var m = $("#tr-kmsg"); if (!m) return;
+    m.style.display = t ? "" : "none"; m.className = "tr-msg" + (bad ? " bad" : ""); m.textContent = t || "";
+  }
+  document.addEventListener("submit", function (e) {
+    if (!e.target || e.target.id !== "tr-kform") return;
+    e.preventDefault();
+    var k = $("#tr-k"), s = $("#tr-s");
+    apiPostJ("/api/me/keys", { api_key: (k.value || "").trim(), api_secret: (s.value || "").trim() }).then(function (d) {
+      if (d && d.ok) { k.value = ""; s.value = ""; TR.keys = null; refreshKeys(); refreshTrade(); setTimeout(function () { trKMsg("✅ " + (d.message || "Збережено")); }, 400); }
+      else trKMsg("⚠️ " + ((d && d.error) || "не вдалося зберегти"), true);
+    }, function () { trKMsg("⚠️ Немає звʼязку з ботом", true); });
+  });
+  document.addEventListener("click", function (e) {
+    var b = e.target.closest ? e.target.closest("[data-trk]") : null;
+    if (!b) return;
+    var a = b.getAttribute("data-trk");
+    if (a === "clear" && !window.confirm("Видалити ключі Bybit з бота?\n\nБот візьме ключі зі змінних середовища (якщо задані), інакше реальна торгівля зупиниться.")) return;
+    b.disabled = true;
+    apiPostJ(a === "test" ? "/api/me/keys/test" : "/api/me/keys/clear", {}).then(function (d) {
+      b.disabled = false;
+      if (a === "test") trKMsg(d && d.ok ? "✅ " + (d.message || "Ключі робочі") : "⚠️ " + ((d && (d.friendly || d.error || d.ret_msg)) || "перевірка не вдалась"), !(d && d.ok));
+      else { TR.keys = null; refreshKeys(); refreshTrade(); setTimeout(function () { trKMsg(d && d.ok ? "✅ " + (d.message || "Видалено") : "⚠️ " + ((d && d.error) || "не вдалося"), !(d && d.ok)); }, 400); }
+    }, function () { b.disabled = false; trKMsg("⚠️ Немає звʼязку з ботом", true); });
+  });
+  document.addEventListener("change", function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    if (t.id === "tr-master") {
+      var nReal = Object.keys(TR.coins).filter(function (s) { return TR.coins[s] === "real"; });
+      if (t.checked && nReal.length && !window.confirm("Увімкнути торгівлю за сигналами?\n\n🏦 Реальні угоди: " + nReal.join(", ").replace(/USDT/g, ""))) { t.checked = false; return; }
+      trSave({ enabled: t.checked }); return;
+    }
+    var c = t.closest("[data-trcoin]");
+    if (c) { trSetCoin(c.getAttribute("data-trcoin"), !!c.checked, TR.coins[c.getAttribute("data-trcoin")] || "paper"); return; }
+    var bk = t.closest("[data-trbook]") || t.closest("[data-belltradebook]");
+    if (bk) {
+      var sym = bk.getAttribute("data-trbook") || bk.getAttribute("data-belltradebook");
+      if (bk.hasAttribute("data-belltradebook")) IW.bellOpen = sym;
+      trSetCoin(sym, true, bk.value); return;
+    }
+    var bt = t.closest("[data-belltrade]");
+    if (bt) {
+      var s2 = bt.closest("[data-bellmenu]").getAttribute("data-bellmenu");
+      IW.bellOpen = s2;
+      trSetCoin(s2, !!bt.checked, TR.coins[s2] || "paper");
+    }
+  });
 
   function renderAuth(me) {
     var el = $("#auth-links");
@@ -462,8 +653,10 @@
   function bellHTML(sym) {
     var tfs = IW.sbr[sym] || [];
     var an = (IW.anom || []).indexOf(sym) >= 0;
-    var on = tfs.length > 0 || an;
-    var lbl = tfs.map(function (t) { return String(t).toUpperCase(); }).join("+") + (an ? (tfs.length ? "+" : "") + "⚠" : "");
+    var trd = trCoinOn(sym), trBook = TR.coins[sym] || "paper";
+    var on = tfs.length > 0 || an || trd;
+    var lbl = tfs.map(function (t) { return String(t).toUpperCase(); }).join("+") + (an ? (tfs.length ? "+" : "") + "⚠" : "") +
+      (trd ? (tfs.length || an ? "+" : "") + (trBook === "real" ? "🏦" : "🧪") : "");
     var tip = on ? "У Telegram по " + sym + ": " + (tfs.length ? "SBR " + tfs.map(function (t) { return String(t).toUpperCase(); }).join("+") : "") +
       (an ? (tfs.length ? " · " : "") + "⚠ Аномалії обсягу" : "") : "Отримувати сигнали по " + sym + " у Telegram";
     var menu = IW.bellOpen === sym
@@ -474,6 +667,12 @@
           }).join("") + "</div>" +
           '<div class="t t2">⚠ Аномалії обсягу</div>' +
           '<label class="iw-bell-anom" title="Сигнал, найближчий до моменту входу: по монеті склався сценарій входу ШІ (комплекс реакцій обсягу — виснаження/поглинання/продовження — підтверджено, точка свіжа ≤ 2 свічки, а напрямок аномалій за 6 год не проти)."><input type="checkbox" data-bellanom="1"' + (an ? " checked" : "") + "> сценарій входу (LONG / SHORT)</label>" +
+          '<div class="t t2">🤖 Торгівля за сигналом ⚠</div>' +
+          (TR.allowed
+            ? '<div class="iw-bell-trade"><label title="Новий сценарій входу ⚠ → угода: немає угоди — відкрити · той самий бік — нічого · протилежний — закрити поточну і відкрити нову"><input type="checkbox" data-belltrade="1"' + (trd ? " checked" : "") + "> торгувати</label>" +
+                (trd ? trBookSel(sym, "data-belltradebook") : "") + "</div>" +
+                (trd && !TR.enabled ? '<div class="w">⏸ Торгівлю вимкнено головним тумблером у картці «🤖 Торгівля з кабінету».</div>' : "")
+            : '<div class="n">🔒 Тимчасово доступно лише адміністратору.</div>') +
           (IW.tg_linked ? "" : '<div class="w">⚠️ Telegram не прив’язано — сигнали не дійдуть. <button class="tglink-btn" data-tglink="1">🔗 Привʼязати</button></div>') +
           '<div class="n">Сигнали приходять у ваш особистий чат із ботом: SBR — після закриття бару, ⚠ — щойно склався сценарій входу.</div></div>'
       : "";
@@ -2608,7 +2807,7 @@
         document.addEventListener("visibilitychange", function () { if (!document.hidden) loadPaper(); });
         setInterval(function () { if (!document.hidden) loadRows(); }, ROWS_MS);
         setInterval(function () { if (!document.hidden) loadCoin(false); }, COIN_MS);
-        setInterval(function () { if (!document.hidden) { refreshAuth(); refreshNotify(); } }, 60000);
+        setInterval(function () { if (!document.hidden) { refreshAuth(); refreshNotify(); refreshTrade(); } }, 60000);
       }
       var lu = $("#last-update"); if (lu) lu.textContent = "оновлено: " + new Date().toLocaleTimeString("uk-UA");
     }).catch(function (e) {
@@ -2619,7 +2818,7 @@
         setConn(deny ? "err" : "wait", deny ? "доступ закрито" : "потрібен вхід");
       } else { showData(true); setConn("err", "бот недоступний"); setTimeout(boot, 10000); }
     });
-    refreshAuth(); refreshNotify();
+    refreshAuth(); refreshNotify(); refreshTrade();
   }
 
   (function fixChrome() {
