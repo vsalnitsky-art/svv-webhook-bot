@@ -5015,6 +5015,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <label id="aip-dis-bars-l" title="Скільки закритих 1h-свічок після пробою мусять утримати ціну за межею коробки">утримати ≥ <input type="number" id="aip-dis-bars" min="1" max="4" step="1" style="width:42px" onchange="aipSave()"> св. 1H</label>
             <label id="aip-dis-bars15-l" title="Скільки закритих 15m-свічок після пробою мусять утримати ціну за межею коробки 1h">утримати ≥ <input type="number" id="aip-dis-bars15" min="1" max="8" step="1" style="width:42px" onchange="aipSave()"> св. 15m</label>
             <label class="sm-checkbox" title="🪤 Угода ШІ, відкрита на «Старті розряду»: якщо закрита після входу 1h-свічка повернулась у коробку за межу пробою — розряду не було, вихід одразу (захисний, діє в обох режимах і попри заряд)."><input type="checkbox" id="aip-fs-exit" onchange="aipSave()"> 🪤 вихід на хибному старті</label>
+            <label class="sm-checkbox" title="🎯 Вихід на кульмінації (Виснаження) для угод ШІ: «Виснаження» угоди ≥ порогу або сплеск у бік угоди, поки угода в плюсі → бот веде стоп від вершини на N·ATR(1h) і закриває на відкаті. Той самий алгоритм і пороги, що «🎯 Вихід на кульмінації» в Exit Rules Trade Manager (поріг Виснаження, ×ATR, мін. прибуток), але вмикається тут — незалежно від тумблера в Exit Rules."><input type="checkbox" id="aip-exh-exit" onchange="aipSave()"> 🎯 вихід на кульмінації</label>
             <label title="🧩 Відкривати угоду ШІ лише в бік блоку «МММ-Готовність»: за банером (підтверджений напрямок банера), за вкладкою монети в таблиці блоку, або обидва. Блок вимкнено / банер ⚖ / монети немає в таблиці → вхід не беремо.">🧩 МММ-Готовність <select id="aip-rdy" onchange="aipSave()"><option value="off">не враховувати</option><option value="banner">за банером</option><option value="coin">за вкладкою монети</option><option value="both">банер + вкладка</option></select></label>
         </div>
         <div id="aip-rdy-stats" style="margin-top:8px;font-size:11px;color:#8b93a7"></div>
@@ -7108,7 +7109,7 @@ function aipApply(d) {
         vl('aip-min-charge', a.min_charge); vl('aip-book', a.book); vl('aip-max-open', a.max_open);
         vl('aip-max-30', a.max_per_30m); vl('aip-flip', a.flip_cooldown_min); vl('aip-slfb', a.sl_fallback_pct);
         vl('aip-exit-mode', a.exit_mode); vl('aip-hold', a.hold_pot); vl('aip-et-r', a.etalon_min_r);
-        ck('aip-sl-on', a.sl_enabled); ck('aip-dis-on', a.discharge_confirm !== false); ck('aip-fs-exit', a.false_start_exit !== false);
+        ck('aip-sl-on', a.sl_enabled); ck('aip-dis-on', a.discharge_confirm !== false); ck('aip-fs-exit', a.false_start_exit !== false); ck('aip-exh-exit', a.exh_exit !== false);
         vl('aip-dis-bars', a.discharge_bars); vl('aip-dis-bars15', a.discharge_bars_15m);
         vl('aip-dis-tf', a.discharge_tf || '1h'); vl('aip-rdy', a.rdy_filter || 'off');
         vl('aip-sl-src', a.sl_source); vl('aip-sl-min', a.sl_min_pct); vl('aip-sl-max', a.sl_max_pct); vl('aip-min-conf', a.min_conf);
@@ -7227,6 +7228,7 @@ async function aipSave() {
         sl_fallback_pct: n('aip-slfb', 2), sl_source: (g('aip-sl-src') || {}).value || 'ob',
         sl_enabled: !!(g('aip-sl-on') || {}).checked, discharge_confirm: !!(g('aip-dis-on') || {}).checked,
         discharge_bars: n('aip-dis-bars', 1), false_start_exit: !!(g('aip-fs-exit') || {}).checked,
+        exh_exit: !!(g('aip-exh-exit') || {}).checked,
         discharge_tf: (g('aip-dis-tf') || {}).value || '1h', discharge_bars_15m: n('aip-dis-bars15', 2),
         rdy_filter: (g('aip-rdy') || {}).value || 'off',
         sl_min_pct: n('aip-sl-min', 0.8), sl_max_pct: n('aip-sl-max', 4), min_conf: n('aip-min-conf', 40), learning_enabled: !!(g('aip-learn') || {}).checked,

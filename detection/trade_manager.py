@@ -2155,7 +2155,10 @@ class TradeManager:
         _lo, _hi = self._px_range(symbol, False, current_price)
         if not _manual and not _ai and self._sbr_trail_tick(symbol, pos, current_price, False, _lo, _hi):
             return
-        if not _manual and not _ai and self._exh_exit_tick(symbol, pos, current_price, False, _lo, _hi):
+        # 🎯 Вихід на кульмінації: звичайні угоди — за `use_exh_exit`, угоди ШІ —
+        # за налаштуванням ШІ `exh_exit` (24.11).
+        if (not _manual and (self._ai_exh_on() if _ai else True)
+                and self._exh_exit_tick(symbol, pos, current_price, False, _lo, _hi, force=_ai)):
             return
         self._check_manual_tp1(symbol, pos, current_price, False, _lo, _hi)
         manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
@@ -2846,7 +2849,8 @@ class TradeManager:
         _lo, _hi = self._px_range(symbol, True, current_price)
         if not _manual and not _ai and self._sbr_trail_tick(symbol, pos, current_price, True, _lo, _hi):
             return
-        if not _manual and not _ai and self._exh_exit_tick(symbol, pos, current_price, True, _lo, _hi):
+        if (not _manual and (self._ai_exh_on() if _ai else True)
+                and self._exh_exit_tick(symbol, pos, current_price, True, _lo, _hi, force=_ai)):
             return
         self._check_manual_tp1(symbol, pos, current_price, True, _lo, _hi)
         manual_reason = self._check_manual_sl_tp(pos, current_price, _lo, _hi)
@@ -4554,14 +4558,27 @@ class TradeManager:
             out['hit_px'] = px
         return out, why
 
+    @staticmethod
+    def _ai_exh_on() -> bool:
+        """🎯 Чи веде угоди ШІ «Вихід на кульмінації» (налаштування ШІ
+        `exh_exit`, деф. УВІМК). Немає рушія ШІ → дефолт."""
+        try:
+            from detection import ai_signals
+            return bool(ai_signals.ai_settings_now().get('exh_exit', True))
+        except Exception:
+            return True
+
     def _exh_exit_tick(self, symbol: str, pos: Dict, current_price: float,
-                       is_shadow: bool, lo=None, hi=None) -> bool:
+                       is_shadow: bool, lo=None, hi=None, force: bool = False) -> bool:
         """🎯 Кожен тік монітора: озброєння на кульмінації + трейл від вершини.
         Живий 1h-бар — з кешу `_spring_fire_view` (його вже тягне монітор).
+        `force` — угода ШІ (24.11): правило вмикає налаштування ШІ, а не
+        глобальний `use_exh_exit`; пороги ті самі (`exh_exit_*`).
         True → позицію ЗАКРИТО."""
         s = self._settings
-        if not s.get('use_exh_exit'):
+        if not force and not s.get('use_exh_exit'):
             return False
+        _who = '🤖 ШІ · ' if force else ''
         side = str(pos.get('side') or '').upper()
         st = pos.get('exh_trail')
         kw = dict(min_pct=s.get('exh_exit_min', 75), atr_k=s.get('exh_exit_atr', 0.5),
@@ -4576,7 +4593,7 @@ class TradeManager:
                 return False
             pos['exh_trail'] = new
             self._persist_book(is_shadow)
-            msg = (f"🎯 Досягнення вершини руху: «Виснаження» угоди {new['pct']:g}%"
+            msg = (f"{_who}🎯 Досягнення вершини руху: «Виснаження» угоди {new['pct']:g}%"
                    f"{' · сплеск у бік угоди' if vw.get('climax') == side else ''}, "
                    f"ціна {float(current_price):g} — ведемо стоп від вершини "
                    f"{float(new['best_px']):g} на {float(kw['atr_k'] or 0):g}·ATR "
@@ -4600,7 +4617,7 @@ class TradeManager:
             return False
         txt = ('відкат від вершини після кульмінації' if why == 'trail'
                else 'ціна повернулась до входу після кульмінації')
-        msg = (f"🎯 Виснаження: {txt} (вершина {float(st['best_px']):g}, "
+        msg = (f"{_who}🎯 Виснаження: {txt} (вершина {float(st['best_px']):g}, "
                f"стоп {float(st['stop_px']):g}, зараз {float(current_price):g})")
         return self._signal_exit_close(symbol, pos, current_price, is_shadow,
                                        ('exh_exit', msg))

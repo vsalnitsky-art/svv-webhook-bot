@@ -74,6 +74,10 @@ AI_DEFAULTS = {
     'discharge_tf': '1h',       # TF підтвердження розряду: '1h' | '15m' (рівень — коробка 1h)
     'discharge_bars_15m': 2,    # для 15m: закритих 15m-свічок утримали ціну за межею
     'false_start_exit': True,   # угода ШІ з E2: ціна повернулась у коробку → вихід
+    # 🎯 Вихід на кульмінації (Виснаження) для угод ШІ (24.11): той самий
+    # алгоритм і пороги, що в Exit Rules TM (`exh_exit_*`), незалежно від
+    # глобального тумблера `use_exh_exit`.
+    'exh_exit': True,
     'learning_enabled': True,  # 🎓 champion/challenger на архівах
     'etalon_enabled': True,    # 🏆 база еталонів відмінних угод (самопоповнення)
     'etalon_min_r': 1.5,       # «відмінна» = результат ≥ N R від стопа плану
@@ -143,7 +147,7 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
     r = raw if isinstance(raw, dict) else {}
     for k in ('enabled', 'exit_enabled', 'allow_long', 'allow_short', 'learning_enabled',
               'etalon_enabled', 'cleanup_enabled', 'sl_enabled', 'discharge_confirm',
-              'false_start_exit'):
+              'false_start_exit', 'exh_exit'):
         if k in r:
             s[k] = bool(r[k])
     if r.get('exit_mode') in ('confirmed', 'all'):
