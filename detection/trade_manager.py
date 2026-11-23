@@ -1050,7 +1050,9 @@ def ai_tg_line(pos) -> str:
     try:
         if TradeManager._ai_owned(pos or {}):
             sc = (pos or {}).get('ai_scenario_name') or (pos or {}).get('ai_scenario') or ''
-            return AI_TG_MARK + (f' · {sc}' if sc else '') + '\n'
+            cf = (pos or {}).get('ai_conf')
+            return (AI_TG_MARK + (f' · {sc}' if sc else '')
+                    + (f' · 🎯 впевненість {cf}%' if cf is not None else '') + '\n')
     except Exception:
         pass
     return ''
@@ -5599,7 +5601,8 @@ class TradeManager:
         except (TypeError, ValueError):
             st = None
         if st and ((sd == 'LONG' and st < px) or (sd == 'SHORT' and st > px)):
-            return st, 'ШІ · стоп плану'
+            lbl = str((plan or {}).get('stop_label') or '').strip()
+            return st, 'ШІ · ' + (lbl or 'стоп плану')
         f = max(0.2, float(fallback_pct or 2.0)) / 100.0
         return (px * (1 - f) if sd == 'LONG' else px * (1 + f)), f'ШІ · {fallback_pct}% від входу'
 
@@ -5640,6 +5643,10 @@ class TradeManager:
                     pos['professional_entry'] = context
                 if entry:
                     pos['ai_entry'] = entry      # 📸 момент входу → у базу еталонів
+                    try:
+                        pos['ai_conf'] = int((entry.get('brain') or {}).get('confidence'))
+                    except (TypeError, ValueError):
+                        pass
                 if pos.get('manual_sl'):
                     pos['manual_sl_src'] = self.SRC_AUTO
                     pos['manual_sl_by'] = slbl

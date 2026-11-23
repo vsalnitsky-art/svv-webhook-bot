@@ -52,7 +52,13 @@ AI_DEFAULTS = {
     'max_per_30m': 3,          # нових угод ШІ за 30 хв (кластер = одна подія ринку)
     'flip_cooldown_min': 180,  # протилежний бік по тій самій монеті — не раніше
     'hold_pot': 40,            # 🌀 заряд у бік угоди ≥ → вихід «ще зарано» (0 = вимк)
-    'sl_fallback_pct': 2.0,    # стоп, коли плану немає (% від входу)
+    'sl_fallback_pct': 2.0,    # стоп, коли плану немає / джерело «%» (% від входу)
+    # 🛑 «SL з» ШІ (22.11): plan — структура / ATR 15m мозку графіка · ob — OB
+    # 1H → 15m → 5m (той самий ланцюг, що глобальне «🛑 SL з» бота) · pct — % від входу.
+    'sl_source': 'ob',
+    'sl_min_pct': 0.8,         # стоп не ближче N % від входу (шум 15m не вибиває)
+    'sl_max_pct': 4.0,         # стоп не далі N % (0 = без стелі)
+    'min_conf': 40,            # 🎯 впевненість мозку ≥ N, інакше вхід не беремо (0 = вимк)
     'learning_enabled': True,  # 🎓 champion/challenger на архівах
     'etalon_enabled': True,    # 🏆 база еталонів відмінних угод (самопоповнення)
     'etalon_min_r': 1.5,       # «відмінна» = результат ≥ N R від стопа плану
@@ -60,6 +66,8 @@ AI_DEFAULTS = {
     'etalon_min_p': 0.6,       # мозок еталонів: частка «відмінних» серед схожих входів ≥
     'cleanup_enabled': True,   # 🧹 автоочистка таблиць навчання
 }
+AI_SL_SOURCES = ('plan', 'ob', 'pct')
+AI_SL_SOURCE_UA = {'plan': 'структура / ATR 15m', 'ob': 'OB 1H → 15m → 5m', 'pct': '% від входу'}
 ETALON_DB = 'ai_etalon_v1'
 ETALON_MAX = 300
 ETALON_MIN_N = 10              # поки еталонів менше — схожість лише довідка
@@ -106,6 +114,8 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
         s['exit_mode'] = r['exit_mode']
     if r.get('book') in AI_BOOKS:
         s['book'] = r['book']
+    if r.get('sl_source') in AI_SL_SOURCES:
+        s['sl_source'] = r['sl_source']
     sc = r.get('scenarios')
     if isinstance(sc, (list, tuple)):
         got = [x for x in AI_SCENARIOS if x in {str(v).upper() for v in sc}]
@@ -114,12 +124,15 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
                             ('max_per_30m', 1, 50, int), ('flip_cooldown_min', 0, 1440, int),
                             ('hold_pot', 0, 100, float), ('sl_fallback_pct', 0.2, 20.0, float),
                             ('etalon_min_r', 0.5, 10.0, float), ('etalon_min_sim', 0.0, 1.0, float),
-                            ('etalon_min_p', 0.3, 0.95, float)):
+                            ('etalon_min_p', 0.3, 0.95, float), ('sl_min_pct', 0.0, 10.0, float),
+                            ('sl_max_pct', 0.0, 20.0, float), ('min_conf', 0, 100, int)):
         if k in r:
             try:
                 s[k] = cast(max(lo, min(hi, float(r[k]))))
             except (TypeError, ValueError):
                 pass
+    if s['sl_max_pct'] and s['sl_max_pct'] < s['sl_min_pct']:
+        s['sl_max_pct'] = s['sl_min_pct']
     return s
 
 
@@ -136,6 +149,96 @@ def ai_settings_migrate(scanner_s: Optional[Dict], tm_s: Optional[Dict]) -> Dict
     if 'ai_exit_mode' in t:
         raw['exit_mode'] = t.get('ai_exit_mode')
     return ai_settings_norm(raw)
+
+
+def ai_entry_block(ep: Optional[Dict], side: str, s: Dict, brain: Optional[Dict],
+                   eb: Optional[Dict], open_n: int, opens: List[float],
+                   last: Optional[tuple], now: float) -> str:
+    """ЧОМУ готова точка входу НЕ стала угодою (22.11) — '' = відкриваємо. ЧИСТА.
+    Те саме правило, що в `_try_signal`: показ у таблиці / огляді / тумблері
+    пояснює кожен «тихий» пропуск, а не лише ті, що доходять до біржі."""
+    s, ep, brain = s or {}, ep or {}, brain or {}
+    sd = str(side).upper()
+    if not brain.get('ok'):
+        return '🧠 мозок не пустив: ' + (brain.get('reason') or 'чек-лист не пройдено')
+    mc = float(s.get('min_conf') or 0)
+    conf = brain.get('confidence')
+    if mc > 0 and conf is not None and float(conf) < mc:
+        return f'🎯 впевненість {int(conf)} < {int(mc)}'
+    sig = ep.get('signal') or {}
+    if sig.get('own'):
+        return f"у цьому епізоді заряду вже була угода ШІ ({sig.get('side')})"
+    tr = (ep.get('ai_tries') or {}).get(sd) or [0, 0]
+    if tr[0] >= SIGNAL_TRIES:
+        return f'{SIGNAL_TRIES} спроби відкриття в цьому епізоді не вдались'
+    if tr[1] and now - float(tr[1]) < SIGNAL_RETRY_SEC:
+        return f'повтор відкриття не раніше ніж через {int((SIGNAL_RETRY_SEC - (now - float(tr[1]))) // 60) + 1} хв'
+    why = ai_limits_block(sd, s, open_n, opens, last, now)
+    if why:
+        return why
+    if s.get('etalon_enabled') and eb and eb.get('mature') and eb.get('verdict') != 'take':
+        return '🏆🧠 мозок еталонів: ' + (eb.get('reason') or 'ні')
+    return ''
+
+
+def ai_stop_for(side: str, price, plan: Optional[Dict], ob_stop=None, ob_label: str = '',
+                s: Optional[Dict] = None) -> Dict:
+    """🛑 «SL з» ШІ → план угоди з обраним стопом. ЧИСТА.
+    plan — стоп плану (структура / ATR 15m) · ob — рівень OB (сходи 1H → 15m →
+    5m), немає → стоп плану · pct — % від ціни. Потім межі `sl_min_pct` /
+    `sl_max_pct` і перерахунок ризику / R; ціль «2.2R» тягнеться за новим стопом,
+    ціль Пружини — ні (тож R може змінитись)."""
+    s = s or {}
+    sd = str(side).upper()
+    sg = 1.0 if sd == 'LONG' else -1.0
+    try:
+        px = float(price)
+    except (TypeError, ValueError):
+        px = 0.0
+    plan = dict(plan or {})
+    if px <= 0:
+        return plan
+    src = s.get('sl_source') or 'ob'
+
+    def _ok(v):
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return None
+        return v if v > 0 and sg * (px - v) > 0 else None
+
+    stop, label = None, ''
+    if src == 'ob':
+        stop = _ok(ob_stop)
+        label = ob_label or 'OB'
+        if stop is None:
+            stop, label = _ok(plan.get('stop')), 'структура / ATR 15m (OB не знайдено)'
+    elif src == 'plan':
+        stop, label = _ok(plan.get('stop')), 'структура / ATR 15m'
+    if stop is None:
+        pct = float(s.get('sl_fallback_pct') or 2.0)
+        stop, label = px * (1 - sg * pct / 100.0), f'{pct}% від входу'
+    dist = abs(px - stop) / px * 100.0
+    lo, hi = float(s.get('sl_min_pct') or 0.0), float(s.get('sl_max_pct') or 0.0)
+    clamp = ''
+    if lo > 0 and dist < lo:
+        dist, clamp = lo, f'відсунуто до мінімуму {lo}%'
+    elif hi > 0 and dist > hi:
+        dist, clamp = hi, f'підтягнуто до стелі {hi}%'
+    stop = px * (1 - sg * dist / 100.0)
+    cost = float(plan.get('cost_pct') or 0.0)
+    tgt = plan.get('target')
+    if plan.get('target_src') != 'spring' or not tgt:
+        tgt = px + sg * 2.2 * abs(px - stop)
+        plan['target_src'] = plan.get('target_src') or 'r'
+    reward = abs(float(tgt) - px) / px * 100.0
+    if sg * (float(tgt) - px) <= 0:
+        reward = 0.0
+    plan.update({'entry': round(px, 10), 'stop': round(stop, 10), 'target': round(float(tgt), 10),
+                 'risk_pct': round(dist, 3), 'reward_pct': round(reward, 3),
+                 'net_rr': round((reward - cost) / (dist + cost), 2) if dist > 0 else 0.0,
+                 'stop_src': src, 'stop_label': label + (f' · {clamp}' if clamp else '')})
+    return plan
 
 
 def scen_allowed(r: Optional[Dict], allowed) -> bool:
@@ -539,7 +642,9 @@ def learning_prune_plan(rows: List[Dict], kind: str, keep: int, protected=()) ->
 
 
 def ai_readiness(s: Dict, spring_on: bool, tm_on: bool, test_mode: bool,
-                 coins: int = 0, ready: int = 0, open_n: int = 0) -> Dict:
+                 coins: int = 0, ready: int = 0, open_n: int = 0,
+                 tick: Optional[Dict] = None, now: Optional[float] = None,
+                 anom_on: bool = True) -> Dict:
     """🤖 ГОЛОВНИЙ ТУМБЛЕР ШІ (22.11): чи може ШІ ЗАРАЗ відкривати угоди і що
     саме заважає. ЧИСТА функція. → {state, blockers[], book_ua, text}.
     state: off (тумблер вимкнено) · blocked (є перешкода) · watching (працює,
@@ -548,6 +653,8 @@ def ai_readiness(s: Dict, spring_on: bool, tm_on: bool, test_mode: bool,
     bl = []
     if not spring_on:
         bl.append('🌀 Пружина вимкнена — немає заряджених монет')
+    if not anom_on:
+        bl.append('⚠ «Аномалії обсягу» вимкнено — сценаріям входу немає з чого скластись')
     book = str(s.get('book') or 'auto')
     if book == 'real' and not tm_on:
         bl.append('книга «реальна», а Trade Manager вимкнено')
@@ -572,12 +679,27 @@ def ai_readiness(s: Dict, spring_on: bool, tm_on: bool, test_mode: bool,
         st = 'ready'
     else:
         st = 'watching'
+    tk = tick or {}
+    last_at = float(tk.get('last_at') or 0)
+    err = ''
+    if tk.get('last_err') and float(tk.get('err_at') or 0) >= last_at - 60:
+        err = str(tk.get('last_err'))
+    if st in ('watching', 'ready') and not last_at:
+        st = 'starting'
     txt = {'off': 'вимкнено — угод ШІ не буде',
+           'starting': 'перший перебір ще йде (до кількох хвилин після запуску)',
            'blocked': 'не може відкривати: ' + '; '.join(bl),
            'full': f'ліміт угод ШІ ({open_n}/{mx})',
            'ready': f'готових точок входу: {ready}',
            'watching': f'перебирає {coins} заряджених — точки входу ще немає'}[st]
-    return {'state': st, 'blockers': bl, 'book_ua': book_ua, 'text': txt,
+    cand = tk.get('cand')
+    if st == 'watching' and cand is not None and int(cand) != int(coins or 0):
+        txt += f' (кандидатів {int(cand)}, оцінено {int(coins or 0)})'
+    if err:
+        txt += ' · ⚠ ' + err
+    age = (float(now) - last_at) if (now and last_at) else None
+    return {'state': st, 'blockers': bl, 'book_ua': book_ua, 'text': txt, 'error': err,
+            'last_at': last_at or None, 'age': None if age is None else int(age),
             'coins': int(coins or 0), 'ready': int(ready or 0), 'open_n': int(open_n or 0),
             'max_open': mx}
 
@@ -590,7 +712,7 @@ def ai_heartbeat_text(view: Dict, s: Dict, etalon: Dict, open_n: int = 0,
     змін — набір готових точок). ЧИСТА."""
     rows = list((view or {}).values())
     n_wl = sum(1 for r in rows if r.get('src') != 'scan')
-    ready, forming, brain_no, et_no = [], [], 0, 0
+    ready, forming, brain_no, et_no, blocked = [], [], 0, 0, []
     for r in rows:
         p = r.get('pick') or {}
         sc = p.get('scenario') or {}
@@ -598,7 +720,10 @@ def ai_heartbeat_text(view: Dict, s: Dict, etalon: Dict, open_n: int = 0,
         arrow = '▲' if side == 'LONG' else '▼'
         name = str(r.get('symbol') or '').replace('USDT', '')
         if r.get('ready'):
-            ready.append(f"{name} {arrow} {sc.get('key') or ''}".strip())
+            if r.get('block'):
+                blocked.append(f"{name} {arrow} {sc.get('key') or ''} — {r.get('block')}")
+            else:
+                ready.append(f"{name} {arrow} {sc.get('key') or ''}".strip())
             continue
         if sc.get('ready') and not (r.get('brain') or {}).get('ok', True):
             brain_no += 1
@@ -611,6 +736,9 @@ def ai_heartbeat_text(view: Dict, s: Dict, etalon: Dict, open_n: int = 0,
     forming.sort(key=lambda x: -x[0])
     parts = [f"перебрано {len(rows)} монет (🌀 {n_wl} · 🔭 {len(rows) - n_wl})"]
     parts.append(('✅ точки входу: ' + ', '.join(ready[:6])) if ready else '✅ точок входу немає')
+    if blocked:
+        parts.append('⛔ не відкрито: ' + '; '.join(blocked[:4])
+                     + (f' (+{len(blocked) - 4})' if len(blocked) > 4 else ''))
     if forming:
         parts.append('⏳ формується: ' + ', '.join(t for _, t in forming[:5])
                      + (f' (+{len(forming) - 5})' if len(forming) > 5 else ''))
@@ -1961,6 +2089,9 @@ class AiEngine:
         except Exception:
             subs = []
         if not spring_on and not subs:
+            with self._lock:
+                self._view = {}
+            self._stat.update({'last_at': now, 'coins': 0, 'cand': 0})
             if s.get('enabled') and now - self._hb_at >= HEARTBEAT_SEC:
                 self._hb_at = now
                 self._ai_log('', 'ai_scan', '🤖 ШІ · огляд: 🌀 Пружина вимкнена — '
@@ -1970,6 +2101,7 @@ class AiEngine:
         min_charge = float(s.get('min_charge') or 65)
         allowed = s.get('scenarios') or ['E2']
         cand = self.candidates(min_charge) if spring_on else {}
+        self._stat.update({'tick_at': now, 'cand': len(cand)})
         anoms: Dict[str, List[Dict]] = {}
         try:
             look = max(ANOM_LOOK_SEC, DIR_LOOK_SEC,
@@ -1999,66 +2131,87 @@ class AiEngine:
             lives = dict(ex.map(load, pool))
         view = {}
         scored = {}
+        try:
+            _tm = self._tm_get()
+            _open_n = len(_tm.ai_open_positions()) if _tm and hasattr(_tm, 'ai_open_positions') else 0
+        except Exception:
+            _open_n = 0
         for S, (rec0, src) in cand.items():
-            rec, vw = lives.get(S) or (None, None)
-            rec = rec or rec0 or {}
-            if not rec:
-                continue
-            charged = rec.get('state') == 'charged' or float(rec.get('charge') or 0) >= min_charge
-            al = anoms.get(S) or []
-            lv, ch = scanner_context(self._scn(), S)
-            el = entry_score('LONG', rec, vw, al, now, self._cal, lv, ch, charged)
-            es = entry_score('SHORT', rec, vw, al, now, self._cal, lv, ch, charged)
-            scored[S] = (el, es, rec, vw)
-            ep = self._eps.get(S)
-            if ep is None and charged:
-                ep = self._eps[S] = episode_new(S, now, rec, vw, src)
-                _ev(ep, now, 'charged', charge=rec.get('charge'), lean=rec.get('lean'))
-            if ep is not None:
-                episode_step(ep, now, rec, vw, el, es, charged)
-                self._dirty = True
-            # головний бік: готовий ДОЗВОЛЕНИЙ сценарій (налаштування ШІ, деф.
-            # лише E2 «💥 Старт розряду») → прогрес сценарію → бал
-            def _rk(x):
-                sc = x.get('scenario') or {}
-                return (1 if (entry_decide(x) and scen_allowed(x, allowed)) else 0,
-                        (sc.get('done') or 0) / max(1, sc.get('total') or 1), x['score'])
-            best = el if _rk(el) >= _rk(es) else es
-            ready = entry_decide(best) and scen_allowed(best, allowed)
-            # 🤖🧠 ЄДИНИЙ МОЗОК: напрямок → старт → санітарні перевірки графіка → план
-            pro = self._professional_snapshot(S, now)
-            bc = brain.entry_check(best['side'], best, pro, rec)
-            feat = entry_features(best['side'], best, rec, bc)
-            sim = etalon_similarity(feat, self._etalon, best['side']) if self._etalon else None
-            anti_sim = etalon_similarity(feat, self._anti, best['side']) if self._anti else None
-            view[S] = {'symbol': S, 'src': src, 'charge': rec.get('charge'),
-                       'state': rec.get('state'), 'lean': rec.get('lean'),
-                       'prob_long': rec.get('prob_long'), 'long': el, 'short': es,
-                       'best': best['side'], 'episode_age': (int(now - ep['started_at'])
-                                                             if ep else None),
-                       'signal': (ep or {}).get('signal'),
-                       'brain': bc, 'pick': best, 'ready': bool(ready and bc.get('ok')),
-                       'feat': feat, 'sim': sim, 'anti_sim': anti_sim,
-                       'etalon': etalon_brain(feat, self._etalon, self._anti, best['side'], s)}
-            view[S]['rank'] = ai_rank(view[S], sim)
-            if view[S]['etalon'].get('mature') and view[S]['etalon'].get('verdict') != 'take':
-                view[S]['ready'] = False          # 🏆🧠 головний мозок сказав «ні»
-            if ep is not None:
-                for x in (el, es):
+            try:
+                rec, vw = lives.get(S) or (None, None)
+                rec = rec or rec0 or {}
+                if not rec:
+                    continue
+                charged = rec.get('state') == 'charged' or float(rec.get('charge') or 0) >= min_charge
+                al = anoms.get(S) or []
+                lv, ch = scanner_context(self._scn(), S)
+                el = entry_score('LONG', rec, vw, al, now, self._cal, lv, ch, charged)
+                es = entry_score('SHORT', rec, vw, al, now, self._cal, lv, ch, charged)
+                scored[S] = (el, es, rec, vw)
+                ep = self._eps.get(S)
+                if ep is None and charged:
+                    ep = self._eps[S] = episode_new(S, now, rec, vw, src)
+                    _ev(ep, now, 'charged', charge=rec.get('charge'), lean=rec.get('lean'))
+                if ep is not None:
+                    episode_step(ep, now, rec, vw, el, es, charged)
+                    self._dirty = True
+                # головний бік: готовий ДОЗВОЛЕНИЙ сценарій (налаштування ШІ, деф.
+                # лише E2 «💥 Старт розряду») → прогрес сценарію → бал
+                def _rk(x):
                     sc = x.get('scenario') or {}
-                    if entry_decide(x):
-                        k = f"scen_{x['side']}_{sc.get('key')}"
-                        if k not in ep:
-                            ep[k] = int(now)
-                            _ev(ep, now, 'scenario', side=x['side'], key=sc.get('key'),
-                                name=sc.get('name'), score=x.get('score'))
-            if s.get('enabled') and ep is not None and ready:
-                self._try_signal(S, best, rec, vw, ep, now, professional=pro, brain=bc,
-                                 feat=feat, sim=sim, anti_sim=anti_sim, eb=view[S]['etalon'])
-            if ep is not None:
-                why = episode_done(ep, now, charged)
-                if why:
-                    self._close_episode(S, ep, now, why)
+                    return (1 if (entry_decide(x) and scen_allowed(x, allowed)) else 0,
+                            (sc.get('done') or 0) / max(1, sc.get('total') or 1), x['score'])
+                best = el if _rk(el) >= _rk(es) else es
+                ready = entry_decide(best) and scen_allowed(best, allowed)
+                # 🤖🧠 ЄДИНИЙ МОЗОК: напрямок → старт → санітарні перевірки графіка → план
+                pro = self._professional_snapshot(S, now)
+                bc = brain.entry_check(best['side'], best, pro, rec)
+                feat = entry_features(best['side'], best, rec, bc)
+                sim = etalon_similarity(feat, self._etalon, best['side']) if self._etalon else None
+                anti_sim = etalon_similarity(feat, self._anti, best['side']) if self._anti else None
+                view[S] = {'symbol': S, 'src': src, 'charge': rec.get('charge'),
+                           'state': rec.get('state'), 'lean': rec.get('lean'),
+                           'prob_long': rec.get('prob_long'), 'long': el, 'short': es,
+                           'best': best['side'], 'episode_age': (int(now - ep['started_at'])
+                                                                 if ep else None),
+                           'signal': (ep or {}).get('signal'),
+                           'brain': bc, 'pick': best, 'ready': bool(ready and bc.get('ok')),
+                           'feat': feat, 'sim': sim, 'anti_sim': anti_sim,
+                           'etalon': etalon_brain(feat, self._etalon, self._anti, best['side'], s)}
+                view[S]['rank'] = ai_rank(view[S], sim)
+                view[S]['confidence'] = bc.get('confidence')
+                if view[S]['etalon'].get('mature') and view[S]['etalon'].get('verdict') != 'take':
+                    view[S]['ready'] = False          # 🏆🧠 головний мозок сказав «ні»
+                if ready and bc.get('ok'):
+                    # ЧОМУ готова точка не стане угодою (показ: таблиця · огляд · тумблер)
+                    view[S]['block'] = ('ШІ вимкнено головним тумблером' if not s.get('enabled')
+                                        else (f"заряд {rec.get('charge')} < {min_charge:g} — монета не в роботі ШІ"
+                                              if ep is None else None)
+                                        or ai_entry_block(ep, best['side'], s, bc, view[S]['etalon'],
+                                                            _open_n, self._ai_opens,
+                                                            self._ai_last.get(S), now))
+                if ep is not None:
+                    for x in (el, es):
+                        sc = x.get('scenario') or {}
+                        if entry_decide(x):
+                            k = f"scen_{x['side']}_{sc.get('key')}"
+                            if k not in ep:
+                                ep[k] = int(now)
+                                _ev(ep, now, 'scenario', side=x['side'], key=sc.get('key'),
+                                    name=sc.get('name'), score=x.get('score'))
+                if s.get('enabled') and ep is not None and ready:
+                    self._try_signal(S, best, rec, vw, ep, now, professional=pro, brain=bc,
+                                     feat=feat, sim=sim, anti_sim=anti_sim, eb=view[S]['etalon'])
+                if ep is not None:
+                    why = episode_done(ep, now, charged)
+                    if why:
+                        self._close_episode(S, ep, now, why)
+            except Exception as e:      # одна монета не обнуляє весь перебір
+                self._stat['errors'] += 1
+                self._stat['err_at'] = now
+                self._stat['last_err'] = f'{S}: {type(e).__name__}: {e}'[:200]
+                print(f'[AI] {S}: {e}')
+
         try:
             self._anom_personal(subs, scored, lives, anoms, now)
         except Exception as e:
@@ -2101,6 +2254,14 @@ class AiEngine:
         except Exception:
             pass
 
+    @staticmethod
+    def _ai_block_ev(ep: Dict, side: str, why: str, now: float) -> None:
+        """Подія епізоду «ШІ не відкрив» — лише коли причина ЗМІНИЛАСЬ (такт 30с)."""
+        last = ep.setdefault('block_last', {})
+        if last.get(side) != why:
+            last[side] = why
+            _ev(ep, now, 'ai_block', side=side, reason=why)
+
     def _ai_block_note(self, S, side, why, now) -> None:
         """Власна відмова ШІ → 🧾 Лог ОДИН раз (та сама причина — раз на 15 хв)."""
         k = f'{S}|{side}'
@@ -2110,14 +2271,35 @@ class AiEngine:
         self._ai_block[k] = [why, now]
         self._ai_log(S, 'rejected', f'🤖 ШІ {side}: {why}', side=side)
 
+    def _ai_ob_stop(self, S: str, side: str, price) -> tuple:
+        """🛑 «SL з: OB» — ТОЙ САМИЙ ланцюг, що глобальне «🛑 SL з» бота (1H OB →
+        15m → 5m, буфер `queue3_vob_sl_buffer_pct`, рівень лише з правильного боку
+        ціни). Кличеться ЛИШЕ в момент сигналу (Volumized може тягнути свічки).
+        → (рівень | None, підпис)."""
+        try:
+            from detection.fuel_filter import get_fuel_filter
+            ff = get_fuel_filter()
+        except Exception:
+            ff = None
+        if ff is None or not hasattr(ff, '_q4_pick_sl'):
+            return None, ''
+        try:
+            fs = ff.get_settings() or {}
+            buf = max(0.0, float(fs.get('queue3_vob_sl_buffer_pct', 0.10) or 0)) / 100.0
+            chosen, _sk = ff._q4_pick_sl(S, str(side).upper(), '1h', buf, price)
+        except Exception as e:
+            self._stat['last_err'] = f'SL з OB {S}: {e}'[:200]
+            return None, ''
+        if not chosen:
+            return None, ''
+        return chosen[0], str(chosen[1] or 'OB')
+
     def _try_signal(self, S, sc_res, rec, vw, ep, now, professional=None, brain=None,
                     feat=None, sim=None, anti_sim=None, eb=None):
         """🤖 ВЛАСНИЙ СЦЕНАРІЙ ШІ (22.11): ворота бота (кнопки напрямку, МММ,
         Пружини, OB/PD/…, черги) НЕ діють — ШІ відкриває СВОЮ угоду за своїми
         правилами (налаштування ШІ) і далі супроводжує лише її."""
         side = sc_res['side']
-        if ep.get('signal'):
-            return                          # один результативний сигнал на епізод
         s = self.ai_settings()
         pro_side = ((professional or {}).get('sides') or {}).get(side) or {}
         if brain is None:
@@ -2130,9 +2312,6 @@ class AiEngine:
                 _ev(ep, now, 'brain_veto', side=side, reason=brain.get('reason'),
                     strict=(brain.get('strict') or {}).get('ready'))
             return
-        tr = ep.setdefault('tries', {}).get(side) or [0, 0]
-        if tr[0] >= SIGNAL_TRIES or now - tr[1] < SIGNAL_RETRY_SEC:
-            return
         tm = self._tm_get()
         if tm is None or not hasattr(tm, 'ai_open'):
             self._stat['last_err'] = 'Trade Manager без ai_open'
@@ -2141,18 +2320,32 @@ class AiEngine:
             open_n = len(tm.ai_open_positions()) if hasattr(tm, 'ai_open_positions') else 0
         except Exception:
             open_n = 0
-        why = ai_limits_block(side, s, open_n, self._ai_opens, self._ai_last.get(S), now)
         # 🏆🧠 ГОЛОВНИЙ МОЗОК — база еталонів: коли досвід зібрано, саме вона
         # ухвалює остаточне рішення на вхід (k-NN за відмінними й невдалими угодами).
         if eb is None and feat is not None:
             eb = etalon_brain(feat, self._etalon, self._anti, side, s)
-        if not why and s.get('etalon_enabled') and eb and eb.get('mature') and eb.get('verdict') != 'take':
-            why = '🏆🧠 мозок еталонів: ' + (eb.get('reason') or 'ні')
+        why = ai_entry_block(ep, side, s, brain, eb, open_n, self._ai_opens,
+                             self._ai_last.get(S), now)
         if why:
-            self._ai_block_note(S, side, why, now)
-            _ev(ep, now, 'ai_block', side=side, reason=why)
+            if not (ep.get('signal') or {}).get('own'):   # уже відкрита угода — не шумимо
+                self._ai_block_note(S, side, why, now)
+                self._ai_block_ev(ep, side, why, now)
             return
-        ep['tries'][side] = [tr[0] + 1, int(now)]
+        # 🛑 «SL з» ШІ: стоп за обраним джерелом + межі мін / макс → перерахунок R
+        px0 = _px(vw, rec)
+        ob_stop, ob_label = (self._ai_ob_stop(S, side, px0) if s.get('sl_source') == 'ob'
+                             else (None, ''))
+        plan0 = ai_stop_for(side, px0, brain.get('plan') or {}, ob_stop, ob_label, s)
+        brain = dict(brain, plan=plan0)
+        mrr = getattr(_sib('ai_brain'), 'MIN_NET_RR', 1.3)
+        if plan0.get('net_rr') is not None and plan0['net_rr'] < mrr:
+            why = (f"🛑 стоп з «{plan0.get('stop_label')}» −{plan0.get('risk_pct')}% → "
+                   f"R {plan0.get('net_rr')} < {mrr} до цілі")
+            self._ai_block_note(S, side, why, now)
+            self._ai_block_ev(ep, side, why, now)
+            return
+        tr = ep.setdefault('ai_tries', {}).get(side) or [0, 0]
+        ep['ai_tries'][side] = [tr[0] + 1, int(now)]
         px = _px(vw, rec)
         pro_compact = self._pro_compact(professional)
         bm = _sib('ai_brain')
@@ -2163,7 +2356,7 @@ class AiEngine:
         head = (f"Сигнал ШІ {side} · 🧩 {sc_res.get('scenario_text') or ''} · "
                 f"заряд Пружини {rec.get('charge')} · 🧠 {bm.checks_text(brain)}")
         if plan:
-            head += (f" · план: стоп {plan.get('stop')} (−{plan.get('risk_pct')}%) · ціль "
+            head += (f" · план: стоп {plan.get('stop')} (−{plan.get('risk_pct')}%, {plan.get('stop_label') or 'план'}) · ціль "
                      f"{plan.get('target')} (+{plan.get('reward_pct')}%) · R {plan.get('net_rr')}")
         head += f" · впевненість {brain.get('confidence')}"
         if eb:
@@ -2199,7 +2392,7 @@ class AiEngine:
         self._ai_opens = [t for t in self._ai_opens if now - t < OPEN_WINDOW_SEC] + [now]
         self._ai_last[S] = [side, now]
         ep['signal'] = {'t': int(now), 'side': side, 'px': px, 'score': sc_res['score'],
-                        'parts': sc_res['parts'], 'result': (res or {}).get('mode'),
+                        'parts': sc_res['parts'], 'result': (res or {}).get('mode'), 'own': True,
                         'scenario': scen.get('key'), 'scenario_name': scen.get('name'),
                         'professional': pro_compact, 'feat': feat, 'sim': sim, 'anti_sim': anti_sim,
                         'etalon': {k: (eb or {}).get(k) for k in ('mature', 'verdict', 'p_good', 'exp_r', 'tp_r')},
@@ -2569,11 +2762,21 @@ class AiEngine:
             own = list(tm.ai_open_positions()) if tm and hasattr(tm, 'ai_open_positions') else []
         except Exception:
             own = []
+        import sys as _sys
+        va = _sys.modules.get('detection.vol_anomaly')
+        try:
+            mon = va.get_vol_anomaly() if va and hasattr(va, 'get_vol_anomaly') else None
+            anom_on = True if mon is None else bool((getattr(mon, '_settings', {}) or {}).get('enabled', True))
+        except Exception:
+            anom_on = True
         with self._lock:
             view = list(self._view.values())
-        ready = len([v for v in view if v.get('ready')])
-        r = ai_readiness(s, spring_on, tm_on, test_mode, len(view), ready, len(own))
+        ready = len([v for v in view if v.get('ready') and not v.get('block')])
+        blocked = [(v.get('symbol'), v.get('block')) for v in view if v.get('ready') and v.get('block')]
+        r = ai_readiness(s, spring_on, tm_on, test_mode, len(view), ready, len(own),
+                         tick=dict(self._stat), now=self._clock(), anom_on=anom_on)
         r['own'] = [{'symbol': S, 'paper': b} for S, b in own]
+        r['blocked'] = [{'symbol': a, 'why': b} for a, b in blocked[:8]]
         r['enabled'] = bool(s.get('enabled'))
         return r
 
@@ -2622,7 +2825,8 @@ class AiEngine:
                 self.tick()
             except Exception as e:
                 self._stat['errors'] += 1
-                self._stat['last_err'] = str(e)[:200]
+                self._stat['err_at'] = time.time()
+                self._stat['last_err'] = f'такт: {type(e).__name__}: {e}'[:200]
                 print(f'[AI] tick error: {e}')
             time.sleep(TICK_SEC)
 

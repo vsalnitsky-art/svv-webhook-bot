@@ -1654,7 +1654,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     .sm-aim.on { border-color:#7c3aed; background:rgba(124,58,237,.14); }
     .sm-aim.st-ready .sm-aim-st, .sm-aim.st-watching .sm-aim-st { color:#4ade80; }
     .sm-aim.st-blocked .sm-aim-st { color:#f87171; }
-    .sm-aim.st-full .sm-aim-st { color:#fbbf24; }
+    .sm-aim.st-full .sm-aim-st, .sm-aim.st-starting .sm-aim-st { color:#fbbf24; }
     .sm-side-gates-left { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
     /* Підпис стану головного вимикача: бурштин = працює половина напрямків,
        червоний = бот стоїть. Та сама типографіка, що в решті бейджів. */
@@ -4995,7 +4995,15 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <label title="Скільки угод ШІ може бути відкрито одночасно">одночасно ≤ <input type="number" id="aip-max-open" min="1" max="50" step="1" style="width:46px" onchange="aipSave()"></label>
             <label title="Нових угод ШІ за 30 хв (кілька монет одночасно = одна подія ринку)">за 30 хв ≤ <input type="number" id="aip-max-30" min="1" max="20" step="1" style="width:46px" onchange="aipSave()"></label>
             <label title="Протилежний бік по тій самій монеті — не раніше ніж через N хв">фліп ≥ <input type="number" id="aip-flip" min="0" max="1440" step="10" style="width:56px" onchange="aipSave()"> хв</label>
-            <label title="Стоп, коли плану мозку немає (% від входу)">стоп без плану <input type="number" id="aip-slfb" min="0.2" max="20" step="0.1" style="width:52px" onchange="aipSave()"> %</label>
+            <label title="Стоп для «SL з: % від входу» і запасний, коли іншого стопа немає">стоп % <input type="number" id="aip-slfb" min="0.2" max="20" step="0.1" style="width:52px" onchange="aipSave()"> %</label>
+        </div>
+        <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
+            <label title="🛑 Звідки ШІ бере стоп угоди. OB — той самий ланцюг, що глобальне «🛑 SL з» бота: блок 1H → 15m → 5m (буфер з налаштувань Черги-3), рівень лише з правильного боку ціни; блоку немає → структура / ATR 15m. Структура / ATR 15m — стоп мозку графіка (найближчий, часто тісний). % від входу — фіксований відсоток.">🛑 SL з <select id="aip-sl-src" onchange="aipSave()">
+                <option value="ob">OB 1H → 15m → 5m</option><option value="plan">структура / ATR 15m</option><option value="pct">% від входу</option></select></label>
+            <label title="Стоп не ближче N % від входу: тісніший стоп відсувається до цієї відстані (шум 15m не вибиває угоду). 0 = без мінімуму.">не ближче <input type="number" id="aip-sl-min" min="0" max="10" step="0.1" style="width:52px" onchange="aipSave()"> %</label>
+            <label title="Стоп не далі N % від входу: задалекий підтягується. 0 = без стелі.">не далі <input type="number" id="aip-sl-max" min="0" max="20" step="0.1" style="width:52px" onchange="aipSave()"> %</label>
+            <label title="🎯 Впевненість мозку (0-100) = 40% сила сценарію входу (бал аномалій) + 20% натяг Пружини в бік угоди + 25% старші TF 1h/4h за угодою + 15% участь обсягу. Нижче порогу — вхід не беремо. 0 = вимкнено.">🎯 впевненість ≥ <input type="number" id="aip-min-conf" min="0" max="100" step="1" style="width:52px" onchange="aipSave()"></label>
+            <span style="font-size:11px;color:#6b7280">Після зміни стопа R до цілі перераховується: якщо стає менше 1.3 — вхід не беремо.</span>
         </div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
             <label class="sm-checkbox" title="ШІ супроводжує й закриває СВОЇ угоди: аномалії + план угоди (стоп / ціль). Інші правила виходу бота угод ШІ не чіпають; Manual SL / TP працюють."><input type="checkbox" id="aip-exit" onchange="aipSave()"> вихід ШІ</label>
@@ -6959,7 +6967,8 @@ function _aiDecision(c) {
     const b = c.best === 'LONG' ? c.long : c.short;
     const sc = b && b.scenario;
     const arrow = c.best === 'LONG' ? '▲' : '▼', col = c.best === 'LONG' ? '#4ade80' : '#f87171';
-    if (sc && sc.ready && !b.veto) return `<b style="color:${col}">✅ ${arrow} точка входу</b>`;
+    if (sc && sc.ready && !b.veto && c.block) return `<span style="color:#fbbf24" title="${String(c.block).replace(/"/g, '&quot;')}">⛔ ${arrow} точка є, не відкрито<div class="ai-sub ai-ell">${String(c.block).replace(/</g, '&lt;')}</div></span>`;
+    if (sc && sc.ready && !b.veto) return `<b style="color:${col}">✅ ${arrow} точка входу</b>${c.confidence != null ? `<div class="ai-sub">🎯 впевненість ${c.confidence}</div>` : ''}`;
     if (sc && sc.broken) return `<span style="color:#6b7280" title="${String(sc.broken).replace(/"/g, '&quot;')}">✗ злам</span>`;
     if (sc && sc.stale) return '<span style="color:#94a3b8">⌛ запізно</span>';
     if (sc && sc.done) return `<span style="color:#fbbf24">⏳ ${arrow} формується ${sc.done}/${sc.total}</span>`;
@@ -7026,14 +7035,18 @@ function aiMasterRender(a, rd) {
     if (ck && document.activeElement !== ck && Date.now() - _aipSavedAt > 4000) ck.checked = !!a.enabled;
     const state = rd.state || (a.enabled ? 'watching' : 'off');
     box.className = 'sm-aim' + (a.enabled ? ' on' : '') + ' st-' + state;
-    const icon = {off: '⏸', blocked: '⛔', full: '🔒', ready: '✅', watching: '👁'}[state] || '';
+    const icon = {off: '⏸', blocked: '⛔', full: '🔒', ready: '✅', watching: '👁', starting: '⏳'}[state] || '';
     const own = (rd.own || []);
     const ownTxt = own.length ? ` · угоди ${own.length}/${rd.max_open || '—'} ${own.map(o => o.symbol.replace('USDT', '') + (o.paper ? '🧪' : '🏦')).join(' ')}` : '';
+    const bl = rd.blocked || [];
     if (st) {
-        st.textContent = `${icon} ${rd.text || (a.enabled ? 'працює' : 'вимкнено')}${a.enabled ? ' · ' + (rd.book_ua || '') : ''}${ownTxt}`;
+        st.textContent = `${icon} ${rd.text || (a.enabled ? 'працює' : 'вимкнено')}${bl.length ? ' · ⛔ ' + bl.length + ' не відкрито' : ''}${a.enabled ? ' · ' + (rd.book_ua || '') : ''}${ownTxt}`;
         st.title = (rd.blockers && rd.blockers.length ? 'Що заважає:\n• ' + rd.blockers.join('\n• ') + '\n\n' : '')
             + 'Книга: ' + (rd.book_ua || '—') + '\nПід наглядом заряджених монет: ' + (rd.coins || 0)
-            + '\nГотових точок входу: ' + (rd.ready || 0);
+            + '\nГотових точок входу: ' + (rd.ready || 0)
+            + (rd.age != null ? '\nОстанній перебір: ' + rd.age + 'с тому (раз на 30с)' : '\nПеребору ще не було')
+            + (rd.error ? '\n⚠ Помилка: ' + rd.error : '')
+            + (bl.length ? '\n\nТочки входу є, але угоди не відкрито:\n• ' + bl.map(x => String(x.symbol || '').replace('USDT', '') + ' — ' + x.why).join('\n• ') : '');
     }
 }
 function aiMasterToggle(el) {
@@ -7061,6 +7074,7 @@ function aipApply(d) {
         vl('aip-min-charge', a.min_charge); vl('aip-book', a.book); vl('aip-max-open', a.max_open);
         vl('aip-max-30', a.max_per_30m); vl('aip-flip', a.flip_cooldown_min); vl('aip-slfb', a.sl_fallback_pct);
         vl('aip-exit-mode', a.exit_mode); vl('aip-hold', a.hold_pot); vl('aip-et-r', a.etalon_min_r);
+        vl('aip-sl-src', a.sl_source); vl('aip-sl-min', a.sl_min_pct); vl('aip-sl-max', a.sl_max_pct); vl('aip-min-conf', a.min_conf);
         vl('aip-et-sim', a.etalon_min_sim); vl('aip-et-p', a.etalon_min_p);
         document.querySelectorAll('[data-aip-side]').forEach(c => c.classList.toggle('on', a[c.dataset.aipSide] !== false));
         const sc = g('aip-scen');
@@ -7120,7 +7134,8 @@ async function aipSave() {
         allow_long: side('allow_long'), allow_short: side('allow_short'),
         book: (g('aip-book') || {}).value || 'auto', max_open: n('aip-max-open', 5),
         max_per_30m: n('aip-max-30', 3), flip_cooldown_min: n('aip-flip', 180), hold_pot: n('aip-hold', 40),
-        sl_fallback_pct: n('aip-slfb', 2), learning_enabled: !!(g('aip-learn') || {}).checked,
+        sl_fallback_pct: n('aip-slfb', 2), sl_source: (g('aip-sl-src') || {}).value || 'ob',
+        sl_min_pct: n('aip-sl-min', 0.8), sl_max_pct: n('aip-sl-max', 4), min_conf: n('aip-min-conf', 40), learning_enabled: !!(g('aip-learn') || {}).checked,
         etalon_enabled: !!(g('aip-etalon') || {}).checked, etalon_min_r: n('aip-et-r', 1.5),
         etalon_min_sim: n('aip-et-sim', 0.35), etalon_min_p: n('aip-et-p', 0.6), cleanup_enabled: !!(g('aip-clean') || {}).checked,
     };
@@ -19546,6 +19561,8 @@ function aiExitChipHTML(p) {
     });
     const pl = x.plan || {};
     const tip = ('ШІ · вихід (єдиний мозок): ' + (x.verdict_ua || '') + '\n'
+        + (p.ai_conf != null ? '🎯 Впевненість на вході: ' + p.ai_conf + '\n' : '')
+        + (p.manual_sl_by ? '🛑 Стоп: ' + p.manual_sl_by + '\n' : '')
         + 'Аномалій від входу: ' + (x.anoms != null ? x.anoms : '—')
         + ' · режим: ' + (x.mode === 'all' ? 'лише коли всі показники за вихід' : 'аномалії + підтвердження')
         + (x.r != null ? '\nR зараз ' + x.r + (x.peak_r != null ? ' · пік ' + x.peak_r + 'R' : '') : '')
@@ -19558,7 +19575,8 @@ function aiExitChipHTML(p) {
     const r = x.r != null ? (x.r >= 0 ? '+' : '') + Number(x.r).toFixed(1) + 'R' : '';
     return `<span title="${tip}" style="display:inline-flex;align-items:center;gap:1px;margin-left:5px;padding:0 4px;border-radius:4px;border:1px solid ${c}55;color:${c};font-size:0.66rem;font-family:monospace;vertical-align:middle">${AI_BRAND_IMG}${_AIX_ICON[x.verdict] || ''}`
         + dot(g.anom, 'аномалії') + dot(g.price, 'ціна') + dot(g.profit, 'прибуток')
-        + (r ? `<span style="margin-left:3px">${r}</span>` : '') + `</span>`;
+        + (r ? `<span style="margin-left:3px">${r}</span>` : '')
+        + (p.ai_conf != null ? `<span style="margin-left:3px;color:${p.ai_conf >= 60 ? '#4ade80' : (p.ai_conf >= 45 ? '#fbbf24' : '#f87171')}">🎯${p.ai_conf}</span>` : '') + `</span>`;
 }
 // 🚨 Колонка = ЛИШЕ ШІ (вимога 17.11): 🤖 вихід (єдиний мозок: аномалії + план
 // угоди, R). Показ 🔔 МММ-SBR («✓ OK» / «⚠ ПРОТИ» / «🔔 без сигналу» / трейл) звідси

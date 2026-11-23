@@ -278,8 +278,9 @@ def test_readiness_names_the_blocker():
     r = A.ai_readiness(s, True, False, False)
     _check(r['state'] == 'blocked' and 'Test Mode' in r['text'], r)
     _check(A.ai_readiness(dict(s, book='paper'), True, True, False)['state'] == 'blocked', 'paper без Test Mode')
-    _check(A.ai_readiness(s, True, False, True, coins=7)['state'] == 'watching', 'auto → paper')
-    _check(A.ai_readiness(s, True, True, True, coins=7, ready=2)['state'] == 'ready', 'є точки')
+    tk = {'last_at': NOW}
+    _check(A.ai_readiness(s, True, False, True, coins=7, tick=tk)['state'] == 'watching', 'auto → paper')
+    _check(A.ai_readiness(s, True, True, True, coins=7, ready=2, tick=tk)['state'] == 'ready', 'є точки')
     _check(A.ai_readiness(dict(s, max_open=2), True, True, True, open_n=2)['state'] == 'full', 'ліміт')
     _check(A.ai_readiness(dict(s, enabled=False), True, True, True)['state'] == 'off', 'вимкнено')
 
@@ -324,6 +325,51 @@ def test_scenario_view_carries_signal_price_and_time():
     _check('sc.last_px' in _HTML and 'function _aiEventT(c)' in _HTML and 'table-layout:fixed' in _HTML,
            'таблиця ШІ: ціна і час сигналу, два рядки, сортування за появою')
     _check(hasattr(S, 'view'), 'view')
+
+
+
+# ── 22.11 (третя правка): «SL з» ШІ · впевненість · чому точка не стала угодою ──
+def test_stop_source_and_bounds():
+    s = dict(A.AI_DEFAULTS)
+    plan = {'stop': 99.86, 'target': 104.0, 'target_src': 'spring', 'cost_pct': 0.1}
+    p = A.ai_stop_for('LONG', 100.0, plan, None, '', dict(s, sl_source='plan'))
+    _check(abs(p['stop'] - 99.2) < 1e-9 and p['risk_pct'] == 0.8 and 'мінімуму' in p['stop_label'],
+           f'тісний стоп 0.14% (кейс BZ) відсунуто до 0.8%: {p}')
+    p = A.ai_stop_for('LONG', 100.0, plan, 98.5, '1H OB', dict(s, sl_source='ob'))
+    _check(p['stop'] == 98.5 and p['stop_label'].startswith('1H OB') and p['target'] == 104.0, p)
+    p = A.ai_stop_for('SHORT', 100.0, {'stop': 100.2}, 109.0, '1H OB', dict(s, sl_source='ob'))
+    _check(abs(p['stop'] - 104.0) < 1e-9 and 'стелі' in p['stop_label'], f'задалекий OB → стеля 4%: {p}')
+    _check(abs(p['target'] - (100 - 2.2 * 4)) < 1e-9, 'ціль 2.2R тягнеться за новим стопом')
+    p = A.ai_stop_for('LONG', 100.0, plan, None, '', dict(s, sl_source='ob'))
+    _check('OB не знайдено' in p['stop_label'], 'OB немає → структура / ATR')
+    p = A.ai_stop_for('LONG', 100.0, plan, None, '', dict(s, sl_source='pct', sl_fallback_pct=2))
+    _check(abs(p['stop'] - 98.0) < 1e-9, '% від входу')
+    _check(A.ai_settings_norm({'sl_source': 'xx'})['sl_source'] == 'ob', 'невідоме джерело → OB')
+
+
+def test_entry_block_reasons():
+    s = dict(A.AI_DEFAULTS, min_conf=40)
+    ok = {'ok': True, 'confidence': 55}
+    _check(A.ai_entry_block({}, 'LONG', s, ok, None, 0, [], None, NOW) == '', 'відкриваємо')
+    _check('впевненість 30 < 40' in A.ai_entry_block({}, 'LONG', s, dict(ok, confidence=30), None, 0, [], None, NOW),
+           'мала впевненість')
+    _check(A.ai_entry_block({'signal': {'side': 'LONG'}}, 'LONG', s, ok, None, 0, [], None, NOW) == '',
+           'сигнал старої версії (без угоди ШІ) більше НЕ блокує мовчки')
+    _check('вже була угода' in A.ai_entry_block({'signal': {'side': 'LONG', 'own': True}}, 'LONG', s, ok,
+                                                  None, 0, [], None, NOW), 'одна угода на епізод')
+    _check('ліміт' in A.ai_entry_block({}, 'LONG', s, ok, None, 5, [], None, NOW), 'ліміт угод')
+    _check(A.ai_entry_block({'tries': {'LONG': [3, NOW]}}, 'LONG', s, ok, None, 0, [], None, NOW) == '',
+           'старі спроби (відхилення воротами) не рахуються')
+
+
+def test_block_is_visible_everywhere():
+    view = {'CLUSDT': {'symbol': 'CLUSDT', 'src': 'scan', 'ready': True, 'best': 'LONG',
+                       'block': 'ліміт', 'pick': {'side': 'LONG', 'scenario': {'key': 'E2', 'ready': True}}}}
+    txt, key = A.ai_heartbeat_text(view, {'enabled': True}, {}, 0, 0)
+    _check('⛔ не відкрито: CL ▲ E2 — ліміт' in txt and key == (), txt)
+    _check('c.block' in _HTML and "rd.blocked" in _HTML and 'p.ai_conf' in _HTML, 'таблиця · тумблер · угоди')
+    _check("pos['ai_conf']" in _TM and "впевненість {cf}%" in _TM, 'впевненість на позиції й у Telegram')
+    _check('id="aip-sl-src"' in _HTML and 'id="aip-min-conf"' in _HTML, 'налаштування на панелі')
 
 
 if __name__ == '__main__':

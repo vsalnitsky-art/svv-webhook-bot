@@ -291,6 +291,27 @@ def is_dir_only(row: Dict) -> bool:
     return isinstance(ctx, dict) and ctx.get('role') in ('dir', 'sub')
 
 
+def ai_min_charge() -> float:
+    """Поріг заряду ШІ (налаштування ШІ «Заряд ≥», деф. 65) — ЄДИНЕ правило
+    «заряджена» для кандидатів ШІ і для дослідження аномалій (22.11): монета,
+    яку ШІ перебирає, мусить мати аномалії, інакше сценарію не скластись."""
+    import sys as _sys
+    m = _sys.modules.get('detection.ai_signals')
+    try:
+        return float((m.ai_settings_now() if m else {}).get('min_charge') or 65)
+    except Exception:
+        return 65.0
+
+
+def is_charged(rec, min_charge: float = 65.0) -> bool:
+    """🌀 заряджена (стан Пружини) АБО заряд ≥ порогу ШІ. ЧИСТА."""
+    r = rec or {}
+    try:
+        return r.get('state') == 'charged' or float(r.get('charge') or 0) >= float(min_charge)
+    except (TypeError, ValueError):
+        return r.get('state') == 'charged'
+
+
 def research_universe(trades, charged, seen, now, keep_sec=AFTER_CHARGE_SEC, extra=None,
                       subs=None):
     """🔬 Монети дослідження. ЧИСТА.
@@ -429,13 +450,14 @@ class VolAnomalyMonitor:
             except Exception:
                 return {}
         out: Dict = {}
+        mc = ai_min_charge()
         try:
             from detection.smc_scanner import get_smc_scanner
             sc = get_smc_scanner()
             if sc is not None:
                 wl = list(self._get_watchlist() if self._get_watchlist else sc.get_watchlist() or [])
                 for S, r in (sc.spring_for(wl) or {}).items():
-                    if (r or {}).get('state') == 'charged':
+                    if is_charged(r, mc):
                         out[str(S).upper()] = 'wl'
         except Exception:
             pass
@@ -444,7 +466,7 @@ class VolAnomalyMonitor:
             m = _sys.modules.get('detection.spring_scan')
             eng = m.get_spring_scan() if m and hasattr(m, 'get_spring_scan') else None
             for r in (eng.rows() if eng else []):
-                if r.get('state') == 'charged' and r.get('bybit') is not False and r.get('symbol'):
+                if is_charged(r, mc) and r.get('bybit') is not False and r.get('symbol'):
                     out.setdefault(str(r['symbol']).upper(), 'scan')
         except Exception:
             pass

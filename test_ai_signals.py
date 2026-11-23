@@ -413,6 +413,47 @@ def test_settings_and_ui():
     _check("'ai':" in _SL and 'ai_exit: "🤖 Вихід ШІ"' in _JS, 'мітки ШІ (бот + інфосайт)')
 
 
+def test_one_bad_coin_does_not_empty_the_view_2211():
+    """22.11: «перебирає 0 заряджених» — виняток на ОДНІЙ монеті обривав весь
+    такт, таблиця ШІ лишалась порожньою. Тепер монета падає сама."""
+    e, sc, tm = _engine(True)
+    real = A.etalon_brain
+    calls = {'n': 0}
+    def boom(*a, **k):
+        calls['n'] += 1
+        if calls['n'] == 1:
+            raise RuntimeError('битий запис')
+        return real(*a, **k)
+    A.etalon_brain = boom
+    try:
+        e.candidates = lambda mc: {'XUSDT': (dict(_REC), 'wl'), 'YUSDT': (dict(_REC), 'wl')}
+        n = e.tick(NOW)
+    finally:
+        A.etalon_brain = real
+    _check(n == 1 and e._stat['errors'] >= 1 and 'битий запис' in e._stat['last_err'], (n, e._stat))
+    r = e.readiness()
+    _check(r['coins'] == 1 and '⚠' in r['text'] and r['error'], r)
+
+
+def test_readiness_states_2211():
+    s = dict(A.AI_DEFAULTS, enabled=True)
+    r = A.ai_readiness(s, True, True, True, tick={'last_at': 0})
+    _check(r['state'] == 'starting', f'перебору ще не було: {r}')
+    r = A.ai_readiness(s, True, True, True, coins=3, tick={'last_at': NOW, 'cand': 5}, now=NOW + 10)
+    _check(r['state'] == 'watching' and 'кандидатів 5' in r['text'] and r['age'] == 10, r)
+    r = A.ai_readiness(s, True, True, True, anom_on=False)
+    _check(r['state'] == 'blocked' and 'Аномалії' in r['text'], r)
+
+
+def test_anomaly_universe_uses_ai_charge_threshold_2211():
+    import importlib.util as iu
+    spec = iu.spec_from_file_location('va_t', os.path.join(_ROOT, 'detection', 'vol_anomaly.py'))
+    va = iu.module_from_spec(spec); spec.loader.exec_module(va)
+    _check(va.is_charged({'state': 'building', 'charge': 60}, 55), 'нижчий поріг ШІ → у дослідженні')
+    _check(not va.is_charged({'state': 'building', 'charge': 60}, 65), 'деф. 65')
+    _check(va.is_charged({'state': 'charged', 'charge': 40}, 65), 'стан Пружини')
+
+
 if __name__ == '__main__':
     fails = 0
     for name, fn in sorted((k, v) for k, v in dict(globals()).items() if k.startswith('test_') and callable(v)):
