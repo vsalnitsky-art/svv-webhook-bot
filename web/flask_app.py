@@ -224,7 +224,8 @@ def create_app():
             # заголовком X-Info-Token (без cookie), а cookie SameSite=Lax не
             # їде з чужого сайту — підробити запис від імені людини не можна.
             _own = request.path.startswith('/api/me')
-            if request.path.startswith('/api/') and (
+            # 🛡 адмін-API крос-доменно НЕ відкриваємо (24.11)
+            if request.path.startswith('/api/') and not request.path.startswith('/api/admin') and (
                     request.method in ('GET', 'HEAD', 'OPTIONS')
                     or (_own and request.method == 'POST')):
                 resp.headers['Access-Control-Allow-Origin'] = '*'

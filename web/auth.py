@@ -1153,6 +1153,23 @@ _USER_NO_BOT_ALLOWED = ('/cabinet', '/logout', '/api/me', '/pending',
                         '/api/info/')
 
 
+_ADMIN_PREFIX = ('/admin/', '/api/admin/')
+
+
+def is_admin_path(path):
+    """🛡 Адмін-панель: `/admin/...` і `/api/admin/...` (+ точні `/admin`)."""
+    path = path or ''
+    return path == '/admin' or path.startswith(_ADMIN_PREFIX)
+
+
+def admin_access_ok(u, via_token=False):
+    """ЧИСТА (вимога 24.11): доступ до адмін-панелі — ЛИШЕ через сесію БОТА
+    (вхід на сайті бота, cookie) і ЛИШЕ активному адміністратору. Токен
+    інфосайту (X-Info-Token) і ключ INFO_API_KEY сюди НЕ пускають."""
+    return bool(u is not None and getattr(u, 'is_admin', False)
+                and not getattr(u, 'disabled', False) and not via_token)
+
+
 def _is_public(path):
     if path in _PUBLIC_EXACT:
         return True
@@ -1202,7 +1219,7 @@ def install_auth_gate(app):
         # дані конкретного користувача, і заблокований акаунт не має бачити
         # сторінку лише тому, що ключ лежить у config.js (вимога 09.11).
         if (_api_key and path.startswith('/api/')
-                and not path.startswith(('/api/me', '/api/info/'))
+                and not path.startswith(('/api/me', '/api/info/', '/api/admin'))
                 and request.method in ('GET', 'HEAD', 'OPTIONS')
                 and request.headers.get('X-API-Key') == _api_key):
             return None
@@ -1211,6 +1228,12 @@ def install_auth_gate(app):
             if _wants_json(path):
                 return jsonify({'ok': False, 'error': 'auth_required'}), 401
             return redirect(url_for('auth_login', next=path))
+        # 🛡 Адмін-панель — лише сесія бота + адміністратор (до будь-яких
+        # інших винятків гейта; токен інфосайту сюди не пускає).
+        if is_admin_path(path) and not admin_access_ok(u, getattr(g, '_via_token', False)):
+            if _wants_json(path):
+                return jsonify({'ok': False, 'error': 'admin_only'}), 403
+            return abort(403)
         if not _is_active(u):
             # Logged in but pending confirm/approval OR access expired → block.
             _expired = bool(getattr(u, 'access_until', None)
@@ -1367,24 +1390,6 @@ table{width:100%;border-collapse:collapse;font-size:.8rem} th,td{padding:7px 9px
 .actbtn:hover{background:#232c3d}
 body.full{align-items:flex-start;justify-content:flex-start}
 .fullcard{max-width:1560px!important;width:calc(100vw - 32px);margin:16px auto!important}
-tr.urow:hover{background:rgba(255,255,255,.03);cursor:pointer}
-/* modal */
-.ovl{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;
- justify-content:center;z-index:100000;padding:16px}
-.ovl.open{display:flex}
-.modal{width:100%;max-width:560px;max-height:90vh;overflow-y:auto;background:#141922;
- border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.6)}
-.mrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:8px 0}
-.mlbl{font-size:.72rem;color:#9aa3b5;min-width:120px}
-.sect{border-top:1px solid rgba(255,255,255,.08);margin-top:14px;padding-top:10px}
-.sect h3{font-size:.82rem;margin:0 0 8px;color:#cbd5e1}
-.prm-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin:4px 0}
-.prm{display:flex;align-items:center;gap:6px;font-size:.74rem;color:#cbd5e1;cursor:pointer;
- padding:3px 6px;border:1px solid rgba(255,255,255,.06);border-radius:6px;background:#0e1219}
-.prm input{margin:0}
-.prm.dead{opacity:.45}
-.prm.trd{border-color:rgba(250,204,21,.25)}
-@media(max-width:520px){.prm-grid{grid-template-columns:1fr}}
 </style></head><body class="{{ 'full' if full else '' }}">
 <div class="card {{ 'fullcard' if full else '' }}" style="max-width:{{width or 400}}px">
 {% if not full %}<img class="brandlogo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none'">{% endif %}
@@ -1938,10 +1943,19 @@ def register_auth_routes(app):
     @app.route('/admin/users')
     def admin_users_page():
         u = current_user()
-        if not u.is_admin:
+        if not admin_access_ok(u, getattr(g, '_via_token', False)):
             return abort(403)
-        return _page('Користувачі', _admin_users_body(), script=_admin_script(),
-                     full=True)
+        from web.admin_pages import render_list
+        return render_list(u.email, os.getenv('INFO_SITE_URL'))
+
+    @app.route('/admin/users/<int:uid>')
+    def admin_user_page(uid):
+        """🛡 «Керувати» — окрема сторінка користувача (24.11), не модальне вікно."""
+        u = current_user()
+        if not admin_access_ok(u, getattr(g, '_via_token', False)):
+            return abort(403)
+        from web.admin_pages import render_user
+        return render_user(uid, u.email, os.getenv('INFO_SITE_URL'))
 
     @app.route('/api/admin/users')
     def api_admin_users():
@@ -2242,277 +2256,6 @@ def _reset_form(token, err=''):
             f'<label>Новий пароль (мін. 8)</label><input name="password" type="password" required autofocus>'
             f'<label>Повторіть пароль</label><input name="password2" type="password" required>'
             f'<button type="submit">Зберегти пароль</button></form>')
-
-
-def _admin_users_body():
-    return (
-        '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">'
-        '<div style="display:flex;align-items:center;gap:14px">'
-        '<img src="/favicon.ico" alt="VSV" onerror="this.style.display=\'none\'"'
-        ' style="width:56px;height:56px;border-radius:12px;object-fit:cover;flex:none">'
-        '<div><h1 style="margin:0">🛡 Керування користувачами</h1>'
-        '<p class="sub" style="margin:4px 0 0">Новий акаунт активний лише після '
-        'підтвердження email ТА схвалення адміністратора</p></div></div>'
-        '<div><a class="actbtn" href="/cabinet">👤 Кабінет</a> '
-        '<a class="actbtn" href="/">📊 Дашборд</a> '
-        '<a class="actbtn" href="/logout" style="color:#fca5a5">Вийти</a></div></div>'
-        '<div id="stats" style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0"></div>'
-        '<div id="smtp" class="msg" style="display:none"></div>'
-        '<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:8px 0 4px">'
-        '<input id="q" placeholder="🔎 пошук за email…" style="max-width:280px" oninput="render()">'
-        '<select id="flt" onchange="render()" style="max-width:210px">'
-        '<option value="all">Усі</option>'
-        '<option value="pending">Очікують схвалення</option>'
-        '<option value="active">Активні</option>'
-        '<option value="admin">Адміни</option>'
-        '<option value="disabled">Вимкнені</option></select>'
-        '<button class="actbtn" style="margin-left:auto" onclick="toggleCreate()">➕ Створити користувача</button>'
-        '</div>'
-        '<div id="createbox" style="display:none;margin:6px 0;padding:12px;border:1px dashed #2a3140;border-radius:10px">'
-        '<div style="font-size:.72rem;color:#9aa3b5;margin-bottom:8px">Реєстрація на сайті — через Telegram (логін + пароль, без email). '
-        'Тут можна створити акаунт вручну: <b>логін</b> + пароль; за бажанням привʼязати Telegram (chat_id / @юзернейм).</div>'
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">'
-        '<div><label>Логін (ім’я для входу)</label><input id="c_login" type="text" style="width:200px"></div>'
-        '<div><label>Пароль (мін. 8)</label><input id="c_pw" type="text" style="width:170px"></div>'
-        '<div><label>Telegram chat_id (необовʼязково)</label><input id="c_tgc" type="text" style="width:150px"></div>'
-        '<div><label>@Telegram (необовʼязково)</label><input id="c_tgu" type="text" style="width:150px"></div>'
-        '<label style="display:flex;align-items:center;gap:6px;margin:0"><input id="c_adm" type="checkbox" style="width:auto"> адмін</label>'
-        '<label style="display:flex;align-items:center;gap:6px;margin:0"><input id="c_bot" type="checkbox" style="width:auto"> 🤖 доступ до бота</label>'
-        '<button class="actbtn" onclick="createUser()">Створити (30 днів, одразу активний)</button>'
-        '</div><div id="c_msg" style="font-size:.75rem;margin-top:6px;color:#fca5a5"></div></div>'
-        '<div style="overflow-x:auto"><table id="tbl"><thead><tr>'
-        '<th>#</th><th>Email</th><th>Роль</th><th>Статус</th><th>Доступ</th>'
-        '<th>Останній вхід</th><th>Входи / IP</th><th></th>'
-        '</tr></thead><tbody></tbody></table></div>'
-        '<p id="empty" class="sub" style="display:none;text-align:center;margin:16px 0">Нічого не знайдено</p>'
-        # ---- per-user modal ----
-        '<div id="ovl" class="ovl" onclick="if(event.target===this)closeM()">'
-        '<div class="modal" id="modal"></div></div>')
-
-
-def _admin_script():
-    return """
-    let USERS=[], LINKS={}, SMTP=null, PREVPEND=null, PDEFS=null;
-    async function load(){
-      const d=await (await fetch('/api/admin/users')).json();
-      USERS=d.users||[]; LINKS=d.pending_links||{}; SMTP=d.smtp_status||{}; PDEFS=d.perm_defs||PDEFS;
-      // Sequential display numbering (1..N) — independent of DB id gaps left by
-      // deleted users. The real DB id stays available (shown in the modal).
-      USERS.forEach((u,i)=>{ u.seq=i+1; });
-      renderSmtp();
-      // notify when a NEW user appears (pending count grows)
-      if(PREVPEND!=null && (d.pending||0)>PREVPEND){ notify('🆕 Новий користувач очікує схвалення'); }
-      PREVPEND=d.pending||0;
-      stats(); render();
-    }
-    function renderSmtp(){
-      const s=document.getElementById('smtp'); s.style.display='block';
-      const st=SMTP||{}; const last=st.last||{};
-      const dot=(c)=>`<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${c};margin-right:6px"></span>`;
-      const prov=(st.provider||'').toUpperCase();
-      let state, col;
-      if(!st.configured){ state='Пошта НЕ налаштована (dev-режим — листи не йдуть, посилання підтвердження показані в таблиці)'; col='#fbbf24'; s.className='msg';
-        s.style.borderColor='rgba(250,204,21,.4)'; }
-      else if(last.ok===false){ state=prov+': ОСТАННЯ відправка НЕ вдалась'; col='#f87171'; s.className='msg err'; }
-      else if(last.ok===true){ state=prov+': працює (остання відправка успішна)'; col='#4ade80'; s.className='msg ok'; }
-      else { state=prov+': налаштовано (відправок ще не було — натисніть «Тест»)'; col='#93c5fd'; s.className='msg'; s.style.borderColor='rgba(147,197,253,.4)'; }
-      let rows=`<div style="font-weight:700;margin-bottom:6px">${dot(col)}${state}</div>`;
-      if(st.configured){
-        if(st.is_api){
-          rows+=`<div style="font-size:.72rem;color:#9aa3b5;line-height:1.6">транспорт: <b style="color:#86efac">${prov} (HTTP API, порт 443 — працює на Render)</b> · from: <b style="color:#cbd5e1">${st.from||'—'}</b></div>`;
-        } else {
-          rows+=`<div style="font-size:.72rem;color:#9aa3b5;line-height:1.6">`+
-            `SMTP host: <b style="color:#cbd5e1">${st.host||'—'}:${st.port||'—'}</b> · `+
-            `user: <b style="color:#cbd5e1">${st.user||'—'}</b> · from: <b style="color:#cbd5e1">${st.from||'—'}</b> · `+
-            `TLS: <b style="color:#cbd5e1">${st.tls}</b> · пароль: <b style="color:${st.pass_set?'#86efac':'#fca5a5'}">${st.pass_set?'заданий':'НЕ заданий'}</b></div>`;
-          rows+='<div class="msg" style="font-size:.72rem;margin:8px 0 0;border-color:rgba(250,204,21,.4)">⚠ Render БЛОКУЄ вихідні SMTP-порти (25/465/587). Якщо бачите «Network is unreachable» — SMTP на Render не працюватиме. Використайте HTTP-API: задайте <b>RESEND_API_KEY</b> (або BREVO_API_KEY / SENDGRID_API_KEY) — і листи підуть через порт 443.</div>';
-        }
-        if(last.ok===false){ rows+=`<div class="msg err" style="font-size:.72rem;margin:8px 0 0">✖ Помилка (${last.stage||'?'}): <b>${last.error||'—'}</b></div>`; }
-        if(last.ok===true){ rows+=`<div style="font-size:.7rem;color:#86efac;margin-top:6px">✔ Останній лист: ${last.to||''} · ${last.at?new Date(last.at*1000).toLocaleString():''}</div>`; }
-      } else {
-        rows+='<div style="font-size:.72rem;color:#9aa3b5;margin-top:4px">На Render SMTP заблокований. Варіанти:<br>'+
-          '• HTTP-API ключ у env: <b style="color:#cbd5e1">MAILJET_API_KEY + MAILJET_SECRET_KEY</b> (легша реєстрація) або RESEND_API_KEY / BREVO_API_KEY / SENDGRID_API_KEY, + <b style="color:#cbd5e1">MAIL_FROM</b>.<br>'+
-          '• Без реєстрації: посилання підтвердження вже <b style="color:#86efac">дублюється у ваш Telegram</b> (бот налаштований) — можете переслати користувачу.<br>'+
-          '• Або взагалі без листів: підтверджуйте/схвалюйте користувачів вручну в цій панелі.</div>';
-      }
-      rows+=`<div style="margin-top:10px"><button class="actbtn" onclick="smtpTest()">🔌 Надіслати тестовий лист собі</button> <span id="smtptestmsg" style="font-size:.72rem"></span></div>`;
-      s.innerHTML=rows;
-    }
-    async function smtpTest(){
-      const m=document.getElementById('smtptestmsg'); m.textContent=' надсилаю…'; m.style.color='#9aa3b5';
-      const r=await fetch('/api/admin/smtp-test',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});
-      const d=await r.json(); SMTP=d.status||SMTP;
-      let tgtxt='';
-      if(d.tg_configured){ tgtxt = d.tg?' · 📨 Telegram: надіслано ✔':' · 📨 Telegram: помилка ✖'; }
-      if(d.ok){ m.innerHTML=' ✔ лист надіслано на '+d.to+' — перевірте пошту (і Спам)'+tgtxt; m.style.color='#86efac'; }
-      else { const e=(d.status&&d.status.last)?d.status.last.error:''; m.innerHTML=' ✖ пошта: '+(e||'див. деталі')+(d.tg_configured?(d.tg?' · але 📨 Telegram працює ✔':' · 📨 Telegram ✖'):''); m.style.color=d.tg?'#fbbf24':'#fca5a5'; }
-      renderSmtp();
-    }
-    function notify(text){
-      try{ if(window.Notification && Notification.permission==='granted'){ new Notification('VSV Bot',{body:text}); } }catch(e){}
-      const t=document.createElement('div'); t.textContent=text;
-      t.style.cssText='position:fixed;right:16px;top:16px;z-index:100001;background:#166534;color:#fff;padding:10px 14px;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.5);font-size:.8rem';
-      document.body.appendChild(t); setTimeout(()=>t.remove(),5000);
-    }
-    function stats(){
-      const t=USERS.length, adm=USERS.filter(u=>u.is_admin).length,
-            act=USERS.filter(u=>u.active).length,
-            pend=USERS.filter(u=>!u.approved&&!u.is_admin).length,
-            dis=USERS.filter(u=>u.disabled).length;
-      const card=(n,l,c)=>`<div style="flex:1;min-width:120px;background:#0e1219;border:1px solid rgba(255,255,255,.07);border-radius:10px;padding:10px 14px"><div style="font-size:1.4rem;font-weight:800;color:${c}">${n}</div><div class="sub" style="margin:0">${l}</div></div>`;
-      document.getElementById('stats').innerHTML=
-        card(t,'усього','#e5e7eb')+card(pend,'очікують схвалення','#fbbf24')+
-        card(act,'активні','#4ade80')+card(adm,'адміни','#fde68a')+card(dis,'вимкнені','#9aa3b5');
-    }
-    function render(){
-      const q=(document.getElementById('q').value||'').toLowerCase();
-      const flt=document.getElementById('flt').value;
-      const tb=document.querySelector('#tbl tbody'); tb.innerHTML='';
-      let list=USERS.filter(u=>u.email.toLowerCase().includes(q));
-      if(flt==='pending') list=list.filter(u=>!u.approved&&!u.is_admin);
-      else if(flt==='active') list=list.filter(u=>u.active);
-      else if(flt==='admin') list=list.filter(u=>u.is_admin);
-      else if(flt==='disabled') list=list.filter(u=>u.disabled);
-      document.getElementById('empty').style.display=list.length?'none':'block';
-      for(const u of list){
-        const role=u.is_admin?'<span class="badge b-adm">адмін</span>':'<span class="badge b-off">користувач</span>';
-        const ac=u.disabled?'<span class="badge b-off">вимкнено</span>':(u.active?'<span class="badge b-on">активний</span>':(u.approved&&u.email_confirmed?'<span class="badge b-off">неактивний</span>':'<span class="badge b-off">очікує</span>'));
-        let access='—';
-        if(u.days_left!=null) access= u.days_left>0?`<span class="badge b-on">${u.days_left} дн</span>`:'<span class="badge b-off">завершено</span>';
-        else access='<span class="badge b-off">безлім</span>';
-        const ipwarn=u.distinct_ips>1?` <span class="badge b-off" title="Входи з різних IP — можливе поширення пароля" style="color:#fca5a5">⚠ ${u.distinct_ips} IP</span>`:'';
-        const tr=document.createElement('tr'); tr.className='urow'; tr.onclick=()=>openM(u.id);
-        tr.innerHTML=`<td style="color:#9aa3b5">${u.seq}</td>`+
-          `<td><b>${u.email}</b></td>`+
-          `<td>${role}</td><td>${ac}</td><td>${access}</td>`+
-          `<td style="font-size:.68rem;color:#9aa3b5;white-space:nowrap">${fmt(u.last_login)||'—'}</td>`+
-          `<td style="font-size:.68rem;color:#9aa3b5">${u.login_count||0}${ipwarn}</td>`+
-          `<td style="white-space:nowrap"><button class="actbtn" onclick="event.stopPropagation();openM(${u.id})">⚙ Керувати</button></td>`;
-        tb.appendChild(tr);
-      }
-    }
-    function fmt(s){return s?String(s).slice(0,16).replace('T',' '):'';}
-
-    // ---- per-user modal ----
-    let CUR=null;
-    function openM(id){ CUR=id; drawM(); document.getElementById('ovl').classList.add('open'); }
-    function closeM(){ document.getElementById('ovl').classList.remove('open'); }
-    function drawM(){
-      const u=USERS.find(x=>x.id===CUR); if(!u)return closeM();
-      const pl=LINKS[u.email]?LINKS[u.email].link:null;
-      const b=[];
-      b.push(`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
-        <div><h1 style="margin:0">${u.email}</h1><p class="sub" style="margin:2px 0 0">№ ${u.seq} · ID ${u.id} · ${u.is_admin?'адмін':'користувач'}${(u.tg_name||u.tg_user)?(' · 📨 '+[u.tg_name,(u.tg_user?('@'+u.tg_user):'')].filter(Boolean).join(' ')):''}</p></div>
-        <button class="actbtn" onclick="closeM()">✕</button></div>`);
-      // status
-      b.push('<div class="mrow" style="margin-top:10px">'+
-        (u.email_confirmed?'<span class="badge b-on">email ✓</span>':'<span class="badge b-off">email ✗</span>')+
-        (u.approved?'<span class="badge b-on">схвалено</span>':'<span class="badge b-off">очікує схвалення</span>')+
-        (u.disabled?'<span class="badge b-off">вимкнено</span>':'')+
-        (u.tg_linked?'<span class="badge b-on">📨 Telegram</span>':'')+
-        (u.bot_access?'<span class="badge b-adm">🤖 бот</span>':'<span class="badge b-off">лише інфо-сайт</span>')+
-        (u.active?'<span class="badge b-on">активний</span>':'<span class="badge b-off">неактивний</span>')+'</div>');
-      if(pl) b.push(`<div class="msg" style="font-size:.7rem;word-break:break-all"><b>Посилання підтвердження (SMTP off):</b><br><a href="${pl}" style="color:#60a5fa">${pl}</a></div>`);
-      // approval
-      b.push('<div class="sect"><h3>Схвалення та email</h3><div class="mrow">'+
-        (u.approved?A(u.id,'revoke','⨯ Відкликати схвалення'):A(u.id,'approve','✓ Схвалити'))+
-        (u.email_confirmed?'':A(u.id,'confirm','✉ Підтвердити email')+A(u.id,'resend','↻ Надіслати лист'))+'</div></div>');
-      // time-limited access
-      const dl=u.days_left; const cur = dl==null?'безлімітний':(dl>0?dl+' дн залишилось':'завершено');
-      b.push('<div class="sect"><h3>⏳ Термін доступу <span class="sub">('+cur+')</span></h3><div class="mrow">'+
-        A(u.id,'set_access','10 днів',{days:10})+A(u.id,'set_access','15 днів',{days:15})+
-        A(u.id,'set_access','30 днів',{days:30})+A(u.id,'set_access','Необмежено',{days:0})+
-        '<button class="actbtn" onclick="customDays('+u.id+')">Свій період…</button></div></div>');
-      // site access (two-site model)
-      if(!u.is_admin){
-        b.push('<div class="sect"><h3>🌐 Доступ до сайтів</h3>'+
-          '<div class="mrow"><span class="mlbl">Інфо-сайт</span><span class="badge b-on">завжди</span></div>'+
-          '<div class="mrow"><span class="mlbl">Бот (торгова панель)</span>'+
-          (u.bot_access?'<span class="badge b-adm">надано</span>':'<span class="badge b-off">нема</span>')+'</div>'+
-          '<div class="mrow">'+
-          (u.bot_access?A(u.id,'revoke_bot','🤖 Забрати доступ до бота'):A(u.id,'grant_bot','🤖 Надати доступ до бота'))+
-          '</div></div>');
-      }
-      // 🛡 що показувати / дозволяти на інфосайті (24.11)
-      b.push(permsHTML(u));
-      // role + state
-      b.push('<div class="sect"><h3>Роль і стан</h3><div class="mrow">'+
-        (u.is_admin?A(u.id,'remove_admin','− Зняти адміна'):A(u.id,'make_admin','+ Зробити адміном'))+
-        (u.disabled?A(u.id,'enable','▶ Увімкнути'):A(u.id,'disable','⏸ Вимкнути'))+
-        A(u.id,'kick','🚪 Розлогінити (скинути сесії)')+'</div></div>');
-      // password
-      b.push('<div class="sect"><h3>Пароль</h3><div class="mrow">'+
-        '<button class="actbtn" onclick="setpw('+u.id+')">🔑 Задати новий пароль</button></div></div>');
-      // security / logins
-      const ips=(u.recent_ips||[]).join(', ')||'—';
-      const warn=u.distinct_ips>1?'<div class="msg err" style="font-size:.72rem">⚠ Входи з '+u.distinct_ips+' різних IP — можливе поширення пароля. Одна сесія на акаунт: новий вхід автоматично вимикає попередній.</div>':'';
-      b.push('<div class="sect"><h3>🔒 Безпека / входи</h3>'+warn+
-        '<div class="mrow"><span class="mlbl">Останній IP</span><span>'+(u.last_ip||'—')+'</span></div>'+
-        '<div class="mrow"><span class="mlbl">Усього входів</span><span>'+(u.login_count||0)+'</span></div>'+
-        '<div class="mrow"><span class="mlbl">Останні IP</span><span style="font-size:.72rem;color:#9aa3b5">'+ips+'</span></div></div>');
-      // danger
-      b.push('<div class="sect"><h3 style="color:#fca5a5">Небезпечно</h3><div class="mrow">'+
-        A(u.id,'delete','🗑 Видалити користувача')+'</div></div>');
-      document.getElementById('modal').innerHTML=b.join('');
-    }
-    function permsHTML(u){
-      const D=PDEFS||{groups:[],perms:[]};
-      if(u.is_admin) return '<div class="sect"><h3>🛡 Інфосайт: що показувати і що дозволено</h3>'+
-        '<div class="mrow"><span class="badge b-adm">адміністратор — доступ до всього</span></div></div>';
-      const raw=u.perms||{}, eff=u.perms_eff||{};
-      const val=p=> (p.key in raw)?!!raw[p.key]:!!p.default;
-      const all={}, view={}, none={};
-      D.perms.forEach(p=>{ all[p.key]=true; none[p.key]=false; view[p.key]=p.group!=='trade'; });
-      const h=['<div class="sect"><h3>🛡 Інфосайт: що показувати і що дозволено</h3>',
-        '<p class="sub" style="margin:-2px 0 8px">Сервер перевіряє кожне право сам — прихований розділ не віддає даних, '+
-        'заборонений шар графіка не надсилається, сповіщення й торгівля без права не виконуються.</p>',
-        '<div class="mrow">'+A(u.id,'set_perms','✓ Усе дозволити',{perms:all})+
-        A(u.id,'set_perms','👁 Лише перегляд (без торгівлі)',{perms:view})+
-        A(u.id,'set_perms','⛔ Усе заборонити',{perms:none})+'</div>'];
-      D.groups.forEach(g=>{
-        const ps=D.perms.filter(p=>p.group===g.key); if(!ps.length) return;
-        h.push('<div style="margin-top:8px;font-size:.72rem;color:#9aa3b5;font-weight:700">'+g.label+'</div>');
-        h.push('<div class="prm-grid">'+ps.map(p=>{
-          const on=val(p), dead=on&&!eff[p.key];
-          const tip=(p.hint||'')+(dead?' — не діє: вимкнено «'+((D.perms.find(x=>x.key===p.needs)||{}).label||p.needs)+'»':'');
-          return '<label class="prm'+(dead?' dead':'')+(p.group==='trade'?' trd':'')+'" title="'+tip.replace(/"/g,'&quot;')+'">'+
-            '<input type="checkbox" '+(on?'checked ':'')+'onchange="permSet('+u.id+',\\''+p.key+'\\',this.checked)"> '+p.label+'</label>';
-        }).join('')+'</div>');
-      });
-      h.push('</div>');
-      return h.join('');
-    }
-    function permSet(id,key,on){
-      if(on&&key==='trade_real'&&!confirm('Дозволити РЕАЛЬНУ торгівлю за сигналом ⚠?\\n\\nУгоди відкриває Trade Manager БОТА — з ключами і депозитом бота.')){ drawM(); return; }
-      act(id,'set_perms',{key:key,on:on});
-    }
-    function A(id,a,label,extra){ return `<button class="actbtn" onclick='act(${id},"${a}",${JSON.stringify(extra||{})})'>${label}</button>`; }
-    function customDays(id){ const n=prompt('На скільки днів надати доступ? (0 = без обмеження)'); if(n===null)return; act(id,'set_access',{days:parseInt(n)||0}); }
-    async function act(id,a,extra){
-      if(a==='delete'&&!confirm('Видалити користувача назавжди?'))return;
-      const body=Object.assign({action:a},extra||{});
-      const r=await fetch('/api/admin/users/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      const d=await r.json(); if(!d.ok){alert(d.error||'Помилка');return;}
-      await load(); if(document.getElementById('ovl').classList.contains('open')) drawM();
-    }
-    function setpw(id){ const p=prompt('Новий пароль для користувача (мін. 8 символів):'); if(!p)return; act(id,'set_password',{password:p}); }
-    function toggleCreate(){ const b=document.getElementById('createbox'); b.style.display=b.style.display==='none'?'block':'none'; }
-    async function createUser(){
-      const login=document.getElementById('c_login').value, pw=document.getElementById('c_pw').value,
-            adm=document.getElementById('c_adm').checked, bot=document.getElementById('c_bot').checked,
-            tgc=document.getElementById('c_tgc').value, tgu=document.getElementById('c_tgu').value,
-            m=document.getElementById('c_msg');
-      const r=await fetch('/api/admin/users/create',{method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({login,password:pw,is_admin:adm,bot_access:bot,telegram_chat_id:tgc,telegram_username:tgu})});
-      const d=await r.json();
-      if(!d.ok){ m.textContent=d.error||'Помилка'; return; }
-      m.textContent=''; document.getElementById('c_login').value=''; document.getElementById('c_pw').value='';
-      document.getElementById('c_tgc').value=''; document.getElementById('c_tgu').value='';
-      document.getElementById('c_adm').checked=false; document.getElementById('c_bot').checked=false;
-      toggleCreate(); load();
-    }
-    try{ if(window.Notification && Notification.permission==='default') Notification.requestPermission(); }catch(e){}
-    load(); setInterval(load, 15000);"""
 
 
 # ==================================================================

@@ -432,7 +432,7 @@ def test_blocked_user_has_no_access_and_no_group():
     fb = src.split('def forget_bot_user')[1][:900]
     _check('group_ban(' in fb and 'forget_bot_contact' in fb, 'видалений → бан у групі + слід у боті')
     auth = open(os.path.join(_HERE, 'web', 'auth.py'), encoding='utf-8').read()
-    _check("not path.startswith(('/api/me', '/api/info/'))" in auth,
+    _check("not path.startswith(('/api/me', '/api/info/', '/api/admin'))" in auth,
            'API-ключ не відкриває особистий кабінет')
     _check("'blocked' if" in auth and 'sync_user_group(uid)' in auth, 'причина 403 + синхронізація групи')
     _check('forget_bot_user(target.telegram_chat_id)' in auth, 'видалення акаунта кличе повне видалення')

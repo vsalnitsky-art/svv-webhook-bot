@@ -103,9 +103,10 @@ def test_user_cannot_overwrite_server_prefs():
 
 def test_admin_panel_has_perms():
     auth = _src('web/auth.py')
+    ui = _src('web/admin_pages.py')
     assert "action == 'set_perms'" in auth and "'perm_defs': _up().defs()" in auth
-    assert "'perms': _perms_raw(u)" in auth and 'function permsHTML(u)' in auth
-    assert 'адміністратор — доступ до всього' in auth
+    assert "'perms': _perms_raw(u)" in auth and 'function permsHTML(u)' in ui
+    assert 'Адміністратор — доступ до всього' in ui
     # кабінет бота: торгівля + ключі (адмін)
     assert 'id="keys"' in auth and "fetch('/api/me/keys')" in auth and 'id="trade"' in auth
 
@@ -124,6 +125,44 @@ def test_infosite_hides_by_perms():
         assert k in html, k
         if k.startswith('pm-'):
             assert 'body.perm-no-' + k[3:] + ' .' + k in css, k
+
+
+def test_admin_pages_are_full_pages_in_infosite_style():
+    """24.11: «Керувати» — окрема сторінка, не модальне вікно; стиль інфосайту."""
+    auth = _src('web/auth.py')
+    ui = _src('web/admin_pages.py')
+    assert "@app.route('/admin/users/<int:uid>')" in auth and 'render_user(' in auth
+    assert 'id="ovl"' not in auth and 'function drawM' not in auth          # модалку прибрано
+    assert "location.href='/admin/users/'+id" in ui and 'href="/admin/users/' in ui
+    for tok in ('--p-ink-1', 'IBM+Plex+Mono', '.kpis', '.grid2', '.perm-grp'):
+        assert tok in ui, tok
+    assert 'id="nav-user-chip"' in ui      # плаваючий чип не налазить на шапку
+
+
+def test_admin_access_only_bot_session_admin():
+    """24.11: адмін-панель — лише через сесію бота і лише адміністратору."""
+    import types as T
+    src = _src('web/auth.py')
+    ns = {}
+    i = src.index('def is_admin_path')
+    j = src.index('def _is_public')
+    exec("_ADMIN_PREFIX = ('/admin/', '/api/admin/')\n" + src[i:j], ns)
+    ok, isp = ns['admin_access_ok'], ns['is_admin_path']
+    adm = T.SimpleNamespace(is_admin=True, disabled=False)
+    usr = T.SimpleNamespace(is_admin=False, disabled=False)
+    assert ok(adm) and not ok(adm, via_token=True) and not ok(usr) and not ok(None)
+    assert not ok(T.SimpleNamespace(is_admin=True, disabled=True))
+    assert isp('/admin/users') and isp('/admin/users/3') and isp('/api/admin/users')
+    assert not isp('/api/me') and not isp('/administrator')
+    gate = src[src.index('def _auth_gate'):]
+    gate = gate[:gate.index('def ', 20)]
+    assert 'is_admin_path(path) and not admin_access_ok(u, getattr(g, \'_via_token\', False))' in gate
+    assert "'/api/info/', '/api/admin')" in gate        # INFO_API_KEY сюди не пускає
+    for fn in ('def admin_users_page', 'def admin_user_page'):
+        seg = src[src.index(fn):src.index(fn) + 400]
+        assert 'admin_access_ok(u' in seg, fn
+    fa = _src('web/flask_app.py')
+    assert "not request.path.startswith('/api/admin')" in fa     # без CORS
 
 
 if __name__ == '__main__':
