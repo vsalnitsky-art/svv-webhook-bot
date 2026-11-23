@@ -216,7 +216,7 @@ def test_ltf_confirmation_uses_the_1h_box_level():
     t0 = h[-1]['t'] // 1000 + 3600                    # 15m-свічки після останньої 1h
     s = A.ai_settings_norm({})
     assert s['discharge_tf'] == '1h' and s['discharge_bars_15m'] == 2
-    assert A.ai_settings_norm({'discharge_tf': '5m'})['discharge_tf'] == '1h'
+    assert A.ai_settings_norm({'discharge_tf': '1m'})['discharge_tf'] == '1h'
     # 15m: пробій 100.3 + дві свічки втримали → confirmed (на 1h ще нічого)
     r = A.discharge_state_ltf(h, _bars15([100.1, 100.3, 100.4, 100.5], t0), 'LONG', 100.5, need=2)
     assert r['state'] == 'confirmed' and r['tf'] == '15m' and abs(r['edge'] - 100.2) < 1e-9
@@ -244,7 +244,7 @@ def test_shadow_record_follow_and_stats():
     assert rec['done']
     st = A.dis_shadow_stats([rec, {'tf': '1h', 'last': 1.5, 'mfe': 2, 'mae': -0.5, 'lead_min': 40}])
     assert st['15m']['n'] == 1 and st['15m']['false_pct'] == 100.0
-    assert st['1h']['win_pct'] == 100.0 and st['1h']['avg_lead_min'] == 40.0
+    assert st['1h']['win_pct'] == 100.0 and st['15m']['avg_lead_min'] == 40.0
 
 
 def test_engine_shadow_and_selected_tf():
@@ -257,7 +257,7 @@ def test_engine_shadow_and_selected_tf():
     l15 = _bars15([100.3, 100.4, 100.5], t0)
     eng._pro_bars['X'] = {'1h': (NOW_E, h), '15m': (NOW_E, l15)}
     d = eng.discharge_for('X', 'LONG', NOW_E, 100.5)
-    assert d['tf'] == '15m' and d['state'] == 'confirmed' and d['alt']['tf'] == '1h'
+    assert d['tf'] == '15m' and d['state'] == 'confirmed' and d['alts'][0]['tf'] == '1h'
     both = eng.discharge_both('X', 'LONG', NOW_E, 100.5)
     eng._dis_shadow_tick('X', 'LONG', both, 100.5, NOW_E)
     eng._dis_shadow_tick('X', 'LONG', both, 100.6, NOW_E + 30)        # той самий пробій — без дубля
@@ -272,6 +272,53 @@ def test_page_has_tf_choice_and_shadow():
     for k in ('aip-dis-tf', 'aip-dis-bars15', 'aip-dis-stats', '_aipDisStatsHTML',
               'discharge_tf:', 'discharge_bars_15m:', 'ds.alt'):
         assert k in src, k
+
+
+def _bars5(closes, t0, pad=0.03):
+    return [{'t': (t0 + i * 300) * 1000, 'p': c, 'h': c + pad, 'l': c - pad, 'o': c}
+            for i, c in enumerate(closes)]
+
+
+def test_struct_5m_choch_bos_beyond_box():
+    h = _bars(FLAT)                                       # коробка 1h 99.8 … 100.2
+    t0 = h[-1]['t'] // 1000 + 3600
+    m5 = _bars5([100.0, 100.1, 100.15, 100.1, 100.3, 100.35, 100.4, 100.45, 100.5, 100.5], t0)
+    ev = lambda i, tag, d: {'to_t': m5[i]['t'], 'tag': tag, 'dir': d, 'level': 100}
+    # CHoCH у коробці, BOS закрився за межею 100.2 → confirmed
+    r = A.discharge_state_struct(h, m5, 'LONG', 100.5, events=[ev(2, 'CHoCH', 'bull'), ev(4, 'BOS', 'bull')])
+    assert r['state'] == 'confirmed' and r['tf'] == '5m' and abs(r['edge'] - 100.2) < 1e-9, r
+    # BOS усередині коробки — не сигнал
+    r = A.discharge_state_struct(h, m5, 'LONG', 100.5, events=[ev(1, 'CHoCH', 'bull'), ev(2, 'BOS', 'bull')])
+    assert r['state'] == 'pending'
+    # BOS без CHoCH перед ним — не сигнал
+    assert A.discharge_state_struct(h, m5, 'LONG', 100.5, events=[ev(4, 'BOS', 'bull')])['state'] == 'none'
+    # після BOS зустрічний CHoCH → хибний старт
+    r = A.discharge_state_struct(h, m5, 'LONG', 100.0, events=[ev(2, 'CHoCH', 'bull'), ev(4, 'BOS', 'bull'),
+                                                               ev(7, 'CHoCH', 'bear')])
+    assert r['state'] == 'false'
+    # ціна повернулась у коробку → ще не підтверджено
+    assert A.discharge_state_struct(h, m5, 'LONG', 100.1,
+                                    events=[ev(2, 'CHoCH', 'bull'), ev(4, 'BOS', 'bull')])['state'] == 'pending'
+    # зустрічна подія ДО CHoCH лише скидає ланцюг
+    r = A.discharge_state_struct(h, m5, 'LONG', 100.5, events=[ev(0, 'BOS', 'bear'), ev(2, 'CHoCH', 'bull'),
+                                                               ev(4, 'BOS', 'bull')])
+    assert r['state'] == 'confirmed'
+    # реальний детектор не падає на справжніх свічках
+    assert A.discharge_state_struct(h, m5, 'LONG', 100.5)['state'] in ('none', 'pending', 'confirmed', 'false')
+
+
+def test_pick_and_settings_5m():
+    assert A.ai_settings_norm({'discharge_tf': '5m'})['discharge_tf'] == '5m'
+    both = {'1h': {'state': 'live', 'tf': '1h'}, '15m': {'state': 'pending', 'tf': '15m'},
+            '5m': {'state': 'confirmed', 'tf': '5m', 'edge': 1}}
+    d = A.dis_pick(both, '5m')
+    assert d['state'] == 'confirmed' and [a['tf'] for a in d['alts']] == ['1h', '15m']
+    assert A.dis_pick(both, 'zz')['tf'] == '1h'
+    st = A.dis_shadow_stats([{'tf': '1h', 'last': 1, 'lead': {'15m': 30, '5m': 50}},
+                             {'tf': '5m', 'last': 2}, {'tf': '15m', 'last': 1}, {'tf': '1h', 'last': 1, 'lead_min': 20}])
+    assert st['5m']['avg_lead_min'] == 50.0 and st['15m']['avg_lead_min'] == 25.0
+    src = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    assert 'value="5m">5m CHoCH+BOS' in src and "row('5m')" in src and '_AI_DIS_TF' in src
 
 
 if __name__ == '__main__':

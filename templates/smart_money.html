@@ -5011,7 +5011,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
             <label class="sm-checkbox" title="💥 «Старт розряду» (E2) — лише ПІДТВЕРДЖЕНИЙ: пробій 24-год коробки має закритись 1h-свічкою, і ще N закритих свічок мусять утримати ціну за межею. Пробій лише на живій (незакритій) свічці або повернення в коробку = хибний старт, угоду не відкриваємо."><input type="checkbox" id="aip-dis-on" onchange="aipSave()"> 💥 розряд лише підтверджений</label>
-            <label title="TF, закриттям свічок якого підтверджується розряд. Рівень пробою — завжди межа 24-год коробки 1h (як і сама Пружина). 1H — надійніше, вхід до ~1-2 год пізніше; 15m — вхід на 30-45 хв раніше, але більше хибних стартів. Вихід на хибному старті — завжди за закриттям 1h. Обидва варіанти бот веде в тіньовій статистиці нижче.">підтвердження <select id="aip-dis-tf" onchange="aipSave()"><option value="1h">1H (закриття)</option><option value="15m">15m (закриття)</option></select></label>
+            <label title="TF, закриттям свічок якого підтверджується розряд. Рівень пробою — завжди межа 24-год коробки 1h (як і сама Пружина). 1H — надійніше, вхід до ~1-2 год пізніше; 15m — вхід на 30-45 хв раніше, але більше хибних стартів; 5m CHoCH+BOS — напрямок і сигнал дає внутрішня структура 5m: CHoCH у бік розряду, далі BOS, і свічка BOS закрилась за межею коробки 1h (CHoCH усередині коробки — шум, не сигнал); структура розвернулась після BOS — хибний старт. Вихід на хибному старті — завжди за закриттям 1h. Обидва варіанти бот веде в тіньовій статистиці нижче.">підтвердження <select id="aip-dis-tf" onchange="aipSave()"><option value="1h">1H (закриття)</option><option value="15m">15m (закриття)</option><option value="5m">5m CHoCH+BOS (структура)</option></select></label>
             <label id="aip-dis-bars-l" title="Скільки закритих 1h-свічок після пробою мусять утримати ціну за межею коробки">утримати ≥ <input type="number" id="aip-dis-bars" min="1" max="4" step="1" style="width:42px" onchange="aipSave()"> св. 1H</label>
             <label id="aip-dis-bars15-l" title="Скільки закритих 15m-свічок після пробою мусять утримати ціну за межею коробки 1h">утримати ≥ <input type="number" id="aip-dis-bars15" min="1" max="8" step="1" style="width:42px" onchange="aipSave()"> св. 15m</label>
             <label class="sm-checkbox" title="🪤 Угода ШІ, відкрита на «Старті розряду»: якщо закрита після входу 1h-свічка повернулась у коробку за межу пробою — розряду не було, вихід одразу (захисний, діє в обох режимах і попри заряд)."><input type="checkbox" id="aip-fs-exit" onchange="aipSave()"> 🪤 вихід на хибному старті</label>
@@ -6990,18 +6990,21 @@ function _aiDecision(c) {
 }
 // 💥 Стан розряду для «💥 Старт розряду» (E2): пробій закрито й утримано /
 // чекаємо підтвердження / лише жива свічка / 🪤 хибний старт (вимога 23.11).
+const _AI_DIS_TF = {'1h': '1H', '15m': '15m', '5m': '5m CHoCH+BOS'};
 const _AI_DIS = {confirmed: ['💥 розряд підтверджено', '#4ade80'], pending: ['⏳ розряд: чекаємо підтвердження', '#fbbf24'],
     live: ['⏳ пробій лише на живій свічці', '#fbbf24'], false: ['🪤 хибний старт', '#f87171'], none: ['· пробою коробки немає', '#6b7280']};
 function _aiDisLine(c) {
     const ds = c && c.discharge;
     if (!ds || !_AI_DIS[ds.state]) return '';
     const [t, col] = _AI_DIS[ds.state];
-    const alt = ds.alt || {};
+    const alts = (ds.alts || (ds.alt ? [ds.alt] : [])).filter(a => a && a.state);
+    const nm = tf => _AI_DIS_TF[tf] || String(tf || '').toUpperCase();
     const tip = (ds.note || '') + (ds.edge ? ' · межа пробою ' + fmtPriceJS(ds.edge) : '')
-        + (ds.t ? ' · пробій ' + _pcDM(ds.t) + ' ' + _pcHM(ds.t) : '')
-        + (alt.state ? '\nНа ' + String(alt.tf || '').toUpperCase() + ' (тінь): ' + ((_AI_DIS[alt.state] || [alt.state])[0]) + (alt.note ? ' — ' + alt.note : '') : '');
-    const altTxt = alt.state && _AI_DIS[alt.state] ? ` <span style="color:#6b7280">· ${String(alt.tf || '').toUpperCase()}: ${alt.state === 'confirmed' ? '✓' : (alt.state === 'false' ? '🪤' : '⏳')}</span>` : '';
-    return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t} <b>${String(ds.tf || '1h').toUpperCase()}</b>${ds.state === 'pending' ? ' ' + (ds.held || 0) + '/' + (ds.need || 1) : ''}${altTxt}</div>`;
+        + (ds.t ? ' · ' + _pcDM(ds.t) + ' ' + _pcHM(ds.t) : '')
+        + alts.map(a => '\n' + nm(a.tf) + ' (тінь): ' + ((_AI_DIS[a.state] || [a.state])[0]) + (a.note ? ' — ' + a.note : '')).join('');
+    const altTxt = alts.filter(a => _AI_DIS[a.state]).map(a => ` <span style="color:#6b7280">· ${a.tf === '5m' ? '5M' : String(a.tf).toUpperCase()}: ${a.state === 'confirmed' ? '✓' : (a.state === 'false' ? '🪤' : '⏳')}</span>`).join('');
+    const pend = ds.state === 'pending' && ds.tf !== '5m' ? ' ' + (ds.held || 0) + '/' + (ds.need || 1) : '';
+    return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t} <b>${nm(ds.tf || '1h')}</b>${pend}${altTxt}</div>`;
 }
 // 🏆🧠 Вердикт ГОЛОВНОГО МОЗКУ (база еталонів) для монети.
 function _aiEtalonCell(e) {
@@ -7164,7 +7167,7 @@ function _aipSlSync() {
     const dc = !!(document.getElementById('aip-dis-on') || {}).checked;
     const tf = (document.getElementById('aip-dis-tf') || {}).value || '1h';
     const l1 = document.getElementById('aip-dis-bars-l'), l15 = document.getElementById('aip-dis-bars15-l');
-    if (l1) l1.style.display = tf === '15m' ? 'none' : '';
+    if (l1) l1.style.display = tf === '1h' ? '' : 'none';
     if (l15) l15.style.display = tf === '15m' ? '' : 'none';
     ['aip-dis-bars', 'aip-dis-bars15', 'aip-dis-tf'].forEach(id => {
         const e = document.getElementById(id);
@@ -7179,13 +7182,14 @@ function _aipDisStatsHTML(sh) {
     const c = v => v == null ? '#cbd5e1' : (v > 0 ? '#4ade80' : (v < 0 ? '#f87171' : '#cbd5e1'));
     const row = tf => {
         const x = st[tf] || {};
-        if (!x.n) return `<span style="margin-right:14px"><b>${tf.toUpperCase()}</b>: точок ще немає</span>`;
-        return `<span style="margin-right:14px"><b>${tf.toUpperCase()}</b>: ${x.n} точок (${x.done} завершено) · у плюсі <b>${x.win_pct}%</b>`
+        const nm = _AI_DIS_TF[tf] || tf.toUpperCase();
+        if (!x.n) return `<span style="margin-right:14px"><b>${nm}</b>: точок ще немає</span>`;
+        return `<span style="margin-right:14px"><b>${nm}</b>: ${x.n} точок (${x.done} завершено) · у плюсі <b>${x.win_pct}%</b>`
             + ` · сер. <b style="color:${c(x.avg_last)}">${f(x.avg_last)}</b> · макс ↑ ${f(x.avg_mfe)} · макс ↓ ${f(x.avg_mae)}`
             + ` · 🪤 хибних <b>${x.false_pct}%</b>`
-            + (x.avg_lead_min != null ? ` · 15m раніше на ${x.avg_lead_min} хв` : '') + '</span>';
+            + (x.avg_lead_min != null ? ` · раніше за 1H на ${x.avg_lead_min} хв` : '') + '</span>';
     };
-    return `<div title="Угод не відкриває — лише записує, що було б, якби вхід підтверджувався на кожному TF. Рух — % від ціни в момент підтвердження в бік входу, за 24 год; 🪤 хибний — закрита після цього 1h-свічка повернулась у коробку.">📊 <b>Тінь розряду 1H / 15m</b>: ${row('1h')}${row('15m')}</div>`;
+    return `<div title="Угод не відкриває — лише записує, що було б, якби вхід підтверджувався кожним способом. Рух — % від ціни в момент підтвердження в бік входу, за 24 год; 🪤 хибний — закрита після цього 1h-свічка повернулась у коробку.">📊 <b>Тінь розряду 1H / 15m / 5m CHoCH+BOS</b>:<div>${row('1h')}</div><div>${row('15m')}</div><div>${row('5m')}</div></div>`;
 }
 // 📊 Закриті угоди за банером «МММ-Готовність» на вході (вимога 23.11).
 function _aipRdyStatsHTML(st) {

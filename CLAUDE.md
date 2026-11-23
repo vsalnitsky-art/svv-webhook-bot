@@ -9621,3 +9621,21 @@ SHORT не потрібний… в результаті напрямку сиг
 Тест: `test_ai_discharge_2311.py` (15); заглушки `discharge_both` у
 `test_ai_signals._engine`, `test_professional_integration._engine`.
 
+
+### 💥 5m CHoCH+BOS — ТРЕТІЙ СПОСІБ ПІДТВЕРДЖЕННЯ РОЗРЯДУ (23.11, третя правка)
+Питання «контролювати сигнали ШІ структурою: 5m CHoCH+BOS як сигнал і напрямок
+на старті розряду» → «Роби так» (вибір + тінь, перемикати за цифрами).
+- `discharge_tf` += `'5m'`; ЧИСТА `discharge_state_struct(closed_1h, closed_5m,
+  side, live, events=None)`: внутрішня структура 5m (той самий
+  `detect_smc_structure`, `internal_size` сканера) — після останньої зустрічної
+  події CHoCH у бік, далі BOS у той самий бік, і свічка BOS ЗАКРИЛАСЬ за межею
+  24-год коробки 1h (CHoCH усередині коробки — шум) → `confirmed` (ціна в
+  коробці → `pending`); після BOS зустрічна подія структури → `false`. Вікно
+  `STRUCT_LOOK_SEC` 4 год. Межа = коробка 1h → 🪤 вихід за 1h не змінився.
+- 5m-свічки тягне такт ШІ для кандидатів (`_pro_fetch_bars(S, '5m')`, кеш
+  `PRO_CACHE_TTL['5m']`=150с, лише при `discharge_confirm`).
+- ЧИСТА `dis_pick(both, tf)` → обраний стан + `alts` (замість одного `alt`).
+  Тінь: 3 TF; 1h-запис несе `lead` {15m, 5m} хв; `dis_shadow_stats[tf].avg_lead_min`
+  — «раніше за 1H на N хв» у рядку молодшого TF (старий `lead_min` = 15m).
+- UI: опція «5m CHoCH+BOS (структура)», `_AI_DIS_TF`, три рядки тіні.
+Тест: `test_ai_discharge_2311.py` (17).

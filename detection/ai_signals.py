@@ -87,7 +87,10 @@ AI_RDY_FILTER_UA = {'off': 'вимк', 'banner': 'за банером', 'coin': 
                     'both': 'банер + вкладка монети'}
 DISCHARGE_LOOK = 6             # закритих 1h-свічок назад — шукаємо пробій коробки
 DISCHARGE_LOOK_LTF = 16        # закритих 15m-свічок назад (4 год)
-DISCHARGE_TFS = ('1h', '15m')  # TF підтвердження розряду (рівень — завжди коробка 1h)
+DISCHARGE_TFS = ('1h', '15m', '5m')  # TF підтвердження розряду (рівень — завжди коробка 1h)
+DISCHARGE_TF_UA = {'1h': '1H закриття', '15m': '15m закриття', '5m': '5m CHoCH+BOS'}
+STRUCT_LOOK_SEC = 4 * 3600     # 5m-структура: CHoCH+BOS шукаємо за останні 4 год
+STRUCT_INTERNAL_SIZE = 5       # півоти внутрішньої структури (як у сканера за замовч.)
 DIS_SHADOW_HOURS = 24          # тіньовий запис ведемо 24 год від підтвердження
 DIS_SHADOW_MAX = 400
 DISCHARGE_BOX = 24             # коробка перед пробоєм — 24 закриті 1h-свічки
@@ -490,6 +493,112 @@ def discharge_state_ltf(closed_1h: List[Dict], closed_ltf: List[Dict], side: str
     return _discharge_walk(seq, side, live_price, need, _hl_box(h[-box:]), ltf)
 
 
+def dis_pick(both: Dict, tf: str) -> Dict:
+    """Стан розряду ОБРАНОГО TF + `alts` (інші TF — для показу й тіні). ЧИСТА."""
+    tf = tf if tf in DISCHARGE_TFS else '1h'
+    out = dict((both or {}).get(tf) or (both or {}).get('1h') or {})
+    out['alts'] = [{k: ((both or {}).get(a) or {}).get(k) for k in ('state', 'tf', 'held', 'need', 't', 'note')}
+                   for a in DISCHARGE_TFS if a != tf and (both or {}).get(a)]
+    return out
+
+
+def discharge_state_struct(closed_1h: List[Dict], closed_5m: List[Dict], side: str,
+                           live_price=None, events=None, box: int = DISCHARGE_BOX,
+                           look_sec: float = STRUCT_LOOK_SEC,
+                           internal_size: int = STRUCT_INTERNAL_SIZE) -> Dict:
+    """💥 Підтвердження розряду СТРУКТУРОЮ 5m (23.11). ЧИСТА.
+    Напрямок і сигнал — внутрішня структура 5m (той самий `detect_smc_structure`,
+    що в боті): після останньої зустрічної події — CHoCH у бік `side`, далі BOS
+    у той самий бік, і свічка BOS ЗАКРИЛАСЬ ЗА МЕЖЕЮ 24-год коробки 1h (рівень
+    Пружини). Без умови межі CHoCH усередині стиснутої коробки — шум.
+    • CHoCH+BOS є, BOS за межею, зустрічної події після нього немає, жива ціна
+      за межею → 'confirmed';
+    • після BOS — зустрічна подія структури (CHoCH проти) → 'false';
+    • CHoCH у бік є, BOS за межею ще немає / ціна в коробці → 'pending';
+    • інакше → 'none'. `events` — готові внутрішні події (для тестів)."""
+    sd = str(side).upper()
+    sg = 1.0 if sd == 'LONG' else -1.0
+    d = 'bull' if sd == 'LONG' else 'bear'
+    out = {'state': 'none', 'edge': None, 'box_hi': None, 'box_lo': None, 't': None,
+           'held': 0, 'need': 1, 'tf': '5m', 'note': ''}
+    h = _clean_bars(closed_1h)
+    m5 = _clean_bars(closed_5m)
+    if len(h) < box or len(m5) < internal_size + 5:
+        out['note'] = 'замало закритих свічок'
+        return out
+    if events is None:
+        try:
+            from detection.smc_structure import detect_smc_structure
+        except Exception:
+            try:
+                detect_smc_structure = _sib('smc_structure').detect_smc_structure
+            except Exception:
+                out['note'] = 'немає детектора структури'
+                return out
+        an = detect_smc_structure(m5, internal_size=internal_size, swing_size=50)
+        events = ((an or {}).get('internal') or {}).get('events') or []
+    close_at = {_bar_sec(b): _bar_close(b) for b in m5}
+    ends = [_bar_sec(b) + 3600 for b in h]
+
+    def _box_at(t):
+        j = 0
+        while j < len(h) and ends[j] <= t:
+            j += 1
+        return _hl_box(h[j - box:j]) if j >= box else None
+
+    t_end = _bar_sec(m5[-1]) or 0
+    evs = []
+    for e in events:
+        t = _bar_sec({'t': e.get('to_t')})
+        if t is None or t < t_end - look_sec:
+            continue
+        evs.append((t, str(e.get('tag') or ''), e.get('dir')))
+    evs.sort()
+    choch_t, bos, cand = None, None, None
+    for t, tag, dr in evs:
+        if dr != d:
+            if bos:                       # структура розвернулась після сигналу
+                out.update(state='false', t=bos['t'], edge=bos['edge'], box_hi=bos['hi'],
+                           box_lo=bos['lo'], held=1,
+                           note=f'після BOS — {tag} проти: структура 5m розвернулась (хибний старт)')
+                out['false_t'] = t
+                return out
+            choch_t, cand = None, None
+            continue
+        if tag == 'CHoCH':
+            choch_t = t
+            continue
+        if tag == 'BOS' and choch_t is not None:
+            bx = _box_at(t)
+            c = close_at.get(t)
+            if bx and c is not None:
+                edge = bx[0] if d == 'bull' else bx[1]
+                cand = {'t': t, 'edge': edge, 'hi': bx[0], 'lo': bx[1], 'choch_t': choch_t}
+                if sg * (c - edge) > 0 and not bos:
+                    bos = cand
+    if not bos:
+        if choch_t is not None:
+            bx = _box_at(t_end + 1)
+            out.update(state='pending', t=choch_t,
+                       note='CHoCH 5m у бік є, BOS за межею коробки 1h ще немає')
+            if bx:
+                out.update(edge=bx[0] if d == 'bull' else bx[1], box_hi=bx[0], box_lo=bx[1])
+        else:
+            out['note'] = 'CHoCH+BOS 5m у бік розряду немає'
+        return out
+    out.update(t=bos['t'], edge=bos['edge'], box_hi=bos['hi'], box_lo=bos['lo'], held=1,
+               choch_t=bos['choch_t'])
+    try:
+        lp = float(live_price) if live_price is not None else None
+    except (TypeError, ValueError):
+        lp = None
+    if lp is not None and sg * (lp - bos['edge']) <= 0:
+        out.update(state='pending', note='CHoCH+BOS 5m є, але ціна зараз повернулась у коробку')
+    else:
+        out.update(state='confirmed', note='CHoCH+BOS 5m за межею коробки 1h')
+    return out
+
+
 def dis_shadow_stats(recs: List[Dict]) -> Dict:
     """📊 Тіньове порівняння підтвердження розряду 1H проти 15m (23.11). ЧИСТА.
     Кожен запис — точка, де розряд став «підтвердженим» на своєму TF, і що ціна
@@ -505,7 +614,16 @@ def dis_shadow_stats(recs: List[Dict]) -> Dict:
         def _avg(k):
             v = [float(r[k]) for r in rs if r.get(k) is not None]
             return round(sum(v) / len(v), 3) if v else None
-        lead = [float(r['lead_min']) for r in rs if r.get('lead_min') is not None]
+        lead = []
+        if tf != '1h':          # на скільки хвилин раніше за 1h той самий пробій
+            for r in recs or []:
+                if r.get('tf') != '1h':
+                    continue
+                v = (r.get('lead') or {}).get(tf)
+                if v is None and tf == '15m':
+                    v = r.get('lead_min')            # старий формат
+                if v is not None:
+                    lead.append(float(v))
         out[tf] = {'n': n, 'done': sum(1 for r in rs if r.get('done')),
                    'win_pct': round(100.0 * sum(1 for r in rs if (r.get('last') or 0) > 0) / n, 1),
                    'avg_last': _avg('last'), 'avg_mfe': _avg('mfe'), 'avg_mae': _avg('mae'),
@@ -1112,7 +1230,7 @@ CAL_DAYS = 30
 DB_STATE = 'ai_engine_state_v1'
 DB_PRO_LEARNING = 'ai_professional_learning_v1'
 PRO_BAR_LIMIT = 300
-PRO_CACHE_TTL = {'15m': 240, '1h': 900, '4h': 1800}
+PRO_CACHE_TTL = {'5m': 150, '15m': 240, '1h': 900, '4h': 1800}
 PRO_ANALYSIS_TTL = 45
 LEARN_REFRESH_SEC = 900
 LEARN_ROWS = 5000            # найновіших рядків на джерело (епізоди / дослідження)
@@ -2187,7 +2305,7 @@ class AiEngine:
     def closed_bars(self, symbol: str, tf: str = '1h', now: Optional[float] = None) -> List[Dict]:
         """ЗАКРИТІ свічки `tf` монети з кешу рушія (жива відкинута). Без мережі."""
         now = self._clock() if now is None else now
-        sec = {'15m': 900, '1h': 3600, '4h': 14400}.get(tf, 3600)
+        sec = {'5m': 300, '15m': 900, '1h': 3600, '4h': 14400}.get(tf, 3600)
         with self._pro_lock:
             hit = (self._pro_bars.get(str(symbol or '').upper()) or {}).get(tf)
         rows = list(hit[1]) if hit else []
@@ -2206,7 +2324,16 @@ class AiEngine:
         h = self.closed_bars(symbol, '1h', now)
         return {'1h': discharge_state(h, side, live_price, need=int(s.get('discharge_bars') or 1)),
                 '15m': discharge_state_ltf(h, self.closed_bars(symbol, '15m', now), side, live_price,
-                                           need=int(s.get('discharge_bars_15m') or 2))}
+                                           need=int(s.get('discharge_bars_15m') or 2)),
+                '5m': discharge_state_struct(h, self.closed_bars(symbol, '5m', now), side, live_price,
+                                             internal_size=self._struct_isize())}
+
+    def _struct_isize(self) -> int:
+        try:
+            v = int((self._scn().get_settings() or {}).get('internal_size') or STRUCT_INTERNAL_SIZE)
+            return max(2, min(20, v))
+        except Exception:
+            return STRUCT_INTERNAL_SIZE
 
     def discharge_for(self, symbol: str, side: str, now: Optional[float] = None,
                       live_price=None) -> Dict:
@@ -2214,10 +2341,7 @@ class AiEngine:
         (інший TF, для показу й тіньового порівняння)."""
         tf = self.ai_settings().get('discharge_tf') or '1h'
         both = self.discharge_both(symbol, side, now, live_price)
-        out = dict(both.get(tf) or both['1h'])
-        alt = '15m' if tf == '1h' else '1h'
-        out['alt'] = {k: (both.get(alt) or {}).get(k) for k in ('state', 'tf', 'held', 'need', 't', 'note')}
-        return out
+        return dis_pick(both, tf)
 
     def _dis_shadow_tick(self, S: str, side: str, both: Dict, price, now: float) -> None:
         """📊 Тіньовий журнал (23.11): точка, де розряд став «підтвердженим» на
@@ -2239,10 +2363,14 @@ class AiEngine:
             rec = {'key': key, 'S': S, 'side': side, 'tf': tf, 't': int(now), 'brk_t': int(d['t']),
                    'px': px, 'edge': d.get('edge'), 'last': 0.0, 'mfe': 0.0, 'mae': 0.0}
             if tf == '1h':
-                early = [r for r in self._dis_shadow if r.get('S') == S and r.get('side') == side
-                         and r.get('tf') == '15m' and 0 <= now - float(r.get('t') or 0) <= 4 * 3600]
-                if early:
-                    rec['lead_min'] = round((now - float(early[-1]['t'])) / 60.0, 1)
+                lead = {}
+                for ltf in ('15m', '5m'):
+                    early = [r for r in self._dis_shadow if r.get('S') == S and r.get('side') == side
+                             and r.get('tf') == ltf and 0 <= now - float(r.get('t') or 0) <= 4 * 3600]
+                    if early:
+                        lead[ltf] = round((now - float(early[-1]['t'])) / 60.0, 1)
+                if lead:
+                    rec['lead'] = lead
             self._dis_shadow.append(rec)
             self._dirty = True
         if len(self._dis_shadow) > DIS_SHADOW_MAX:
@@ -2266,7 +2394,7 @@ class AiEngine:
         recs = list(self._dis_shadow)
         return {'stats': dis_shadow_stats(recs), 'n': len(recs),
                 'last': [{k: r.get(k) for k in ('S', 'side', 'tf', 't', 'px', 'last', 'mfe', 'mae',
-                                                 'false_t', 'lead_min', 'done')} for r in recs[-12:]]}
+                                                 'false_t', 'lead', 'done')} for r in recs[-12:]]}
 
     def false_start_check(self, symbol: str, side: str, edge, opened_at) -> Optional[Dict]:
         """🪤 Для виходу з угоди ШІ (TM): закрита після входу свічка повернулась
@@ -2539,6 +2667,9 @@ class AiEngine:
                 live = self._fetch_live(S, now)
                 if S in cand:                 # графік 15m/1h/4h — лише кандидатам мозку
                     self._pro_market(S, now)
+                    if s.get('discharge_confirm', True):
+                        # 💥 5m-свічки для структурного підтвердження розряду (кеш 150с)
+                        self._pro_fetch_bars(S, '5m', now)
                 return S, live
             except Exception as e:
                 self._stat['errors'] += 1
@@ -2605,11 +2736,7 @@ class AiEngine:
                 ds = None
                 if _skey == 'E2':
                     _both = self.discharge_both(S, best['side'], now, _px(vw, rec))
-                    _tf = s.get('discharge_tf') or '1h'
-                    ds = dict(_both.get(_tf) or _both['1h'])
-                    _alt = '15m' if _tf == '1h' else '1h'
-                    ds['alt'] = {k: (_both.get(_alt) or {}).get(k)
-                                 for k in ('state', 'tf', 'held', 'need', 't', 'note')}
+                    ds = dis_pick(_both, s.get('discharge_tf') or '1h')
                     self._dis_shadow_tick(S, best['side'], _both, _px(vw, rec), now)
                 rv = self.rdy_view(S) if (s.get('rdy_filter') or 'off') != 'off' else None
                 view[S]['discharge'] = ds
