@@ -265,9 +265,9 @@ def test_heartbeat_tells_what_ai_is_doing():
     txt, key = A.ai_heartbeat_text(view, {'enabled': True}, {}, 0, 0)
     _check('перебрано 2' in txt and 'X ▲ E2' in txt and 'Y ▼ E2 2/3' in txt, txt)
     _check(key == ('X ▲ E2',), f'ключ змін — набір готових точок: {key}')
-    _check('ai_scan' in _HTML and "SOLO_EVENTS = new Set(['ob_new', 'ai_scan'])" in _HTML,
+    _check('ai_scan' in _HTML and "SOLO_EVENTS = new Set(['ob_new', 'ai_scan', 'xspr_in'])" in _HTML,
            'огляд ШІ — окремим рядком у 🧾 Лозі')
-    _check("_SOLO = {'ob_new', 'ai_scan'}" in open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read(),
+    _check("_SOLO = {'ob_new', 'ai_scan', 'xspr_in'}" in open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read(),
            'експорт логу розуміє те саме')
 
 

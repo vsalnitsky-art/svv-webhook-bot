@@ -55,6 +55,8 @@ SBR_TFS = ('1h', '4h')
 REMOVED_KEEP = 20
 SENT_CAP = 400
 TG_CATEGORY = 'sbr'
+SRC_FUNDING = 'funding'         # 💰 рядок прийшов із «Funding — Пружина»
+FUNDING_EXCHANGE = 'bybit'     # 💰 Funding Rate Scanner веде монети Bybit
 
 
 def _fs():
@@ -376,6 +378,7 @@ class SpringScan:
         self._recalc: Dict = {}                 # останній перерахунок
         self._sent: List[str] = []              # 'S|tf|close_t' уже надіслано
         self._events: List[Dict] = []
+        self._gone_at: Dict[str, float] = {}    # S → коли вибула (💰 не повертаємо той самий бар)
         self._prog: Dict = {'running': False}
         self._auto_fail_at = 0.0
         self._thread = None
@@ -599,12 +602,16 @@ class SpringScan:
         row['vol_usd'] = vol if vol is not None else old.get('vol_usd')
         row['calc_at'] = now
         row['bybit'] = old.get('bybit') if bybit is None else bybit
+        for k in ('src', 'src_at'):        # 💰 монета прийшла з «Funding — Пружина»
+            if old.get(k) is not None:
+                row[k] = old[k]
         return row
 
     def _drop(self, S: str, rec: Optional[Dict], why: str, now: float):
         """Монета вибуває з таблиці — і її кнопки 1H/4H разом із нею."""
         self._table.pop(S, None)
         self._settings['tg'].pop(S, None)
+        self._gone_at[S] = now
         self._removed.append({'symbol': S, 'at': now, 'why': why,
                               'state': (rec or {}).get('state'),
                               'charge': (rec or {}).get('charge')})
@@ -690,7 +697,18 @@ class SpringScan:
             self._drop(S, self._table.get(S), 'монета в WATCHLIST — уже в 🌀 Пружині', now)
         syms = list(self._table)
         self._p(phase='bars', total=len(syms))
-        recs, errors = self._analyze_many(syms, self._fetch_factory(self._settings['exchange']), now)
+        # 💰 монети з «Funding — Пружина» — з Bybit (там їх веде 💰 Funding Rate
+        # Scanner); решта — з біржі скану.
+        groups: Dict[str, List[str]] = {}
+        for S in syms:
+            ex = FUNDING_EXCHANGE if (self._table.get(S) or {}).get('src') == SRC_FUNDING \
+                else self._settings['exchange']
+            groups.setdefault(ex, []).append(S)
+        recs, errors = {}, []
+        for ex, part in groups.items():
+            r, e = self._analyze_many(part, self._fetch_factory(ex), now)
+            recs.update(r)
+            errors += e
         gone = []
         for S in syms:
             rec = recs.get(S)
@@ -714,6 +732,51 @@ class SpringScan:
         if gone:
             print(f"[SpringScan] перерахунок: вибули {', '.join(gone)}")
         return dict(self._recalc)
+
+    # ── 💰 «Funding — Пружина» → таблиця скану (вимога 24.11) ────────────
+    def absorb_funding(self, recs: Dict[str, Dict], now: Optional[float] = None) -> List[str]:
+        """Заряджені монети «Funding — Пружина» → у таблицю для подальшого
+        контролю (перерахунок, 🔔 SBR, сигнали, ✋ угода) з позначкою 💰.
+        Правило ЗАЛИШЕННЯ — те саме, що в усіх рядків (статус «🌀 заряджена»).
+        Монета WATCHLIST — ні (вона в 🌀 Пружині); монета, що вибула, не
+        повертається за записом бару, який закрився ДО її вибуття."""
+        now = now if now is not None else self._clock()
+        wl = self._wl_set()
+        added = []
+        for S, rec in (recs or {}).items():
+            S = str(S or '').upper()
+            if not S or S in wl or S in self._table or not stays_in_table(rec):
+                continue
+            gone = self._gone_at.get(S)
+            try:
+                bar_end = int(float((rec or {}).get('bar_t') or 0)) + 3600
+            except (TypeError, ValueError):
+                bar_end = 0
+            if gone and bar_end <= gone:
+                continue
+            row = self._row(S, rec, now, bybit=True)
+            row['src'], row['src_at'] = SRC_FUNDING, now
+            self._table[S] = row
+            self._gone_at.pop(S, None)
+            added.append(S)
+            try:
+                from detection.activity_log import log_activity
+                log_activity(S, 'xspr_in', f"💰 Funding — Пружина → 🔭 скан біржі: 🌀 заряд "
+                             f"{float(rec.get('charge') or 0):.0f}"
+                             + (f" · {rec.get('dir') or rec.get('lean')}" if (rec.get('dir') or rec.get('lean')) else '')
+                             + ' · далі контроль у таблиці скану', side=rec.get('dir') or rec.get('lean'),
+                             source='XSPR', extra={'charge': rec.get('charge'), 'from': 'funding'})
+            except Exception:
+                pass
+        if added:
+            self._persist()
+            print(f"[SpringScan] 💰 з Funding — Пружина: {', '.join(added)}")
+        return added
+
+    def held_symbols(self) -> set:
+        """Монети, що зараз у таблиці (у «Funding — Пружина» їх не показуємо)."""
+        with self._lock:
+            return set(self._table)
 
     # ── 🔔 сигнали SBR → Telegram ───────────────────────────────────────
     def on_sbr(self, symbol: str, items: List[tuple]) -> int:

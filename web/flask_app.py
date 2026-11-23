@@ -3544,7 +3544,7 @@ def register_api_routes(app):
             # TF: 1H проти 15m у CHoCH). Вона вже винесена в окремий рядок у
             # 🧾 Лозі (`SOLO_EVENTS`), і експорт мусить робити ТЕ САМЕ —
             # інакше два подання того самого логу суперечать одне одному.
-            _SOLO = {'ob_new', 'ai_scan'}
+            _SOLO = {'ob_new', 'ai_scan', 'xspr_in'}
             _MAX_GAP = 3 * 3600     # розрив > 3 год — це вже інша історія
             _prev_t = None
             for e in evs:

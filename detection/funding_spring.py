@@ -90,18 +90,23 @@ def shape_row(rec: Dict) -> Dict:
 
 class FundingSpring:
     def __init__(self, db=None, get_symbols: Callable = None, fetch: Callable = None,
-                 scanner_recs: Callable = None, funding_info: Callable = None):
+                 scanner_recs: Callable = None, funding_info: Callable = None,
+                 handoff: Callable = None, held: Callable = None):
         self._db = db
         self._get_symbols = get_symbols or (lambda: [])
         self._fetch = fetch
         self._scanner_recs = scanner_recs or (lambda syms: {})
         self._funding_info = funding_info or (lambda: {})
+        # 💰 → 🔭 заряджені монети йдуть у «Пружина — скан біржі» (вимога 24.11)
+        self._handoff = handoff or (lambda recs: [])
+        self._held = held or (lambda: set())
         self._lock = threading.Lock()
         self._recs: Dict[str, Dict] = {}
         self._fail: Dict[str, tuple] = {}      # S → (кількість, наступна спроба)
         self._restored: set = set()
         self._stats = {'tick_at': 0.0, 'calc_at': 0.0, 'calc_n': 0, 'calc_bar': 0,
-                       'fetched': 0, 'own': 0, 'watchlist': 0, 'errors': 0, 'last_err': ''}
+                       'fetched': 0, 'own': 0, 'watchlist': 0, 'errors': 0, 'last_err': '',
+                       'handed': 0, 'handed_last': []}
         self._fund: Dict[str, Dict] = {}       # S → трекер другого рядка
         self._dirty = False
         self._thread = None
@@ -299,7 +304,26 @@ class FundingSpring:
         with self._lock:
             self._stats['own'] = sum(1 for r in self._recs.values() if r.get('src') == 'own')
             self._stats['watchlist'] = sum(1 for r in self._recs.values() if r.get('src') == 'watchlist')
+            charged = {s: dict(r) for s, r in self._recs.items()
+                       if r.get('src') == 'own' and r.get('ok', True) and r.get('state') == 'charged'}
+        self._hand_over(charged, now)
         self._persist()
+
+    def _hand_over(self, charged: Dict[str, Dict], now: float) -> None:
+        """💰 → 🔭 Заряджені монети (власний розрахунок; WATCHLIST — ні, вони в
+        🌀 Пружині) передаються в «Пружина — скан біржі». Лише при увімкненому
+        тумблері (tick виходить раніше, коли вимкнено)."""
+        if not charged:
+            return
+        try:
+            added = list(self._handoff(charged) or [])
+        except Exception as e:
+            print(f"[FundSpring] handoff error: {e}")
+            return
+        if added:
+            self._stats['handed'] += len(added)
+            self._stats['handed_last'] = (list(self._stats.get('handed_last') or []) + added)[-10:]
+            self._stats['handed_at'] = now
 
     def _run(self):
         while not self._stop.is_set():
@@ -329,8 +353,18 @@ class FundingSpring:
             recs = {s: dict(self._recs[s]) for s in syms if s in self._recs}
             restored = set(self._restored)
             fails = dict(self._fail)
+        try:
+            held = {str(x).upper() for x in (self._held() or ())}
+        except Exception:
+            held = set()
+        handed = []
         for s in syms:
             rec = recs.get(s)
+            if s in held:
+                # 💰 → 🔭 монета під контролем «Пружина — скан біржі» — тут не показуємо
+                handed.append({'symbol': s, 'charge': (rec or {}).get('charge'),
+                               'state': (rec or {}).get('state')})
+                continue
             fund = self.funding_view(s, now)
             if not rec:
                 pending.append(s)
@@ -356,6 +390,7 @@ class FundingSpring:
         return {'ok': True, 'enabled': self.is_enabled(), 'rows': rows, 'agg': agg,
                 'coins': len(syms), 'computed': len(full), 'pending': len(pending),
                 'stats': dict(self._stats), 'tf': TF, 'server_now': now,
+                'handed': handed,
                 'next_at': (int(now // BAR_SEC) + 1) * BAR_SEC,
                 'running': bool(self._thread and self._thread.is_alive())}
 
@@ -411,6 +446,26 @@ def _default_funding_info() -> Dict[str, Dict]:
     return out
 
 
+def _scan_engine():
+    """Рушій «Пружина — скан біржі» (лише вже піднятий — sys.modules)."""
+    import sys
+    m = sys.modules.get('detection.spring_scan')
+    try:
+        return m.get_spring_scan() if m else None
+    except Exception:
+        return None
+
+
+def _default_handoff(recs: Dict[str, Dict]) -> List[str]:
+    eng = _scan_engine()
+    return eng.absorb_funding(recs) if eng is not None and hasattr(eng, 'absorb_funding') else []
+
+
+def _default_held() -> set:
+    eng = _scan_engine()
+    return eng.held_symbols() if eng is not None and hasattr(eng, 'held_symbols') else set()
+
+
 def init_funding_spring(db=None, get_symbols=None, fetch=None,
                         scanner_recs=None, funding_info=None) -> FundingSpring:
     global _instance
@@ -418,7 +473,8 @@ def init_funding_spring(db=None, get_symbols=None, fetch=None,
         _instance = FundingSpring(db, get_symbols or _default_symbols,
                                   fetch or _default_fetch,
                                   scanner_recs or _default_scanner_recs,
-                                  funding_info or _default_funding_info)
+                                  funding_info or _default_funding_info,
+                                  _default_handoff, _default_held)
         if _instance.is_enabled():
             _instance.start()
     return _instance

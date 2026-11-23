@@ -1486,6 +1486,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
 .xs-line2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:0.66rem;color:#8b93a7}
 .xs-line2 .spr-k{text-transform:uppercase;letter-spacing:.04em;font-size:0.58rem;color:#6b7280}
 .spr-gate-ok { font-size:0.64rem; color:#4ade80; font-weight:700; margin-right:5px; }
+.xs-fund { font-size:0.72rem; margin-left:4px; cursor:help; filter:drop-shadow(0 0 2px rgba(251,191,36,0.5)); }
 .xs-nobybit { font-size:0.62rem; color:#fbbf24; border:1px solid rgba(251,191,36,0.45); border-radius:3px; padding:0 4px; margin-left:4px; font-weight:600; }
 .xs-gone{font-family:monospace;font-size:0.62rem;padding:0 5px;border-radius:3px;border:1px solid rgba(248,113,113,.35);color:#fca5a5}
 #fspr-table tbody tr > td { background: transparent; }
@@ -6562,6 +6563,7 @@ const _actMeta = {
     config: ['📋', 'Параметри', '#facc15'],
     ob_new: ['🆕', 'Новий OB', '#22d3ee'],
     ai_scan: ['🤖', 'ШІ · огляд', '#a78bfa'],
+    xspr_in: ['💰', 'Funding → 🔭 скан', '#fbbf24'],
 };
 
 // 🆕 РЯДОК «НОВИЙ OB» — РОЗФАРБОВАНИЙ ПО ЗМІСТУ.
@@ -6718,7 +6720,7 @@ async function loadActivityLog() {
         // ланцюгом угоди неправильно й по суті.
         // ⚠️ `lastByKey` НЕ чіпаємо: наступна подія тієї самої монети мусить
         // продовжити СВІЙ ланцюг, а не приклеїтись до рядка «Новий OB».
-        const SOLO_EVENTS = new Set(['ob_new', 'ai_scan']);
+        const SOLO_EVENTS = new Set(['ob_new', 'ai_scan', 'xspr_in']);
         chrono.forEach(e => {
             if (SOLO_EVENTS.has(e.event)) {
                 chains.push({ symbol: e.symbol, side: e.side, steps: [e],
@@ -18736,8 +18738,16 @@ function _fsprStatusPaint() {
         + `<div class="spr-row"><span class="spr-k">перерахунок</span><span class="spr-v">${hm(st.calc_at)}</span>`
         + `<span>${Number(st.calc_n) || 0} монет на останньому барі</span>`
         + (m.next_at ? `<span>· наступний через <span class="ff-countdown spr-v" data-until="${Math.floor(m.next_at)}"></span> (закриття 1h-бару)</span>` : '')
-        + `</div>`;
+        + `</div>` + _fsprHandedLine(m.handed || [], st);
     el.querySelectorAll('.ff-countdown[data-until]').forEach(t => { if (typeof _fmtCountdown === 'function') t.textContent = _fmtCountdown(Number(t.getAttribute('data-until')) - now); });
+}
+// 💰 → 🔭 Монети, які зараз веде «Пружина — скан біржі» (вимога 24.11).
+function _fsprHandedLine(list, st) {
+    const chips = list.map(h => `<span class="xs-chip charged" title="${h.symbol}: веде «🔭 Пружина — скан біржі»${h.charge != null ? ' · заряд ' + Math.round(h.charge) : ''}">${String(h.symbol).replace(/USDT$/, '')}</span>`).join('');
+    return `<div class="spr-row" title="Заряджені монети (статус «🌀 заряджена», власний розрахунок — не WATCHLIST) автоматично переходять у «🔭 Пружина — скан біржі» з позначкою 💰 і тут більше не показуються. Повертаються сюди, коли таблиця скану їх відпустить (статус уже не «заряджена»). Працює, лише поки увімкнено цей блок.">`
+        + `<span class="spr-k">💰 → 🔭 у скан біржі</span>`
+        + (list.length ? `<span class="spr-v">${list.length}</span>${chips}` : '<span>зараз немає</span>')
+        + (st.handed ? `<span>· передано від старту ${st.handed}</span>` : '') + `</div>`;
 }
 function _fsprAggPaint() {
     const el = document.getElementById('fspr-agg');
@@ -18815,9 +18825,11 @@ async function fsprLoad(force) {
         if (d.server_now && typeof _srvSkewNote === 'function') _srvSkewNote(d.server_now);
         _fsprRows = d.rows || [];
         _fsprMeta = {enabled: d.enabled, agg: d.agg || null, stats: d.stats || {}, next_at: d.next_at,
-                     coins: d.coins, computed: d.computed, pending: d.pending, running: d.running};
-        // 💰-мітка у відкритих угодах — монета зараз у 💰 Funding Rate Scanner.
-        try { window.ffFundingSyms = new Set(_fsprRows.map(x => x.symbol)); } catch (e) {}
+                     coins: d.coins, computed: d.computed, pending: d.pending, running: d.running,
+                     handed: d.handed || []};
+        // 💰-мітка у відкритих угодах — монета зараз у 💰 Funding Rate Scanner
+        // (і ті, що передані в «🔭 Пружина — скан біржі»).
+        try { window.ffFundingSyms = new Set(_fsprRows.map(x => x.symbol).concat((d.handed || []).map(x => x.symbol))); } catch (e) {}
         fsprRender();
     } catch (e) { console.error('funding spring load', e); fail('немає звʼязку з ботом (' + (e && e.message || e) + ')'); }
 }
@@ -18992,6 +19004,12 @@ function _xsGoneGroups(list) {
 function _xsBybitBadge(x) {
     return x.bybit === false ? ' <span class="xs-nobybit" title="Монети немає на Bybit (USDT-перпетуал) — бот там торгує, тож відкрити угоду по ній не вийде. Показано, бо увімкнено «показувати монети, яких немає на Bybit».">⚠ не на Bybit</span>' : '';
 }
+// 💰 Позначка: монета прийшла з «Funding — Пружина» (вимога 24.11).
+function _xsSrcBadge(x) {
+    if (x.src !== 'funding') return '';
+    const at = x.src_at ? ' · ' + _xsHM(x.src_at) : '';
+    return ` <span class="xs-fund" title="Прийшла з 💰 Funding — Пружина${at}: монета була «🌀 заряджена» в 💰 Funding Rate Scanner. Тут її веде таблиця скану (перерахунок заряду на кожному 1h-барі з Bybit, 🔔 SBR, сигнали, ✋ угода); у «Funding — Пружина» вона більше не показується.">💰</span>`;
+}
 // 📨 Кнопки 1H / 4H рядка.
 function _xsTgCell(x) {
     const on = new Set(x.tg || []);
@@ -19139,7 +19157,7 @@ function xsprRender(force) {
         const ar = th.querySelector('.ff-sort-arrow');
         if (ar) ar.textContent = th.getAttribute('data-sprsort') === _xsSortCol ? (_xsSortDir > 0 ? ' ▲' : ' ▼') : '';
     });
-    const sig = JSON.stringify([_xsDir, _xsSortCol, _xsSortDir, r.ts, rows.map(x => [x.symbol, x.charge, x.state, x.dir, x.calc_at, (x.tg || []).join(','), x.trade_side, (x.queues || []).join(','), x.bybit, x.vol_usd])]);
+    const sig = JSON.stringify([_xsDir, _xsSortCol, _xsSortDir, r.ts, rows.map(x => [x.symbol, x.charge, x.state, x.dir, x.calc_at, (x.tg || []).join(','), x.trade_side, (x.queues || []).join(','), x.bybit, x.vol_usd, x.src])]);
     if (!force && tb.dataset.sig === sig) return;
     tb.dataset.sig = sig;
     try { _sprAggPaint(r.agg || null, 'xspr-agg', String(r.exchange || 'біржа').toUpperCase()); } catch (e) {}
@@ -19148,7 +19166,7 @@ function xsprRender(force) {
         return;
     }
     tb.innerHTML = rows.map(x => _sprRowHTML(x, 101, 'off',
-        `<td style="text-align:right;font-family:monospace;color:#cbd5e1">$${_xsVol(x.vol_usd)}</td>`).replace('</td>', _xsBybitBadge(x) + '</td>').replace(/<\/tr>$/, _xsTgCell(x) + _xsOpenCell(x) + _xsDelCell(x) + '</tr>')).join('');
+        `<td style="text-align:right;font-family:monospace;color:#cbd5e1">$${_xsVol(x.vol_usd)}</td>`).replace('</td>', _xsSrcBadge(x) + _xsBybitBadge(x) + '</td>').replace(/<\/tr>$/, _xsTgCell(x) + _xsOpenCell(x) + _xsDelCell(x) + '</tr>')).join('');
 }
 function _xsCostHint() {
     const el = document.getElementById('xspr-cost');
