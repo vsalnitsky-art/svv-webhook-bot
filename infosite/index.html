@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=229">
+  <link rel="stylesheet" href="css/style.css?v=230">
 </head>
 <body>
   <svg class="svg-sprite" aria-hidden="true">
@@ -59,10 +59,10 @@
       <span class="brand-copy"><b>VSV</b><small>TRADING INTELLIGENCE</small></span>
     </a>
     <nav class="main-nav" aria-label="Основна навігація">
-      <a href="#iw-layout" class="active">Термінал</a>
-      <a href="#rec-card">Сигнали</a>
-      <a href="#pp-card">P&amp;L</a>
-      <a href="#trade-card">Торгівля</a>
+      <a href="#iw-layout" class="active pm-sec_terminal">Термінал</a>
+      <a href="#rec-card" class="pm-sec_signals">Сигнали</a>
+      <a href="#pp-card" class="pm-sec_paper">P&amp;L</a>
+      <a href="#trade-card" class="pm-trade">Торгівля</a>
     </nav>
     <div class="top-actions">
       <button id="site-search" class="top-icon" type="button" title="Знайти монету" aria-label="Знайти монету"><svg><use href="#i-search"/></svg></button>
@@ -73,7 +73,7 @@
   </header>
 
   <main class="wrap">
-    <section class="card spb-card" id="spb-card" style="display:none" aria-label="VSV Forecast">
+    <section class="card spb-card pm-sec_signals" id="spb-card" style="display:none" aria-label="VSV Forecast">
       <a id="forecast" class="section-anchor" aria-hidden="true"></a>
       <div class="spb-grid">
         <div class="spb-side spb-side-left" id="spb-scan"></div>
@@ -104,7 +104,9 @@
       </div>
     </section>
 
-    <section class="iw-layout" id="iw-layout">
+    <p class="perm-note" id="perm-note" style="display:none">🛡 Адміністратор ще не відкрив вам розділи кабінету. Зверніться до адміністратора бота.</p>
+
+    <section class="iw-layout pm-sec_terminal" id="iw-layout">
       <aside class="card iw-wl" aria-label="Список монет">
         <div class="panel-heading">
           <h2><svg class="h-ic h-ic-twinkle"><use href="#i-star"/></svg>Watchlist</h2>
@@ -138,8 +140,8 @@
                 <label><input type="checkbox" data-indicator="ema20"><span>EMA</span><b>20</b></label>
                 <label><input type="checkbox" data-indicator="ema50"><span>EMA</span><b>50</b></label>
                 <label><input type="checkbox" data-indicator="ema200"><span>EMA</span><b>200</b></label>
-                <label><input type="checkbox" data-indicator="volume"><span>Обсяг</span><b>покупці / продавці</b></label>
-                <label title="Позначки на стовпчиках обсягу: 🧽 поглинання · 🔥 кульмінація · ⚡ одностороння агресія · 📈 сплеск. Пояснення — у нижньому рядку графіка при наведенні на свічку."><input type="checkbox" data-indicator="volanom"><span>Аномалії обсягу</span><b>⚠ сигнали</b></label>
+                <label class="pm-ly_vol"><input type="checkbox" data-indicator="volume"><span>Обсяг</span><b>покупці / продавці</b></label>
+                <label class="pm-ly_vol" title="Позначки на стовпчиках обсягу: 🧽 поглинання · 🔥 кульмінація · ⚡ одностороння агресія · 📈 сплеск. Пояснення — у нижньому рядку графіка при наведенні на свічку."><input type="checkbox" data-indicator="volanom"><span>Аномалії обсягу</span><b>⚠ сигнали</b></label>
                 <div class="menu-title menu-separator">Вигляд свічок</div>
                 <label><input type="checkbox" id="tv-standard-candles"><span>Біржові кольори</span><b>Green / Red</b></label>
               </div>
@@ -159,11 +161,11 @@
         </div>
 
         <div class="advanced-strip">
-          <span class="iw-sel s-ob"><button type="button" id="iw-ob-on" class="iw-tgl" data-tgl="ob_tf" title="OB на графіку">OB</button><select id="iw-ob-tf" title="Таймфрейм OB" aria-label="Таймфрейм OB"></select></span>
-          <span class="iw-sel s-vob"><button type="button" id="iw-vob-on" class="iw-tgl" data-tgl="vob_tf" title="VOB на графіку">VOB</button><select id="iw-vob-tf" title="Таймфрейм VOB" aria-label="Таймфрейм VOB"></select></span>
-          <label class="iw-sel s-poc" title="Профіль обсягу">POC <select id="iw-poc-days" aria-label="Дні POC"></select><select id="iw-poc-tf" aria-label="Таймфрейм POC"></select></label>
+          <span class="iw-sel s-ob pm-ly_ob"><button type="button" id="iw-ob-on" class="iw-tgl" data-tgl="ob_tf" title="OB на графіку">OB</button><select id="iw-ob-tf" title="Таймфрейм OB" aria-label="Таймфрейм OB"></select></span>
+          <span class="iw-sel s-vob pm-ly_vob"><button type="button" id="iw-vob-on" class="iw-tgl" data-tgl="vob_tf" title="VOB на графіку">VOB</button><select id="iw-vob-tf" title="Таймфрейм VOB" aria-label="Таймфрейм VOB"></select></span>
+          <label class="iw-sel s-poc pm-ly_poc" title="Профіль обсягу">POC <select id="iw-poc-days" aria-label="Дні POC"></select><select id="iw-poc-tf" aria-label="Таймфрейм POC"></select></label>
           <div class="iw-tfs iw-layers" id="iw-layers" title="Шари графіка"></div>
-          <span class="iw-liq" id="iw-liq">
+          <span class="iw-liq pm-ly_liq" id="iw-liq">
             <button type="button" class="iw-liq-btn" id="iw-liq-btn" aria-pressed="false" title="Профіль ліквідності"><svg><use href="#i-chart"/></svg><span>Ліквідність</span></button>
             <select id="iw-liq-ex" title="Біржа" aria-label="Біржа ліквідності"><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
             <select id="iw-liq-bars" title="Глибина історії" aria-label="Глибина історії"></select>
@@ -191,7 +193,7 @@
       </section>
     </section>
 
-    <section class="card rec-card" id="rec-card" style="display:none">
+    <section class="card rec-card pm-sec_signals" id="rec-card" style="display:none">
       <div class="pp-head">
         <span class="rec-badge">VSV SIGNALS</span>
         <div class="pp-period" id="rec-tabs"><button type="button" data-d="all">Всі (0)</button><button type="button" data-d="LONG">LONG (0)</button><button type="button" data-d="SHORT">SHORT (0)</button></div>
@@ -204,7 +206,7 @@
       </table></div>
     </section>
 
-    <section class="card pp-card" id="pp-card" style="display:none">
+    <section class="card pp-card pm-sec_paper" id="pp-card" style="display:none">
       <div class="pp-head">
         <div class="pp-heading"><span class="pp-badge">PAPER</span><div><span class="pp-title">P&amp;L · Тестові угоди</span><small>Результати без реального ризику</small></div></div>
         <div class="pp-period" id="pp-period">
@@ -243,7 +245,7 @@
   <script src="js/vendor/lightweight-charts.js"></script>
   <script src="js/config.js?v=76"></script>
   <script src="js/demo.js?v=4"></script>
-  <script src="js/app.js?v=240"></script>
+  <script src="js/app.js?v=241"></script>
   <script src="js/chart-pro.js?v=213"></script>
   <script src="js/chart-tools.js?v=212"></script>
   <script src="js/ui.js?v=201"></script>

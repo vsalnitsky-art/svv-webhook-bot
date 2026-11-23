@@ -165,15 +165,22 @@ def test_execute_one_action_per_book():
 
 
 def test_admin_only():
-    adm, usr = types.SimpleNamespace(is_admin=True), types.SimpleNamespace(is_admin=False)
+    """🛡 24.11: торгівля — адмін завжди, користувач — лише з правом від адміна
+    (trade_paper / trade_real); 🔐 ключі — лише адмін."""
+    import json as _j
+    adm = types.SimpleNamespace(is_admin=True, prefs='{}')
+    usr = types.SimpleNamespace(is_admin=False, prefs='{}')
+    usr_p = types.SimpleNamespace(is_admin=False, prefs=_j.dumps({'perms': {'trade_paper': True}}))
     assert UT.trade_allowed(adm) and not UT.trade_allowed(usr) and not UT.trade_allowed(None)
+    assert UT.trade_allowed(usr_p) and UT.user_books(usr_p) == ('paper',)
+    assert UT.keys_allowed(adm) and not UT.keys_allowed(usr_p)
     auth = _src('web/auth.py')
     body = auth[auth.index('def info_trade_subscribers'):auth.index('def is_blocked')]
-    assert 'User.is_admin == True' in body and '_is_active(u)' in body
+    assert '_is_active(u)' in body and '.books(' in body and 'effective(u.is_admin' in body
     ut = _src('web/user_trading.py')
     for r in ('/api/me/keys', '/api/me/keys/clear', '/api/me/keys/test'):
         i = ut.index(f"'{r}'")
-        assert 'if not trade_allowed(u):' in ut[i:i + 400], r
+        assert 'if not keys_allowed(u):' in ut[i:i + 400], r
 
 
 # ── підключення до сигналу ⚠ ─────────────────────────────────────────────
@@ -238,7 +245,7 @@ def test_bot_routes_and_page_use_the_same_keys_module():
         assert 'exchange_keys.' + fn in app, fn
     assert 'register_user_trading(app)' in app
     st = _src('templates/settings.html')
-    assert 'creds-moved' in st and 'creds-plain-key' not in st and '/info/#trade-card' in st
+    assert 'creds-moved' in st and 'creds-plain-key' not in st and '/cabinet#keys' in st
 
 
 def test_cabinet_ui():
@@ -247,7 +254,7 @@ def test_cabinet_ui():
     assert 'id="trade-card"' in html and 'href="#trade-card"' in html
     for k in ('data-belltrade', 'data-belltradebook', '/api/me/trading', '/api/me/keys',
               '/api/me/keys/test', '/api/me/keys/clear', 'trConfirmReal', 'type="password"',
-              'Тимчасово доступно лише адміністратору'):
+              'TR.keys_allowed', 'trDefBook'):
         assert k in js, k
     assert re.search(r'"anom": "⚠ Аномалії обсягу"', js)
 

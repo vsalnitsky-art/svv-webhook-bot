@@ -347,6 +347,44 @@ def _update_user(uid, **fields):
         s.close()
 
 
+def _perms_mod():
+    """web.user_perms без важкого пакетного імпорту (`web/__init__` тягне
+    flask_app): той самий модуль на процес (`sys.modules`)."""
+    import sys
+    m = sys.modules.get('web.user_perms')
+    if m is not None:
+        return m
+    try:
+        from web import user_perms as m
+        return m
+    except Exception:
+        import importlib.util
+        import os
+        sp = importlib.util.spec_from_file_location(
+            'web.user_perms', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_perms.py'))
+        m = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(m)
+        sys.modules['web.user_perms'] = m
+        return m
+
+
+_up = _perms_mod
+
+
+def _perms_raw(u):
+    try:
+        return _up().norm(json.loads(u.prefs or '{}').get('perms'))
+    except Exception:
+        return {}
+
+
+def _perms_eff(u):
+    try:
+        return _up().of_user(u)
+    except Exception:
+        return {}
+
+
 def list_users():
     s = get_session()
     try:
@@ -378,6 +416,9 @@ def list_users():
                 'tg_user': getattr(u, 'telegram_username', None),
                 'tg_name': getattr(u, 'telegram_name', None),
                 'bot_access': bool(getattr(u, 'bot_access', False)) or u.is_admin,
+                # 🛡 права інфосайту: збережені + що реально діє (адмін — усе)
+                'perms': _perms_raw(u),
+                'perms_eff': _perms_eff(u),
             })
         return out
     finally:
@@ -452,6 +493,8 @@ def info_sbr_subscribers():
                 prefs = json.loads(u.prefs or '{}')
             except Exception:
                 prefs = {}
+            if not _up().effective(u.is_admin, prefs.get('perms')).get('ntf_sbr'):
+                continue                 # 🛡 адміністратор забрав це право
             sub = ((prefs.get('info') or {}).get('sbr')) or {}
             if isinstance(sub, dict) and sub:
                 out.append((str(u.telegram_chat_id), sub))
@@ -476,6 +519,8 @@ def info_anom_subscribers():
                 prefs = json.loads(u.prefs or '{}')
             except Exception:
                 prefs = {}
+            if not _up().effective(u.is_admin, prefs.get('perms')).get('ntf_anom'):
+                continue                 # 🛡 адміністратор забрав це право
             sub = ((prefs.get('info') or {}).get('anom')) or []
             if isinstance(sub, list) and sub:
                 out.append((str(u.telegram_chat_id), list(sub)))
@@ -487,14 +532,14 @@ def info_anom_subscribers():
 
 
 def info_trade_subscribers():
-    """🤖 Торгівля з кабінету (вимога 24.11): [(uid, email, trade)] — ЛИШЕ
-    АКТИВНІ АДМІНІСТРАТОРИ з увімкненою торгівлею. На цьому етапі можливість
-    є тільки в адміністратора, тож prefs звичайного користувача (навіть
-    підроблені через /api/me/prefs) сюди не потрапляють."""
+    """🤖 Торгівля з кабінету: [(uid, email, trade)] — АКТИВНІ користувачі з
+    увімкненою торгівлею, яким адміністратор ДАВ право (🛡 `trade_paper` /
+    `trade_real`; адмін — завжди). Монети з книгою, на яку права немає,
+    відкидаються ТУТ — підроблені prefs нічого не дають."""
     s = get_session()
     try:
         out = []
-        for u in s.query(User).filter(User.is_admin == True).all():  # noqa: E712
+        for u in s.query(User).all():
             if not _is_active(u):
                 continue
             try:
@@ -502,8 +547,12 @@ def info_trade_subscribers():
             except Exception:
                 prefs = {}
             t = prefs.get('trade')
-            if isinstance(t, dict) and t.get('enabled') and t.get('coins'):
-                out.append((u.id, u.email, t))
+            if not (isinstance(t, dict) and t.get('enabled') and isinstance(t.get('coins'), dict)):
+                continue
+            bk = _up().books(_up().effective(u.is_admin, prefs.get('perms')))
+            coins = {k: v for k, v in t['coins'].items() if v in bk}
+            if coins:
+                out.append((u.id, u.email, dict(t, coins=coins)))
         return out
     except Exception:
         return []
@@ -1329,6 +1378,13 @@ tr.urow:hover{background:rgba(255,255,255,.03);cursor:pointer}
 .mlbl{font-size:.72rem;color:#9aa3b5;min-width:120px}
 .sect{border-top:1px solid rgba(255,255,255,.08);margin-top:14px;padding-top:10px}
 .sect h3{font-size:.82rem;margin:0 0 8px;color:#cbd5e1}
+.prm-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin:4px 0}
+.prm{display:flex;align-items:center;gap:6px;font-size:.74rem;color:#cbd5e1;cursor:pointer;
+ padding:3px 6px;border:1px solid rgba(255,255,255,.06);border-radius:6px;background:#0e1219}
+.prm input{margin:0}
+.prm.dead{opacity:.45}
+.prm.trd{border-color:rgba(250,204,21,.25)}
+@media(max-width:520px){.prm-grid{grid-template-columns:1fr}}
 </style></head><body class="{{ 'full' if full else '' }}">
 <div class="card {{ 'fullcard' if full else '' }}" style="max-width:{{width or 400}}px">
 {% if not full %}<img class="brandlogo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none'">{% endif %}
@@ -1679,6 +1735,35 @@ def register_auth_routes(app):
                    '⚠️ Telegram ще не прив’язано — натисніть «🔗 Привʼязати Telegram» вище.</p>')
                 + '</div>'
             )
+        # 🤖 Торгівля і 🔐 ключі біржі (вимога 24.11: «не бачу, де вводяться
+        # ключі і де торгівля»). Ключі — лише адміністратор (це ключі БОТА);
+        # торгівля — кому адміністратор дав право (🛡 Керування користувачами).
+        _pm = _perms_eff(u)
+        _info_home = (_info_url or '/info') + '/#trade-card'
+        if u.is_admin or _pm.get('trade_paper') or _pm.get('trade_real'):
+            _trade_section = (
+                '<div class="sect2" id="trade"><div class="seclbl">🤖 Торгівля з кабінету</div>'
+                '<p class="sub" style="margin-top:-4px">Сигнал — ⚠ «Аномалії обсягу · сценарій входу». '
+                'Немає угоди → відкрити · той самий бік → нічого · протилежний → закрити й відкрити нову.</p>'
+                '<div id="trs" class="sub">⏳ …</div>'
+                f'<a href="{_info_home}" style="display:inline-block;margin-top:6px">'
+                '⚙ Налаштувати монети й книги (paper / реальна) на інфосайті →</a></div>')
+            if u.is_admin:
+                _trade_section += (
+                    '<div class="sect2" id="keys"><div class="seclbl">🔐 API-ключі біржі (Bybit)</div>'
+                    '<div id="kst" class="sub">⏳ …</div>'
+                    '<input id="kk" type="password" autocomplete="off" spellcheck="false" placeholder="API Key">'
+                    '<input id="ks" type="password" autocomplete="off" spellcheck="false" placeholder="API Secret" style="margin-top:8px">'
+                    '<button onclick="ksave()">🔐 Зашифрувати і зберегти</button>'
+                    '<div style="display:flex;gap:8px;margin-top:6px">'
+                    '<button onclick="kact(\'test\')" style="margin-top:0">🧪 Перевірити</button>'
+                    '<button onclick="kact(\'clear\')" style="margin-top:0;background:#3b1d1d">🗑 Видалити з бота</button></div>'
+                    '<div id="km" class="msg" style="display:none"></div>'
+                    '<p class="sub" style="font-size:.72rem;margin-top:8px">Ключі шифруються на сервері (Fernet, '
+                    '<code>ENCRYPTION_KEY</code>) і зберігаються в базі бота — відкритий текст не повертається. '
+                    'Це ті самі ключі, якими торгує бот. Дозволи: Read + Trade, без виводу.</p></div>')
+        else:
+            _trade_section = ''
         body = (f'<h1>👤 Особистий кабінет</h1>'
                 f'<p class="sub">{role}</p>'
                 f'<div class="sect2" style="border-top:none;margin-top:6px;padding-top:0">'
@@ -1690,6 +1775,7 @@ def register_auth_routes(app):
                    + '</button><div id="tgm" class="msg" style="display:none"></div>')
                 + f'</div>'
                 f'{_ntf_section}'
+                + _trade_section
                 + f'<div class="sect2"><div class="seclbl">🔑 Змінити пароль</div>'
                 f'<input id="np" type="password" placeholder="Новий пароль (мін. 8)">'
                 f'<input id="np2" type="password" placeholder="Повторіть пароль" style="margin-top:8px">'
@@ -1720,6 +1806,47 @@ def register_auth_routes(app):
             +'(посилання діє 30 хв, одноразове).';
           try{window.open(d.url,'_blank');}catch(e){}
         }
+        const TRB={paper:'🧪 paper',real:'🏦 реальна'};
+        async function trload(){
+          const el=document.getElementById('trs'); if(!el) return;
+          try{
+            const d=await (await fetch('/api/me/trading')).json();
+            if(!d.allowed){ el.textContent='🔒 '+(d.reason||'немає доступу'); return; }
+            const cs=Object.keys(d.coins||{});
+            const tm=d.tm||{};
+            el.innerHTML='Стан: <b style="color:'+(d.enabled?'#86efac':'#fca5a5')+'">'+(d.enabled?'увімкнено':'вимкнено')+'</b>'+
+              ' · монет: <b>'+cs.length+'</b>'+(cs.length?' ('+cs.map(s=>s.replace(/USDT$/,'')+' '+(TRB[d.coins[s]]||d.coins[s])).join(', ')+')':'')+
+              '<br>Дозволені книги: '+(d.books||[]).map(b=>TRB[b]||b).join(', ')+
+              ' · Trade Manager: '+(tm.enabled?'✓':'✗')+' · Test Mode: '+(tm.test_mode?'✓':'✗')+' · ключі: '+(tm.has_key?'є':'немає');
+          }catch(e){ el.textContent='⚠️ не вдалося завантажити'; }
+        }
+        async function kload(){
+          const el=document.getElementById('kst'); if(!el) return;
+          const SRC={db_encrypted:'🟢 збережено в боті (зашифровано)',env_plain:'🟡 змінна середовища (без шифрування)',
+                     env_encrypted:'🟢 змінна середовища (зашифровано)',none:'🔴 не задано'};
+          try{
+            const k=await (await fetch('/api/me/keys')).json();
+            el.innerHTML='Джерело: <b>'+(SRC[k.source]||k.source||'—')+'</b> · API Key: <code>'+(k.key_preview||'none')+'</code>'+
+              (k.encryption_key_set?'':'<br><span style="color:#fbbf24">⚠️ На сервері не задано ENCRYPTION_KEY — зберегти ключі неможливо.</span>');
+          }catch(e){ el.textContent='⚠️ не вдалося завантажити'; }
+        }
+        function kmsg(t,ok){ const m=document.getElementById('km'); m.style.display='block'; m.className='msg '+(ok?'ok':'err'); m.textContent=t; }
+        async function ksave(){
+          const k=document.getElementById('kk'), s=document.getElementById('ks');
+          const r=await fetch('/api/me/keys',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({api_key:k.value.trim(),api_secret:s.value.trim()})});
+          const d=await r.json().catch(()=>({}));
+          if(d.ok){ k.value=''; s.value=''; kmsg('✅ '+(d.message||'Збережено'),true); kload(); trload(); }
+          else kmsg('⚠️ '+(d.error||'не вдалося зберегти'),false);
+        }
+        async function kact(a){
+          if(a==='clear'&&!confirm('Видалити ключі Bybit з бота?'))return;
+          const r=await fetch('/api/me/keys/'+a,{method:'POST'});
+          const d=await r.json().catch(()=>({}));
+          if(a==='test') kmsg(d.ok?'✅ '+(d.message||'Ключі робочі'):'⚠️ '+(d.friendly||d.error||d.ret_msg||'перевірка не вдалась'),!!d.ok);
+          else { kmsg(d.ok?'✅ '+(d.message||'Видалено'):'⚠️ '+(d.error||'не вдалося'),!!d.ok); kload(); trload(); }
+        }
+        trload(); kload();
         async function saventf(){
           const nb=document.getElementById('nbtc'), nf=document.getElementById('nfnd');
           if(!nb||!nf) return;   // звичайний юзер: перемикачів немає
@@ -1736,7 +1863,9 @@ def register_auth_routes(app):
     def api_me():
         u = current_user()
         return jsonify({'ok': True, 'email': u.email, 'is_admin': u.is_admin,
-                        'prefs': _load_prefs(u)})
+                        'prefs': _load_prefs(u),
+                        # 🛡 що показувати / дозволяти (сервер перевіряє сам)
+                        'perms': _perms_eff(u), 'perm_defs': _up().defs()})
 
     @app.route('/api/me/password', methods=['POST'])
     def api_me_password():
@@ -1754,8 +1883,13 @@ def register_auth_routes(app):
     def api_me_prefs():
         u = current_user()
         if request.method == 'POST':
+            # 🛡 Користувач пише ЛИШЕ свій простір `ui`: права (`perms`),
+            # торгівля, підписки, позначки групи / виходу — серверні ключі, і
+            # раніше цей маршрут дозволяв їх перезаписати.
             d = request.get_json(silent=True) or {}
-            _update_user(u.id, prefs=json.dumps(d)[:20000])
+            prefs = _load_prefs(u)
+            prefs['ui'] = d if isinstance(d, dict) else {}
+            _update_user(u.id, prefs=json.dumps(prefs)[:20000])
             return jsonify({'ok': True})
         return jsonify({'ok': True, 'prefs': _load_prefs(u)})
 
@@ -1816,6 +1950,7 @@ def register_auth_routes(app):
         with _lock:
             links = {k: v for k, v in _pending_links.items()}
         return jsonify({'ok': True, 'users': list_users(),
+                        'perm_defs': _up().defs(),
                         'smtp': _smtp_configured(),
                         'smtp_status': smtp_status(),
                         'pending': pending_attention_count(),
@@ -1927,6 +2062,26 @@ def register_auth_routes(app):
             notify_user_approved(uid, silent=True)
             _dtxt = f"{days} дн." if days > 0 else "без обмеження"
             _notify_change(admin_text=f"⏳ <b>{_lbl}</b> — доступ {_dtxt}.")
+        elif action == 'set_perms':
+            # 🛡 що користувачу показувати / дозволяти на інфосайті (24.11)
+            if target.is_admin:
+                return jsonify({'ok': False, 'error': 'адміністратор має доступ до всього'})
+            _tp = _load_prefs(target)
+            _tp['perms'] = _up().apply(_tp.get('perms'), d)
+            _update_user(uid, prefs=json.dumps(_tp)[:20000])
+            for _inv in ('sbr_subs_invalidate', 'anom_subs_invalidate'):
+                try:
+                    import web.info_portal as _ip
+                    getattr(_ip, _inv)()
+                except Exception:
+                    pass
+            try:
+                from web.user_trading import trade_subs_invalidate
+                trade_subs_invalidate()
+            except Exception:
+                pass
+            return jsonify({'ok': True, 'perms': _tp['perms'],
+                            'perms_eff': _up().effective(False, _tp['perms'])})
         elif action == 'kick':
             # Invalidate all live sessions of this user (force re-login).
             _update_user(uid, session_token=None)
@@ -2137,10 +2292,10 @@ def _admin_users_body():
 
 def _admin_script():
     return """
-    let USERS=[], LINKS={}, SMTP=null, PREVPEND=null;
+    let USERS=[], LINKS={}, SMTP=null, PREVPEND=null, PDEFS=null;
     async function load(){
       const d=await (await fetch('/api/admin/users')).json();
-      USERS=d.users||[]; LINKS=d.pending_links||{}; SMTP=d.smtp_status||{};
+      USERS=d.users||[]; LINKS=d.pending_links||{}; SMTP=d.smtp_status||{}; PDEFS=d.perm_defs||PDEFS;
       // Sequential display numbering (1..N) — independent of DB id gaps left by
       // deleted users. The real DB id stays available (shown in the modal).
       USERS.forEach((u,i)=>{ u.seq=i+1; });
@@ -2278,6 +2433,8 @@ def _admin_script():
           (u.bot_access?A(u.id,'revoke_bot','🤖 Забрати доступ до бота'):A(u.id,'grant_bot','🤖 Надати доступ до бота'))+
           '</div></div>');
       }
+      // 🛡 що показувати / дозволяти на інфосайті (24.11)
+      b.push(permsHTML(u));
       // role + state
       b.push('<div class="sect"><h3>Роль і стан</h3><div class="mrow">'+
         (u.is_admin?A(u.id,'remove_admin','− Зняти адміна'):A(u.id,'make_admin','+ Зробити адміном'))+
@@ -2297,6 +2454,37 @@ def _admin_script():
       b.push('<div class="sect"><h3 style="color:#fca5a5">Небезпечно</h3><div class="mrow">'+
         A(u.id,'delete','🗑 Видалити користувача')+'</div></div>');
       document.getElementById('modal').innerHTML=b.join('');
+    }
+    function permsHTML(u){
+      const D=PDEFS||{groups:[],perms:[]};
+      if(u.is_admin) return '<div class="sect"><h3>🛡 Інфосайт: що показувати і що дозволено</h3>'+
+        '<div class="mrow"><span class="badge b-adm">адміністратор — доступ до всього</span></div></div>';
+      const raw=u.perms||{}, eff=u.perms_eff||{};
+      const val=p=> (p.key in raw)?!!raw[p.key]:!!p.default;
+      const all={}, view={}, none={};
+      D.perms.forEach(p=>{ all[p.key]=true; none[p.key]=false; view[p.key]=p.group!=='trade'; });
+      const h=['<div class="sect"><h3>🛡 Інфосайт: що показувати і що дозволено</h3>',
+        '<p class="sub" style="margin:-2px 0 8px">Сервер перевіряє кожне право сам — прихований розділ не віддає даних, '+
+        'заборонений шар графіка не надсилається, сповіщення й торгівля без права не виконуються.</p>',
+        '<div class="mrow">'+A(u.id,'set_perms','✓ Усе дозволити',{perms:all})+
+        A(u.id,'set_perms','👁 Лише перегляд (без торгівлі)',{perms:view})+
+        A(u.id,'set_perms','⛔ Усе заборонити',{perms:none})+'</div>'];
+      D.groups.forEach(g=>{
+        const ps=D.perms.filter(p=>p.group===g.key); if(!ps.length) return;
+        h.push('<div style="margin-top:8px;font-size:.72rem;color:#9aa3b5;font-weight:700">'+g.label+'</div>');
+        h.push('<div class="prm-grid">'+ps.map(p=>{
+          const on=val(p), dead=on&&!eff[p.key];
+          const tip=(p.hint||'')+(dead?' — не діє: вимкнено «'+((D.perms.find(x=>x.key===p.needs)||{}).label||p.needs)+'»':'');
+          return '<label class="prm'+(dead?' dead':'')+(p.group==='trade'?' trd':'')+'" title="'+tip.replace(/"/g,'&quot;')+'">'+
+            '<input type="checkbox" '+(on?'checked ':'')+'onchange="permSet('+u.id+',\\''+p.key+'\\',this.checked)"> '+p.label+'</label>';
+        }).join('')+'</div>');
+      });
+      h.push('</div>');
+      return h.join('');
+    }
+    function permSet(id,key,on){
+      if(on&&key==='trade_real'&&!confirm('Дозволити РЕАЛЬНУ торгівлю за сигналом ⚠?\\n\\nУгоди відкриває Trade Manager БОТА — з ключами і депозитом бота.')){ drawM(); return; }
+      act(id,'set_perms',{key:key,on:on});
     }
     function A(id,a,label,extra){ return `<button class="actbtn" onclick='act(${id},"${a}",${JSON.stringify(extra||{})})'>${label}</button>`; }
     function customDays(id){ const n=prompt('На скільки днів надати доступ? (0 = без обмеження)'); if(n===null)return; act(id,'set_access',{days:parseInt(n)||0}); }

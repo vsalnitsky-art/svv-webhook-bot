@@ -11,10 +11,11 @@
 
 • Налаштування — `prefs['trade'] = {'enabled': bool, 'coins': {SYM: 'paper'|'real'}}`
   (ЧИСТА `trade_norm`). Монети — лише з WATCHLIST кабінету.
-• Доступ — ЛИШЕ адміністратору (`trade_allowed`): на цьому етапі угоди йдуть
-  через Trade Manager бота, тобто з ключами бота. Інші користувачі бачать, що
-  можливість тимчасово недоступна; навіть підроблені prefs нічого не дають —
-  `auth.info_trade_subscribers` бере лише активних адміністраторів.
+• Доступ — адміністратор завжди; користувач — лише на книги, які йому
+  дозволив адміністратор (🛡 `trade_paper` / `trade_real`, вимога 24.11).
+  Угоди йдуть через Trade Manager БОТА (ключі й депозит бота). Підроблені
+  prefs нічого не дають — `auth.info_trade_subscribers` відкидає монети з
+  недозволеною книгою. 🔐 Ключі біржі — лише адміністратор.
 • Сигнал — той самий ⚠ «сценарій входу», що йде в Telegram (рушій ШІ
   `ai_signals._anom_personal`), одна дія на НОВИЙ сценарій. Виконання —
   `TradeManager.cab_signal_trade` (тримати / відкрити / реверс).
@@ -76,9 +77,55 @@ def trade_apply(cur, body, wl=None):
     return trade_norm(out, wl)
 
 
+def _perms_mod():
+    """web.user_perms без важкого пакетного імпорту (`web/__init__` тягне
+    flask_app): той самий модуль на процес (`sys.modules`)."""
+    import sys
+    m = sys.modules.get('web.user_perms')
+    if m is not None:
+        return m
+    try:
+        from web import user_perms as m
+        return m
+    except Exception:
+        import importlib.util
+        import os
+        sp = importlib.util.spec_from_file_location(
+            'web.user_perms', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'user_perms.py'))
+        m = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(m)
+        sys.modules['web.user_perms'] = m
+        return m
+
+
+def user_books(u):
+    """🛡 Книги, у які користувачу ДОЗВОЛЕНО торгувати з кабінету (адмін — усі;
+    користувачу — ті, що адміністратор увімкнув у «🛡 Керування користувачами»)."""
+    if u is None:
+        return ()
+    try:
+        P = _perms_mod()
+        return P.books(P.of_user(u))
+    except Exception:
+        return BOOKS if getattr(u, 'is_admin', False) else ()
+
+
 def trade_allowed(u) -> bool:
-    """Торгівля з кабінету поки що — лише адміністратору."""
+    """Торгівля з кабінету: адміністратор — завжди, користувач — якщо
+    адміністратор надав право хоча б на одну книгу."""
+    return bool(user_books(u))
+
+
+def keys_allowed(u) -> bool:
+    """🔐 Ключі біржі — це ключі БОТА, тож лише адміністратор."""
     return bool(u is not None and getattr(u, 'is_admin', False))
+
+
+def trade_limit_books(t, books):
+    """ЧИСТА: прибрати монети з книгою, на яку немає права."""
+    t = trade_norm(t)
+    t['coins'] = {k: v for k, v in t['coins'].items() if v in (books or ())}
+    return t
 
 
 def trade_plan(subs, symbol):
@@ -193,8 +240,8 @@ def register_user_trading(app):
     def _deny(u):
         if u is None:
             return jsonify({'ok': False, 'error': 'auth_required'}), 401
-        return jsonify({'ok': False, 'error': 'admin_only', 'allowed': False,
-                        'reason': 'Торгівля з кабінету тимчасово доступна лише адміністратору'}), 403
+        return jsonify({'ok': False, 'error': 'no_perm', 'allowed': False,
+                        'reason': 'Адміністратор не надав доступ'}), 403
 
     def _wl(prefs):
         try:
@@ -209,14 +256,22 @@ def register_user_trading(app):
         u = _me()
         if u is None:
             return _deny(u)
-        if not trade_allowed(u):
+        bks = user_books(u)
+        if not bks:
             return jsonify({'ok': True, 'allowed': False,
-                            'reason': 'Торгівля з кабінету тимчасово доступна лише адміністратору'})
+                            'reason': 'Торгівлю з кабінету вмикає адміністратор '
+                                      '(🛡 Керування користувачами в боті)'})
         prefs = _load_prefs(u)
         wl = _wl(prefs)
-        cur = trade_norm(prefs.get('trade'), wl)
+        cur = trade_limit_books(trade_norm(prefs.get('trade'), wl), bks)
+        err = ''
         if request.method == 'POST':
-            cur = trade_apply(cur, request.get_json(silent=True) or {}, wl)
+            body = request.get_json(silent=True) or {}
+            c = body.get('coin')
+            if isinstance(c, dict) and c.get('on') and c.get('book') and c.get('book') not in bks:
+                err = 'Адміністратор не дозволив книгу ' + BOOK_UA.get(c.get('book'), str(c.get('book')))
+                body = {k: v for k, v in body.items() if k != 'coin'}
+            cur = trade_limit_books(trade_apply(cur, body, wl), bks)
             prefs['trade'] = cur
             _update_user(u.id, prefs=json.dumps(prefs)[:20000])
             trade_subs_invalidate()
@@ -225,13 +280,17 @@ def register_user_trading(app):
                 anom_subs_invalidate()
             except Exception:
                 pass
-        return jsonify({'ok': True, 'allowed': True, **cur, 'books': list(BOOKS),
-                        'tm': _tm_view(_tm()), 'log': trade_log()[:15]})
+        adm = keys_allowed(u)
+        return jsonify({'ok': not err, 'error': err, 'allowed': True, **cur, 'books': list(bks),
+                        'keys_allowed': adm, 'is_admin': adm,
+                        'tm': _tm_view(_tm()),
+                        # журнал дій — спільний для всіх; користувач бачить лише свої
+                        'log': [r for r in trade_log() if adm or u.email in (r.get('by') or [])][:15]})
 
     @app.route('/api/me/keys', methods=['GET', 'POST'])
     def api_me_keys():
         u = _me()
-        if not trade_allowed(u):
+        if not keys_allowed(u):
             return _deny(u)
         from web import exchange_keys
         if request.method == 'POST':
@@ -243,7 +302,7 @@ def register_user_trading(app):
     @app.route('/api/me/keys/clear', methods=['POST'])
     def api_me_keys_clear():
         u = _me()
-        if not trade_allowed(u):
+        if not keys_allowed(u):
             return _deny(u)
         from web import exchange_keys
         r = exchange_keys.clear()
@@ -252,7 +311,7 @@ def register_user_trading(app):
     @app.route('/api/me/keys/test', methods=['POST'])
     def api_me_keys_test():
         u = _me()
-        if not trade_allowed(u):
+        if not keys_allowed(u):
             return _deny(u)
         from web import exchange_keys
         r = exchange_keys.test()

@@ -86,7 +86,7 @@ def test_hl_compute_uses_swing_pivots_of_closed_bars():
 def test_hl_wired_into_payload_and_page():
     assert "'hl_tf': hl_tf, 'hl': hl, 'hl_wait': hl_wait" in IP
     assert "('hl', hl_tf)" in IP and "hl_tf=a.get('hl_tf')" in IP
-    assert '"&hl_tf=" + IW.hl_tf' in APP and 'hlCtl() +' in APP
+    assert '"&hl_tf=" + IW.hl_tf' in APP and 'hlCtl() : "") +' in APP
     lay = _block(APP, 'var lay = $("#iw-layers");', 'liqUi();')
     assert lay.index('show_imb') < lay.index('hlCtl()')                    # кнопка поруч з IMB
     fns = (_block(APP, 'function snapSec(', '\n  }\n') + '\n  }\n'

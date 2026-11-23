@@ -511,3 +511,7 @@ body{font-size:15px}
 .tr-kbtns{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px}.tr-del{color:var(--short)!important}.tr-note{font-size:10.5px;line-height:1.5;margin:10px 0 0}
 .tr-msg{margin:8px 0;padding:7px 10px;border-radius:5px;font-size:11px;border:1px solid color-mix(in srgb,var(--long) 35%,transparent);color:var(--long)}.tr-msg.bad{border-color:color-mix(in srgb,var(--short) 40%,transparent);color:var(--short)}
 .tr-log td{font-size:10px}.iw-bell-trade{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.iw-bell-trade label{font:500 12px var(--font)!important}
+
+/* 🛡 Права інфосайту (24.11): розділ / кнопка без доступу не показується */
+body.perm-no-sec_terminal .pm-sec_terminal,body.perm-no-sec_signals .pm-sec_signals,body.perm-no-sec_paper .pm-sec_paper,body.perm-no-ly_ob .pm-ly_ob,body.perm-no-ly_vob .pm-ly_vob,body.perm-no-ly_poc .pm-ly_poc,body.perm-no-ly_liq .pm-ly_liq,body.perm-no-ly_vol .pm-ly_vol,body.perm-no-trade .pm-trade{display:none!important}
+.perm-note{margin:14px 0;padding:12px 16px;border:1px solid rgba(250,204,21,.35);border-radius:10px;background:rgba(250,204,21,.06);color:#fbbf24;font-size:.85rem}

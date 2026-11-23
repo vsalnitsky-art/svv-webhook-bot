@@ -2351,8 +2351,19 @@ def register_info_portal(app):
         from web.auth import current_user
         return current_user()
 
+    def _perms(u=None):
+        from web.auth import _perms_mod
+        return _perms_mod().of_user(_me() if u is None else u)
+
+    def _no(key):
+        """🛡 403, коли адміністратор не дав користувачу це право."""
+        return jsonify({'ok': False, 'error': 'no_perm', 'perm': key,
+                        'reason': 'Адміністратор не надав доступ до цього розділу'}), 403
+
     @app.route('/api/info/universe')
     def api_info_universe():
+        if not _perms().get('sec_terminal'):
+            return _no('sec_terminal')
         """Монети WATCHLIST бота — підказка при додаванні (дані вже пораховані).
         Додати можна й будь-яку іншу USDT-монету — її порахує фоновий потік."""
         return jsonify({'ok': True, 'symbols': sorted(universe()),
@@ -2362,6 +2373,8 @@ def register_info_portal(app):
 
     @app.route('/api/info/rows')
     def api_info_rows():
+        if not _perms().get('sec_terminal'):
+            return _no('sec_terminal')
         syms = [x for x in (request.args.get('symbols') or '').split(',') if x]
         return jsonify({'ok': True, 'rows': rows_for(syms), 'ts': time.time()})
 
@@ -2370,6 +2383,8 @@ def register_info_portal(app):
         """💧 Профіль ліквідності монети — ЛИШЕ за кнопкою (ходить на біржу)."""
         a = request.args
         u = _me()
+        if not _perms(u).get('ly_liq'):
+            return _no('ly_liq')
         return jsonify(liq_profile(a.get('symbol') or '', a.get('exchange'),
                                    a.get('bars'), a.get('res'), step=a.get('step'),
                                    user=getattr(u, 'id', None) if u else
@@ -2379,17 +2394,29 @@ def register_info_portal(app):
     def api_info_liq_calc():
         """💧 Розрахунок профілю з сирих даних, які браузер узяв у біржі сам."""
         u = _me()
+        if not _perms(u).get('ly_liq'):
+            return _no('ly_liq')
         return jsonify(liq_from_client(request.get_json(silent=True) or {},
                                        user=getattr(u, 'id', None) if u else
                                        (request.remote_addr or None)))
 
     @app.route('/api/info/coin')
     def api_info_coin():
+        from web.auth import _perms_mod
+        user_perms = _perms_mod()
+        pm = _perms()
+        if not pm.get('sec_terminal'):
+            return _no('sec_terminal')
         a = request.args
         p = coin_payload(a.get('symbol') or '', tf=a.get('tf'), ob_tf=a.get('ob_tf'),
                          vob_tf=a.get('vob_tf'), poc_days=a.get('poc_days'),
                          poc_tf=a.get('poc_tf'), hl_tf=a.get('hl_tf'), sbr_tf=a.get('sbr_tf'),
-                         vol=str(a.get('vol') or '') in ('1', 'true'))
+                         vol=str(a.get('vol') or '') in ('1', 'true') and bool(pm.get('ly_vol')))
+        # 🛡 заборонені шари не віддаємо (кеш спільний — ріжемо копію); набір прав
+        # входить у сигнатуру, щоб зміна прав одразу перемалювала графік
+        p = user_perms.strip_coin(p, pm)
+        if p.get('sig'):
+            p = dict(p, sig=p['sig'] + '|' + user_perms.sig(pm))
         if p.get('ok') and a.get('sig') and a.get('sig') == p.get('sig'):
             return jsonify({'ok': True, 'same': True, 'sig': p['sig']})
         return jsonify(p)
@@ -2399,6 +2426,8 @@ def register_info_portal(app):
         """🧪 Тестові угоди бота: віртуальний рахунок, статистика за період
         (?from&to — межі дня рахує сторінка за годинником ПК), відкриті й
         останні закриті paper-угоди. Лише читання."""
+        if not _perms().get('sec_paper'):
+            return _no('sec_paper')
         from detection.trade_manager import get_trade_manager
         tm = get_trade_manager()
         if not tm:
@@ -2420,6 +2449,8 @@ def register_info_portal(app):
     @app.route('/api/info/recommended')
     def api_info_recommended():
         """🤖 «Рекомендовані ботом» — лише читання памʼяті бота."""
+        if not _perms().get('sec_signals'):
+            return _no('sec_signals')
         r = jsonify(recommended_payload())
         r.headers['Cache-Control'] = 'no-store'
         return r
@@ -2427,6 +2458,8 @@ def register_info_portal(app):
     @app.route('/api/info/paper/days')
     def api_info_paper_days():
         """📅 Дні з закритими paper-угодами — для календаря."""
+        if not _perms().get('sec_paper'):
+            return _no('sec_paper')
         from detection.trade_manager import get_trade_manager
         tm = get_trade_manager()
         if not tm:
@@ -2446,12 +2479,21 @@ def register_info_portal(app):
         prefs = _load_prefs(u)
         cur = user_info(prefs, uni, defaults(sc) if sc else None)
         err = ''
+        pm = _perms(u)
         if request.method == 'POST':
-            cur, err = apply_change(cur, request.get_json(silent=True) or {}, uni)
+            body = dict(request.get_json(silent=True) or {})
+            # 🛡 підписка без права не вмикається (і не зберігається)
+            for k, pk in (('sbr', 'ntf_sbr'), ('anom', 'ntf_anom')):
+                if k in body and not pm.get(pk):
+                    body.pop(k)
+                    err = err or 'Адміністратор не надав доступ до цих сповіщень'
+            cur, err2 = apply_change(cur, body, uni)
+            err = err2 or err
             prefs['info'] = cur
             _update_user(u.id, prefs=json.dumps(prefs)[:20000])
             sbr_subs_invalidate()
             anom_subs_invalidate()
         return jsonify({'ok': not err, 'error': err, 'max': IWL_MAX, 'universe_n': len(uni),
                         'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
-                        'sbr_tfs': list(SBR_SUB_TFS), **cur})
+                        'sbr_tfs': list(SBR_SUB_TFS), **cur,
+                        'perms': pm, 'is_admin': bool(getattr(u, 'is_admin', False))})
