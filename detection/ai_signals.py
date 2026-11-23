@@ -95,8 +95,10 @@ DISCHARGE_TFS = ('1h', '15m', '5m')  # TF підтвердження розря�
 DISCHARGE_TF_UA = {'1h': '1H закриття', '15m': '15m закриття', '5m': '5m CHoCH+BOS'}
 # 📊 Тінь веде ще й «5m VOB» (24.11) — ЛИШЕ для порівняння, вибрати його для
 # входу не можна (DISCHARGE_TFS не змінено).
-DIS_SHADOW_TFS = DISCHARGE_TFS + ('vob',)
-DIS_SHADOW_UA = dict(DISCHARGE_TF_UA, vob='5m VOB')
+# «5m VOB останній» (24.11) — те саме, але точка входу — НАЙНОВІШИЙ VOB 5m у бік
+# розряду після його старту (кожен новий блок — нова точка), а не перший.
+DIS_SHADOW_TFS = DISCHARGE_TFS + ('vob', 'vobl')
+DIS_SHADOW_UA = dict(DISCHARGE_TF_UA, vob='5m VOB', vobl='5m VOB останній')
 VOB_DEFAULTS = {'swing_length': 10, 'ob_end_method': 'Wick', 'max_atr_mult': 3.5}
 STRUCT_LOOK_SEC = 4 * 3600     # 5m-структура: CHoCH+BOS шукаємо за останні 4 год
 STRUCT_INTERNAL_SIZE = 5       # півоти внутрішньої структури (як у сканера за замовч.)
@@ -608,6 +610,24 @@ def discharge_state_struct(closed_1h: List[Dict], closed_5m: List[Dict], side: s
     return out
 
 
+def vob_detect(closed_5m: List[Dict], params: Optional[Dict] = None) -> Optional[Dict]:
+    """Детектор Volumized OB (той самий, що бокс бота) над 5m-свічками; усі живі
+    блоки без злиття. Немає детектора → None."""
+    p = dict(VOB_DEFAULTS, **(params or {}))
+    try:
+        from detection.volumized_ob import detect_volumized_obs
+    except Exception:
+        try:
+            detect_volumized_obs = _sib('volumized_ob').detect_volumized_obs
+        except Exception:
+            return None
+    return detect_volumized_obs(_clean_bars(closed_5m), swing_length=int(p['swing_length']),
+                                ob_end_method=str(p['ob_end_method']),
+                                max_atr_mult=float(p['max_atr_mult']),
+                                zone_count=str(p.get('zone_count') or 'High'),
+                                combine_obs=bool(p.get('combine_obs', False)))
+
+
 def discharge_state_vob(closed_1h: List[Dict], closed_5m: List[Dict], side: str,
                         live_price=None, obs=None, box: int = DISCHARGE_BOX,
                         look_sec: float = STRUCT_LOOK_SEC, params: Optional[Dict] = None) -> Dict:
@@ -633,18 +653,10 @@ def discharge_state_vob(closed_1h: List[Dict], closed_5m: List[Dict], side: str,
         out['note'] = 'замало закритих свічок'
         return out
     if obs is None:
-        try:
-            from detection.volumized_ob import detect_volumized_obs
-        except Exception:
-            try:
-                detect_volumized_obs = _sib('volumized_ob').detect_volumized_obs
-            except Exception:
-                out['note'] = 'немає детектора VOB'
-                return out
-        obs = detect_volumized_obs(m5, swing_length=int(p['swing_length']),
-                                   ob_end_method=str(p['ob_end_method']),
-                                   max_atr_mult=float(p['max_atr_mult']),
-                                   zone_count='High', combine_obs=False)
+        obs = vob_detect(m5, p)
+        if obs is None:
+            out['note'] = 'немає детектора VOB'
+            return out
     lst = (obs or {}).get('all_bullish' if sd == 'LONG' else 'all_bearish') or []
     close_at = {_bar_sec(b): _bar_close(b) for b in m5}
     ends = [_bar_sec(b) + 3600 for b in h]
@@ -702,6 +714,106 @@ def discharge_state_vob(closed_1h: List[Dict], closed_5m: List[Dict], side: str,
         out.update(state='pending', note='VOB 5m за межею є, але ціна зараз повернулась у коробку')
     else:
         out.update(state='confirmed', note='VOB 5m народився за межею коробки 1h')
+    return out
+
+
+def discharge_state_vob_last(closed_1h: List[Dict], closed_5m: List[Dict], side: str,
+                             live_price=None, obs=None, box: int = DISCHARGE_BOX,
+                             look_sec: float = STRUCT_LOOK_SEC, params: Optional[Dict] = None) -> Dict:
+    """💥 Тінь «5m VOB останній» (24.11). ЧИСТА.
+    Старт розряду — поточна серія закритих 5m-свічок ЗА МЕЖЕЮ 24-год коробки 1h
+    (свічка назад у коробці серію обриває). У цей момент дивимось на ОСТАННІЙ VOB
+    5m — САМИЙ ОСТАННІЙ блок, РІВНО той, що бот малює останнім (`latest_ob`
+    детектора: параметри «📦 Volumized OB Trend» разом із Zone Count і Combine,
+    свічки з ЖИВОЮ). Лише він: старіший блок у бік НЕ підставляється, якщо
+    останній — проти. Він може народитись і ДО старту:
+    • останній VOB у бік розряду, не зламаний, жива ціна за межею → 'confirmed'
+      (`t` = пізніше з (старт серії, народження блоку): новий блок або нова
+      серія — нова точка);
+    • останній VOB у бік, але зламаний (breaker) → 'false';
+    • останній VOB ПРОТИ розряду / VOB немає / ціна в коробці → 'pending';
+    • серії за межею немає → 'none'.
+    → як `discharge_state_vob` (+ `start_t`, `vob_t`, `vob_side`)."""
+    sd = str(side).upper()
+    sg = 1.0 if sd == 'LONG' else -1.0
+    out = {'state': 'none', 'edge': None, 'box_hi': None, 'box_lo': None, 't': None,
+           'held': 0, 'need': 1, 'tf': 'vobl', 'note': ''}
+    p = dict(VOB_DEFAULTS, **(params or {}))
+    h = _clean_bars(closed_1h)
+    m5 = _clean_bars(closed_5m)
+    if len(h) < box or len(m5) < int(p['swing_length']) + 5:
+        out['note'] = 'замало закритих свічок'
+        return out
+    ends = [_bar_sec(b) + 3600 for b in h]
+    t_end = _bar_sec(m5[-1]) or 0
+
+    def _box_at(t):
+        j = 0
+        while j < len(h) and ends[j] <= t:
+            j += 1
+        return _hl_box(h[j - box:j]) if j >= box else None
+
+    start, sbx, sedge = None, None, None      # поточна серія закриттів за межею
+    for b in m5:
+        t, c = _bar_sec(b), _bar_close(b)
+        if t is None or c is None or t < t_end - look_sec:
+            continue
+        bx = _box_at(t)
+        if not bx:
+            continue
+        edge = bx[0] if sd == 'LONG' else bx[1]
+        if sg * (c - edge) > 0:
+            if start is None:
+                start, sbx, sedge = t, bx, edge
+        else:
+            start = None
+    if start is None:
+        out['note'] = 'розряду немає: закриття 5m у коробці 1h'
+        return out
+    out.update(edge=sedge, box_hi=sbx[0], box_lo=sbx[1], start_t=start)
+    if obs is None:
+        obs = vob_detect(m5, p)
+        if obs is None:
+            out['note'] = 'немає детектора VOB'
+            return out
+    last = None          # САМИЙ ОСТАННІЙ VOB = `latest_ob` детектора (той, що бот малює останнім)
+    lo = (obs or {}).get('latest_ob')
+    if lo:
+        ft = _bar_sec({'t': lo.get('formation_time') or lo.get('start_time')})
+        if ft is not None:
+            last = (ft, 'LONG' if lo.get('type') == 'Bull' else 'SHORT', lo)
+    else:
+        for key, sd_ob in (('all_bullish', 'LONG'), ('all_bearish', 'SHORT')):
+            for ob in (obs or {}).get(key) or []:
+                ft = _bar_sec({'t': ob.get('formation_time') or ob.get('start_time')})
+                if ft is not None and (last is None or ft > last[0]):
+                    last = (ft, sd_ob, ob)
+    if last is None:
+        out.update(state='pending', note='розряд іде, VOB 5m на графіку немає')
+        return out
+    ft, vside, ob = last
+    out.update(vob_t=ft, vob_side=vside)
+    if vside != sd:
+        out.update(state='pending', note=f'останній VOB 5m — {vside}, проти розряду {sd}')
+        return out
+    zone = float(ob['bottom']) if sd == 'LONG' else float(ob['top'])
+    vol = float(ob.get('ob_volume') or 0)
+    dom = max(float(ob.get('ob_high_volume') or 0), float(ob.get('ob_low_volume') or 0))
+    out.update(t=max(ft, start), held=1, zone=zone, zone_top=float(ob['top']),
+               zone_bot=float(ob['bottom']), vol_pct=round(100.0 * dom / vol, 1) if vol > 0 else None)
+    if ob.get('breaker'):
+        out.update(state='false', note='останній VOB 5m у бік розряду зламано')
+        out['false_t'] = _bar_sec({'t': ob.get('break_time')})
+        return out
+    try:
+        lp = float(live_price) if live_price is not None else None
+    except (TypeError, ValueError):
+        lp = None
+    if lp is not None and sg * (lp - sedge) <= 0:
+        out.update(state='pending', note='останній VOB 5m у бік є, але ціна зараз повернулась у коробку')
+    else:
+        out.update(state='confirmed', note='розряд іде, останній VOB 5m — у бік розряду'
+                   + (' (народився до старту)' if ft < start else ''))
     return out
 
 
@@ -2449,10 +2561,26 @@ class AiEngine:
                '5m': discharge_state_struct(h, m5, side, live_price,
                                             internal_size=self._struct_isize())}
         try:        # 📊 лише тінь — збій детектора VOB не чіпає решту
-            out['vob'] = discharge_state_vob(h, m5, side, live_price, params=self._vob_params())
+            vp = self._vob_params()
+            obs = vob_detect(m5, vp) if len(m5) >= int(vp['swing_length']) + 5 else None
+            out['vob'] = discharge_state_vob(h, m5, side, live_price, obs=obs, params=vp)
+            out['vobl'] = discharge_state_vob_last(h, m5, side, live_price,
+                                                   obs=self._vob_chart(symbol, vp), params=vp)
         except Exception as e:
-            out['vob'] = {'state': 'none', 'tf': 'vob', 'note': f'помилка VOB: {e}'[:120]}
+            for k in ('vob', 'vobl'):
+                out.setdefault(k, {'state': 'none', 'tf': k, 'note': f'помилка VOB: {e}'[:120]})
         return out
+
+    def _vob_chart(self, symbol: str, vp: Dict) -> Optional[Dict]:
+        """«Самий останній» VOB 5m — як на графіку бота: ті самі параметри разом із
+        Zone Count / Combine, свічки з ЖИВОЮ (кеш рушія, без мережі)."""
+        with self._pro_lock:
+            hit = (self._pro_bars.get(str(symbol or '').upper()) or {}).get('5m')
+        rows = list(hit[1]) if hit else []
+        if len(rows) < int(vp['swing_length']) + 5:
+            return None
+        return vob_detect(rows, dict(vp, zone_count=vp.get('chart_zone_count') or 'Low',
+                                     combine_obs=vp.get('chart_combine', True)))
 
     def _vob_params(self) -> Dict:
         """Параметри VOB = блок «📦 Volumized OB Trend» сканера (одне джерело)."""
@@ -2471,6 +2599,10 @@ class AiEngine:
             p['max_atr_mult'] = float(st.get('volumized_max_atr_mult') or p['max_atr_mult'])
         except (TypeError, ValueError):
             pass
+        if st.get('volumized_zone_count') in ('Low', 'Medium', 'High', 'One'):
+            p['chart_zone_count'] = st['volumized_zone_count']
+        if 'volumized_combine_obs' in st:
+            p['chart_combine'] = bool(st.get('volumized_combine_obs'))
         return p
 
     def _struct_isize(self) -> int:
@@ -2517,7 +2649,7 @@ class AiEngine:
                     pass
             if tf == '1h':
                 lead = {}
-                for ltf in ('15m', '5m', 'vob'):
+                for ltf in ('15m', '5m', 'vob', 'vobl'):
                     early = [r for r in self._dis_shadow if r.get('S') == S and r.get('side') == side
                              and r.get('tf') == ltf and 0 <= now - float(r.get('t') or 0) <= 4 * 3600]
                     if early:

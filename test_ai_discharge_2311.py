@@ -382,6 +382,69 @@ def test_engine_vob_shadow_and_page():
     assert 'value="vob"' not in src          # для входу не обирається
 
 
+def test_vob_last_shadow():
+    """24.11: 📊 тінь «5m VOB останній» — найновіший VOB 5m у бік після старту розряду."""
+    h = _bars(FLAT)                                       # коробка 1h 99.8 … 100.2
+    t0 = h[-1]['t'] // 1000 + 3600
+    m5 = _bars5([100.0, 100.1, 100.15, 100.1, 100.3, 100.35, 100.4, 100.45, 100.5, 100.5,
+                 100.5, 100.5, 100.5, 100.5, 100.5, 100.5], t0)
+    ob = lambda i, brk=None, bot=100.05, top=100.15: {
+        'formation_time': m5[i]['t'], 'start_time': m5[i - 1]['t'], 'top': top, 'bottom': bot,
+        'ob_volume': 10.0, 'ob_high_volume': 8.0, 'ob_low_volume': 2.0,
+        'breaker': brk is not None, 'break_time': m5[brk]['t'] if brk is not None else None}
+    bear = lambda i, brk=None: dict(ob(i, brk), top=100.6, bottom=100.45)
+    # старт розряду — свічка 4; останній VOB на графіку (9) — у бік → точка
+    r = A.discharge_state_vob_last(h, m5, 'LONG', 100.5,
+                                   obs={'all_bullish': [ob(5), ob(9, bot=100.3, top=100.4)],
+                                        'all_bearish': [bear(3)]})
+    assert r['state'] == 'confirmed' and r['tf'] == 'vobl', r
+    assert r['t'] == m5[9]['t'] // 1000 and r['zone'] == 100.3 and r['vob_side'] == 'LONG'
+    assert r['start_t'] == m5[4]['t'] // 1000 and abs(r['edge'] - 100.2) < 1e-9
+    # блок уже БУВ до старту і він останній → точка в момент старту
+    r = A.discharge_state_vob_last(h, m5, 'LONG', 100.5, obs={'all_bullish': [ob(2)]})
+    assert r['state'] == 'confirmed' and r['t'] == m5[4]['t'] // 1000 and 'до старту' in r['note']
+    # останній VOB — ПРОТИ розряду → чекаємо (старіший бичачий не рахується)
+    r = A.discharge_state_vob_last(h, m5, 'LONG', 100.5,
+                                   obs={'all_bullish': [ob(5)], 'all_bearish': [bear(9)]})
+    assert r['state'] == 'pending' and r['vob_side'] == 'SHORT'
+    # «самий останній» = latest_ob детектора (бокс на графіку): старіший бичачий
+    # не підставляється, коли останній — ведмежий
+    lob = dict(bear(10), type='Bear')
+    r = A.discharge_state_vob_last(h, m5, 'LONG', 100.5,
+                                   obs={'all_bullish': [ob(9)], 'latest_ob': lob})
+    assert r['state'] == 'pending' and r['vob_side'] == 'SHORT', r
+    r = A.discharge_state_vob_last(h, m5, 'LONG', 100.5,
+                                   obs={'all_bearish': [bear(10)], 'latest_ob': dict(ob(11), type='Bull')})
+    assert r['state'] == 'confirmed' and r['vob_t'] == m5[11]['t'] // 1000
+    # останній у бік зламано → хибний; VOB немає → pending
+    r = A.discharge_state_vob_last(h, m5, 'LONG', 100.5, obs={'all_bullish': [ob(5), ob(9, brk=12)]})
+    assert r['state'] == 'false' and r['false_t'] == m5[12]['t'] // 1000
+    assert A.discharge_state_vob_last(h, m5, 'LONG', 100.5, obs={})['state'] == 'pending'
+    # ціна повернулась у коробку → pending; серія обірвалась закриттям у коробці → none
+    assert A.discharge_state_vob_last(h, m5, 'LONG', 100.1, obs={'all_bullish': [ob(9)]})['state'] == 'pending'
+    m5b = _bars5([100.0, 100.3, 100.4, 100.1] + [100.1] * 12, t0)
+    assert A.discharge_state_vob_last(h, m5b, 'LONG', 100.1, obs={'all_bullish': [ob(2)]})['state'] == 'none'
+    # реальний детектор не падає; ЛИШЕ тінь
+    assert A.discharge_state_vob_last(h, m5, 'LONG', 100.5)['state'] in ('none', 'pending', 'confirmed', 'false')
+    assert 'vobl' not in A.DISCHARGE_TFS and 'vobl' in A.DIS_SHADOW_TFS
+    assert A.ai_settings_norm({'discharge_tf': 'vobl'})['discharge_tf'] == '1h'
+    # рушій: обидва VOB-рядки з ОДНОГО прогону детектора; кожен новий блок — нова точка
+    NOW_E = 1.8e9
+    eng = A.AiEngine(db=None, clock=lambda: NOW_E)
+    eng._ai_s = A.ai_settings_norm({})
+    eng._ai_s_at = 1e15
+    eng._pro_bars['X'] = {'1h': (NOW_E, _bars(FLAT, t0=int(NOW_E) - 40 * 3600))}
+    both = eng.discharge_both('X', 'LONG', NOW_E, 100.5)
+    assert both['vobl']['tf'] == 'vobl' and both['vob']['tf'] == 'vob'
+    for ft in (NOW_E - 900, NOW_E - 900, NOW_E - 300):
+        eng._dis_shadow_tick('X', 'LONG', {'vobl': {'state': 'confirmed', 't': ft, 'edge': 100.2,
+                                                     'zone': 100.3}}, 100.5, NOW_E)
+    assert len([r for r in eng._dis_shadow if r['tf'] == 'vobl']) == 2
+    assert eng.dis_shadow_state()['stats']['vobl']['zone_n'] == 2
+    src = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    assert "row('vobl')" in src and "'vobl': '5m VOB останній'" in src and 'value="vobl"' not in src
+
+
 if __name__ == '__main__':
     n = 0
     for k, f in list(globals().items()):

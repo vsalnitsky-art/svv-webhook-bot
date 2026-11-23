@@ -6991,7 +6991,7 @@ function _aiDecision(c) {
 }
 // 💥 Стан розряду для «💥 Старт розряду» (E2): пробій закрито й утримано /
 // чекаємо підтвердження / лише жива свічка / 🪤 хибний старт (вимога 23.11).
-const _AI_DIS_TF = {'1h': '1H', '15m': '15m', '5m': '5m CHoCH+BOS', 'vob': '5m VOB'};
+const _AI_DIS_TF = {'1h': '1H', '15m': '15m', '5m': '5m CHoCH+BOS', 'vob': '5m VOB', 'vobl': '5m VOB останній'};
 const _AI_DIS = {confirmed: ['💥 розряд підтверджено', '#4ade80'], pending: ['⏳ розряд: чекаємо підтвердження', '#fbbf24'],
     live: ['⏳ пробій лише на живій свічці', '#fbbf24'], false: ['🪤 хибний старт', '#f87171'], none: ['· пробою коробки немає', '#6b7280']};
 function _aiDisLine(c) {
@@ -7003,7 +7003,7 @@ function _aiDisLine(c) {
     const tip = (ds.note || '') + (ds.edge ? ' · межа пробою ' + fmtPriceJS(ds.edge) : '')
         + (ds.t ? ' · ' + _pcDM(ds.t) + ' ' + _pcHM(ds.t) : '')
         + alts.map(a => '\n' + nm(a.tf) + ' (тінь): ' + ((_AI_DIS[a.state] || [a.state])[0]) + (a.note ? ' — ' + a.note : '')).join('');
-    const altTxt = alts.filter(a => _AI_DIS[a.state]).map(a => ` <span style="color:#6b7280">· ${a.tf === '5m' ? '5M' : (a.tf === 'vob' ? 'VOB' : String(a.tf).toUpperCase())}:${a.state === 'confirmed' ? '✓' : (a.state === 'false' ? '🪤' : '⏳')}</span>`).join('');
+    const altTxt = alts.filter(a => _AI_DIS[a.state]).map(a => ` <span style="color:#6b7280">· ${a.tf === '5m' ? '5M' : (a.tf === 'vob' ? 'VOB' : (a.tf === 'vobl' ? 'VOB↻' : String(a.tf).toUpperCase()))}:${a.state === 'confirmed' ? '✓' : (a.state === 'false' ? '🪤' : '⏳')}</span>`).join('');
     const pend = ds.state === 'pending' && ds.tf !== '5m' ? ' ' + (ds.held || 0) + '/' + (ds.need || 1) : '';
     return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t} <b>${nm(ds.tf || '1h')}</b>${pend}${altTxt}</div>`;
 }
@@ -7192,7 +7192,7 @@ function _aipDisStatsHTML(sh) {
             + (x.zone_n ? ` · 🛑 стоп за зоною VOB: ${x.avg_risk != null ? x.avg_risk + '%' : '—'}, вибило б <b>${x.zone_hit_pct}%</b>`
                 + (x.avg_mfe_r != null ? ` · макс ↑ ${x.avg_mfe_r}R` : '') : '') + '</span>';
     };
-    return `<div title="Угод не відкриває — лише записує, що було б, якби вхід підтверджувався кожним способом. Рух — % від ціни в момент підтвердження в бік входу, за 24 год; 🪤 хибний — закрита після цього 1h-свічка повернулась у коробку. 5m VOB — лише для порівняння (для входу не обирається); стоп за зоною блоку: середня відстань від входу і як часто ціна до неї доходила.">📊 <b>Тінь розряду 1H / 15m / 5m CHoCH+BOS / 5m VOB</b>:<div>${row('1h')}</div><div>${row('15m')}</div><div>${row('5m')}</div><div>${row('vob')}</div></div>`;
+    return `<div title="Угод не відкриває — лише записує, що було б, якби вхід підтверджувався кожним способом. Рух — % від ціни в момент підтвердження в бік входу, за 24 год; 🪤 хибний — закрита після цього 1h-свічка повернулась у коробку. 5m VOB — перший блок, що народився за межею коробки; 5m VOB останній — САМИЙ ОСТАННІЙ блок на графіку (той, що бот малює останнім) уже стоїть у бік розряду, що стартував; старіший блок не підставляється. Обидва лише для порівняння (для входу не обираються); стоп за зоною блоку: середня відстань від входу і як часто ціна до неї доходила.">📊 <b>Тінь розряду 1H / 15m / 5m CHoCH+BOS / 5m VOB / 5m VOB останній</b>:<div>${row('1h')}</div><div>${row('15m')}</div><div>${row('5m')}</div><div>${row('vob')}</div><div>${row('vobl')}</div></div>`;
 }
 // 📊 Закриті угоди за банером «МММ-Готовність» на вході (вимога 23.11).
 function _aipRdyStatsHTML(st) {
