@@ -321,6 +321,67 @@ def test_pick_and_settings_5m():
     assert 'value="5m">5m CHoCH+BOS' in src and "row('5m')" in src and '_AI_DIS_TF' in src
 
 
+def test_vob_5m_shadow_only():
+    """24.11: 📊 тінь «5m VOB» — VOB 5m у бік, що народився за межею коробки 1h."""
+    h = _bars(FLAT)                                       # коробка 1h 99.8 … 100.2
+    t0 = h[-1]['t'] // 1000 + 3600
+    m5 = _bars5([100.0, 100.1, 100.15, 100.1, 100.3, 100.35, 100.4, 100.45, 100.5, 100.5,
+                 100.5, 100.5, 100.5, 100.5, 100.5, 100.5], t0)
+    ob = lambda i, brk=None, bot=100.05, top=100.15: {
+        'formation_time': m5[i]['t'], 'start_time': m5[i - 1]['t'], 'top': top, 'bottom': bot,
+        'ob_volume': 10.0, 'ob_high_volume': 8.0, 'ob_low_volume': 2.0,
+        'breaker': brk is not None, 'break_time': m5[brk]['t'] if brk is not None else None}
+    # народився на свічці, що закрилась за межею 100.2 → confirmed + зона стопа
+    r = A.discharge_state_vob(h, m5, 'LONG', 100.5, obs={'all_bullish': [ob(4)]})
+    assert r['state'] == 'confirmed' and r['tf'] == 'vob' and abs(r['edge'] - 100.2) < 1e-9, r
+    assert r['zone'] == 100.05 and r['vol_pct'] == 80.0
+    # народився в коробці → pending
+    assert A.discharge_state_vob(h, m5, 'LONG', 100.5, obs={'all_bullish': [ob(2)]})['state'] == 'pending'
+    # блок зламано (breaker) → хибний старт; наступний робочий VOB рятує
+    assert A.discharge_state_vob(h, m5, 'LONG', 100.0, obs={'all_bullish': [ob(4, brk=7)]})['state'] == 'false'
+    r = A.discharge_state_vob(h, m5, 'LONG', 100.5, obs={'all_bullish': [ob(4, brk=7), ob(9)]})
+    assert r['state'] == 'confirmed' and r['t'] == m5[9]['t'] // 1000
+    # ведмежі блоки для LONG не рахуються; ціна в коробці → pending
+    assert A.discharge_state_vob(h, m5, 'LONG', 100.5, obs={'all_bearish': [ob(4)]})['state'] == 'none'
+    assert A.discharge_state_vob(h, m5, 'LONG', 100.1, obs={'all_bullish': [ob(4)]})['state'] == 'pending'
+    # реальний детектор не падає
+    assert A.discharge_state_vob(h, m5, 'LONG', 100.5)['state'] in ('none', 'pending', 'confirmed', 'false')
+    # ЛИШЕ тінь: для входу «vob» не обирається
+    assert 'vob' not in A.DISCHARGE_TFS and 'vob' in A.DIS_SHADOW_TFS
+    assert A.ai_settings_norm({'discharge_tf': 'vob'})['discharge_tf'] == '1h'
+    # тіньовий запис: ціна дійшла до зони → «вибило б стоп»
+    rec = {'S': 'X', 'side': 'LONG', 'tf': 'vob', 't': t0 + 3600, 'px': 100.5, 'edge': 100.2,
+           'zone': 100.05, 'risk': 0.448, 'last': 0.0, 'mfe': 0.0, 'mae': 0.0}
+    A.dis_shadow_update(rec, 101.0, h, rec['t'] + 60)
+    A.dis_shadow_update(rec, 100.0, h, rec['t'] + 120)
+    assert rec.get('zone_t') and rec['mfe'] > 0
+    st = A.dis_shadow_stats([rec])['vob']
+    assert st['n'] == 1 and st['zone_hit_pct'] == 100.0 and st['avg_risk'] == 0.448 and st['avg_mfe_r'] > 0
+
+
+def test_engine_vob_shadow_and_page():
+    NOW_E = 1.8e9
+    eng = A.AiEngine(db=None, clock=lambda: NOW_E)
+    eng._ai_s = A.ai_settings_norm({})
+    eng._ai_s_at = 1e15
+    h = _bars(FLAT, t0=int(NOW_E) - 40 * 3600)
+    eng._pro_bars['X'] = {'1h': (NOW_E, h)}
+    both = eng.discharge_both('X', 'LONG', NOW_E, 100.5)
+    assert 'vob' in both and both['vob']['tf'] == 'vob'
+    p = eng._vob_params()
+    assert set(p) == {'swing_length', 'ob_end_method', 'max_atr_mult'}
+    eng._dis_shadow_tick('X', 'LONG', {'vob': {'state': 'confirmed', 't': NOW_E - 600, 'edge': 100.2,
+                                                'zone': 100.0, 'vol_pct': 70}}, 100.5, NOW_E)
+    r = eng._dis_shadow[-1]
+    assert r['tf'] == 'vob' and r['zone'] == 100.0 and r['risk'] > 0
+    assert 'vob' in eng.dis_shadow_state()['stats']
+    d = A.dis_pick({'1h': {'state': 'live', 'tf': '1h'}, 'vob': {'state': 'confirmed', 'tf': 'vob'}}, '1h')
+    assert [a['tf'] for a in d['alts']] == ['vob']
+    src = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    assert "row('vob')" in src and "'vob': '5m VOB'" in src and 'zone_hit_pct' in src
+    assert 'value="vob"' not in src          # для входу не обирається
+
+
 if __name__ == '__main__':
     n = 0
     for k, f in list(globals().items()):

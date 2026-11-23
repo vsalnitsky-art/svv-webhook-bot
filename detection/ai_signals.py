@@ -89,6 +89,11 @@ DISCHARGE_LOOK = 6             # закритих 1h-свічок назад —
 DISCHARGE_LOOK_LTF = 16        # закритих 15m-свічок назад (4 год)
 DISCHARGE_TFS = ('1h', '15m', '5m')  # TF підтвердження розряду (рівень — завжди коробка 1h)
 DISCHARGE_TF_UA = {'1h': '1H закриття', '15m': '15m закриття', '5m': '5m CHoCH+BOS'}
+# 📊 Тінь веде ще й «5m VOB» (24.11) — ЛИШЕ для порівняння, вибрати його для
+# входу не можна (DISCHARGE_TFS не змінено).
+DIS_SHADOW_TFS = DISCHARGE_TFS + ('vob',)
+DIS_SHADOW_UA = dict(DISCHARGE_TF_UA, vob='5m VOB')
+VOB_DEFAULTS = {'swing_length': 10, 'ob_end_method': 'Wick', 'max_atr_mult': 3.5}
 STRUCT_LOOK_SEC = 4 * 3600     # 5m-структура: CHoCH+BOS шукаємо за останні 4 год
 STRUCT_INTERNAL_SIZE = 5       # півоти внутрішньої структури (як у сканера за замовч.)
 DIS_SHADOW_HOURS = 24          # тіньовий запис ведемо 24 год від підтвердження
@@ -498,7 +503,7 @@ def dis_pick(both: Dict, tf: str) -> Dict:
     tf = tf if tf in DISCHARGE_TFS else '1h'
     out = dict((both or {}).get(tf) or (both or {}).get('1h') or {})
     out['alts'] = [{k: ((both or {}).get(a) or {}).get(k) for k in ('state', 'tf', 'held', 'need', 't', 'note')}
-                   for a in DISCHARGE_TFS if a != tf and (both or {}).get(a)]
+                   for a in DIS_SHADOW_TFS if a != tf and (both or {}).get(a)]
     return out
 
 
@@ -599,13 +604,110 @@ def discharge_state_struct(closed_1h: List[Dict], closed_5m: List[Dict], side: s
     return out
 
 
+def discharge_state_vob(closed_1h: List[Dict], closed_5m: List[Dict], side: str,
+                        live_price=None, obs=None, box: int = DISCHARGE_BOX,
+                        look_sec: float = STRUCT_LOOK_SEC, params: Optional[Dict] = None) -> Dict:
+    """💥 Підтвердження розряду через 5m VOB (24.11, ЛИШЕ тінь). ЧИСТА.
+    Той самий детектор Volumized OB, що й бокс у боті (`detect_volumized_obs`,
+    параметри «📦 Volumized OB Trend»). VOB у бік `side` народжується на свічці,
+    що ЗАКРИЛАСЬ за свінгом; підтвердження — ця свічка закрилась ще й ЗА МЕЖЕЮ
+    24-год коробки 1h (рівень Пружини). Зона блоку — природний рівень стопа.
+    • такий VOB є, не зламаний, жива ціна за межею → 'confirmed';
+    • ціна пробила низ (LONG) / верх (SHORT) блоку — він став breaker → 'false';
+    • VOB у бік є, але народився в коробці / ціна повернулась у коробку → 'pending';
+    • інакше → 'none'. `obs` — готовий результат детектора (для тестів).
+    → як інші стани + zone (рівень зламу), zone_top/zone_bot, vol_pct (частка
+    переважної сторони обсягу блоку, %)."""
+    sd = str(side).upper()
+    sg = 1.0 if sd == 'LONG' else -1.0
+    out = {'state': 'none', 'edge': None, 'box_hi': None, 'box_lo': None, 't': None,
+           'held': 0, 'need': 1, 'tf': 'vob', 'note': ''}
+    p = dict(VOB_DEFAULTS, **(params or {}))
+    h = _clean_bars(closed_1h)
+    m5 = _clean_bars(closed_5m)
+    if len(h) < box or len(m5) < int(p['swing_length']) + 5:
+        out['note'] = 'замало закритих свічок'
+        return out
+    if obs is None:
+        try:
+            from detection.volumized_ob import detect_volumized_obs
+        except Exception:
+            try:
+                detect_volumized_obs = _sib('volumized_ob').detect_volumized_obs
+            except Exception:
+                out['note'] = 'немає детектора VOB'
+                return out
+        obs = detect_volumized_obs(m5, swing_length=int(p['swing_length']),
+                                   ob_end_method=str(p['ob_end_method']),
+                                   max_atr_mult=float(p['max_atr_mult']),
+                                   zone_count='High', combine_obs=False)
+    lst = (obs or {}).get('all_bullish' if sd == 'LONG' else 'all_bearish') or []
+    close_at = {_bar_sec(b): _bar_close(b) for b in m5}
+    ends = [_bar_sec(b) + 3600 for b in h]
+    t_end = _bar_sec(m5[-1]) or 0
+
+    def _box_at(t):
+        j = 0
+        while j < len(h) and ends[j] <= t:
+            j += 1
+        return _hl_box(h[j - box:j]) if j >= box else None
+
+    cand, inside = [], None
+    for ob in lst:
+        ft = _bar_sec({'t': ob.get('formation_time') or ob.get('start_time')})
+        if ft is None or ft < t_end - look_sec:
+            continue
+        bx = _box_at(ft)
+        c = close_at.get(ft)
+        if not bx or c is None:
+            continue
+        edge = bx[0] if sd == 'LONG' else bx[1]
+        if sg * (c - edge) > 0:
+            cand.append((ft, ob, bx, edge))
+        elif inside is None or ft > inside[0]:
+            inside = (ft, bx, edge)
+    if not cand:
+        if inside:
+            out.update(state='pending', t=inside[0], edge=inside[2], box_hi=inside[1][0],
+                       box_lo=inside[1][1], note='VOB 5m у бік є, але народився в коробці 1h')
+        else:
+            out['note'] = 'VOB 5m у бік розряду за межею коробки немає'
+        return out
+    cand.sort(key=lambda x: x[0])
+    cur = None
+    for ft, ob, bx, edge in cand:        # перший робочий; зламаний — беремо наступний
+        bt = _bar_sec({'t': ob.get('break_time')}) if ob.get('breaker') else None
+        if cur is None or (cur[4] is not None and cur[4] <= ft):
+            cur = (ft, ob, bx, edge, bt)
+    ft, ob, bx, edge, bt = cur
+    zone = float(ob['bottom']) if sd == 'LONG' else float(ob['top'])
+    vol = float(ob.get('ob_volume') or 0)
+    dom = max(float(ob.get('ob_high_volume') or 0), float(ob.get('ob_low_volume') or 0))
+    out.update(t=ft, edge=edge, box_hi=bx[0], box_lo=bx[1], held=1, zone=zone,
+               zone_top=float(ob['top']), zone_bot=float(ob['bottom']),
+               vol_pct=round(100.0 * dom / vol, 1) if vol > 0 else None)
+    if bt is not None:
+        out.update(state='false', note='ціна пробила зону VOB 5m — блок зламано (хибний старт)')
+        out['false_t'] = bt
+        return out
+    try:
+        lp = float(live_price) if live_price is not None else None
+    except (TypeError, ValueError):
+        lp = None
+    if lp is not None and sg * (lp - edge) <= 0:
+        out.update(state='pending', note='VOB 5m за межею є, але ціна зараз повернулась у коробку')
+    else:
+        out.update(state='confirmed', note='VOB 5m народився за межею коробки 1h')
+    return out
+
+
 def dis_shadow_stats(recs: List[Dict]) -> Dict:
     """📊 Тіньове порівняння підтвердження розряду 1H проти 15m (23.11). ЧИСТА.
     Кожен запис — точка, де розряд став «підтвердженим» на своєму TF, і що ціна
     робила далі (у % у бік входу). → {tf: {n, done, win_pct, avg_last, avg_mfe,
     avg_mae, false_pct, avg_lead_min}}."""
     out = {}
-    for tf in DISCHARGE_TFS:
+    for tf in DIS_SHADOW_TFS:
         rs = [r for r in recs or [] if r.get('tf') == tf]
         n = len(rs)
         if not n:
@@ -629,6 +731,15 @@ def dis_shadow_stats(recs: List[Dict]) -> Dict:
                    'avg_last': _avg('last'), 'avg_mfe': _avg('mfe'), 'avg_mae': _avg('mae'),
                    'false_pct': round(100.0 * sum(1 for r in rs if r.get('false_t')) / n, 1),
                    'avg_lead_min': round(sum(lead) / len(lead), 1) if lead else None}
+        zr = [r for r in rs if r.get('zone') is not None]
+        if zr:      # 5m VOB: стоп за зоною блоку — як далеко і як часто вибивало б
+            out[tf]['zone_n'] = len(zr)
+            out[tf]['zone_hit_pct'] = round(100.0 * sum(1 for r in zr if r.get('zone_t')) / len(zr), 1)
+            rk = [float(r['risk']) for r in zr if r.get('risk') is not None]
+            out[tf]['avg_risk'] = round(sum(rk) / len(rk), 3) if rk else None
+            rr = [float(r['mfe']) / float(r['risk']) for r in zr
+                  if r.get('risk') and float(r['risk']) > 0 and r.get('mfe') is not None]
+            out[tf]['avg_mfe_r'] = round(sum(rr) / len(rr), 2) if rr else None
     return out
 
 
@@ -648,6 +759,11 @@ def dis_shadow_update(rec: Dict, price, closed_1h, now: float,
             rec['last'] = round(mv, 3)
             rec['mfe'] = round(max(float(rec.get('mfe') or 0.0), mv), 3)
             rec['mae'] = round(min(float(rec.get('mae') or 0.0), mv), 3)
+            # 5m VOB: ціна дійшла до зони блоку (там стояв би стоп) — один раз.
+            if rec.get('zone') is not None and not rec.get('zone_t') \
+                    and sg * (px - float(rec['zone'])) <= 0:
+                rec['zone_t'] = int(now)
+                rec['zone_last'] = rec.get('last')
     except (TypeError, ValueError, KeyError):
         pass
     if not rec.get('false_t'):
@@ -2322,11 +2438,36 @@ class AiEngine:
         (рівень — коробка 1h). Лише кеш рушія, без мережі."""
         s = self.ai_settings()
         h = self.closed_bars(symbol, '1h', now)
-        return {'1h': discharge_state(h, side, live_price, need=int(s.get('discharge_bars') or 1)),
-                '15m': discharge_state_ltf(h, self.closed_bars(symbol, '15m', now), side, live_price,
-                                           need=int(s.get('discharge_bars_15m') or 2)),
-                '5m': discharge_state_struct(h, self.closed_bars(symbol, '5m', now), side, live_price,
-                                             internal_size=self._struct_isize())}
+        m5 = self.closed_bars(symbol, '5m', now)
+        out = {'1h': discharge_state(h, side, live_price, need=int(s.get('discharge_bars') or 1)),
+               '15m': discharge_state_ltf(h, self.closed_bars(symbol, '15m', now), side, live_price,
+                                          need=int(s.get('discharge_bars_15m') or 2)),
+               '5m': discharge_state_struct(h, m5, side, live_price,
+                                            internal_size=self._struct_isize())}
+        try:        # 📊 лише тінь — збій детектора VOB не чіпає решту
+            out['vob'] = discharge_state_vob(h, m5, side, live_price, params=self._vob_params())
+        except Exception as e:
+            out['vob'] = {'state': 'none', 'tf': 'vob', 'note': f'помилка VOB: {e}'[:120]}
+        return out
+
+    def _vob_params(self) -> Dict:
+        """Параметри VOB = блок «📦 Volumized OB Trend» сканера (одне джерело)."""
+        try:
+            st = self._scn().get_settings() or {}
+        except Exception:
+            st = {}
+        p = dict(VOB_DEFAULTS)
+        try:
+            p['swing_length'] = max(3, min(50, int(st.get('volumized_swing_length') or p['swing_length'])))
+        except (TypeError, ValueError):
+            pass
+        if st.get('volumized_ob_end_method') in ('Wick', 'Close'):
+            p['ob_end_method'] = st['volumized_ob_end_method']
+        try:
+            p['max_atr_mult'] = float(st.get('volumized_max_atr_mult') or p['max_atr_mult'])
+        except (TypeError, ValueError):
+            pass
+        return p
 
     def _struct_isize(self) -> int:
         try:
@@ -2353,7 +2494,7 @@ class AiEngine:
             return
         if px <= 0:
             return
-        for tf in DISCHARGE_TFS:
+        for tf in DIS_SHADOW_TFS:
             d = both.get(tf) or {}
             if d.get('state') != 'confirmed' or not d.get('t'):
                 continue
@@ -2362,9 +2503,17 @@ class AiEngine:
                 continue
             rec = {'key': key, 'S': S, 'side': side, 'tf': tf, 't': int(now), 'brk_t': int(d['t']),
                    'px': px, 'edge': d.get('edge'), 'last': 0.0, 'mfe': 0.0, 'mae': 0.0}
+            if d.get('zone') is not None:      # 5m VOB: зона блоку = рівень стопа
+                try:
+                    z = float(d['zone'])
+                    rec['zone'] = z
+                    rec['risk'] = round(abs(px - z) / px * 100.0, 3)
+                    rec['vol_pct'] = d.get('vol_pct')
+                except (TypeError, ValueError):
+                    pass
             if tf == '1h':
                 lead = {}
-                for ltf in ('15m', '5m'):
+                for ltf in ('15m', '5m', 'vob'):
                     early = [r for r in self._dis_shadow if r.get('S') == S and r.get('side') == side
                              and r.get('tf') == ltf and 0 <= now - float(r.get('t') or 0) <= 4 * 3600]
                     if early:
@@ -2394,7 +2543,8 @@ class AiEngine:
         recs = list(self._dis_shadow)
         return {'stats': dis_shadow_stats(recs), 'n': len(recs),
                 'last': [{k: r.get(k) for k in ('S', 'side', 'tf', 't', 'px', 'last', 'mfe', 'mae',
-                                                 'false_t', 'lead', 'done')} for r in recs[-12:]]}
+                                                 'false_t', 'lead', 'done', 'zone', 'risk', 'zone_t')}
+                         for r in recs[-12:]]}
 
     def false_start_check(self, symbol: str, side: str, edge, opened_at) -> Optional[Dict]:
         """🪤 Для виходу з угоди ШІ (TM): закрита після входу свічка повернулась
