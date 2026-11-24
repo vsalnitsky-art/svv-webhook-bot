@@ -1642,9 +1642,13 @@ def register_auth_routes(app):
     @app.route('/login', methods=['GET', 'POST'])
     def auth_login():
         from web.i18n import normalize_language, tr
+        nxt = request.args.get('next') or request.form.get('next') or '/smart-money'
+        # The bot always starts at Smart Money. A protected deep link must not
+        # become the post-login destination; the only exception is the separate
+        # info-site's signed-token handoff, which is not a bot-page navigation.
+        destination = '/info-login' if nxt == '/info-login' else '/smart-money'
         if current_user() and _is_active(current_user()):
-            return redirect('/')
-        nxt = request.args.get('next') or request.form.get('next') or '/'
+            return redirect(destination)
         lang = normalize_language(request.values.get('lang') or request.form.get('language'))
         if request.method == 'POST':
             email = _norm_email(request.form.get('email'))
@@ -1670,7 +1674,7 @@ def register_auth_routes(app):
             login_user(u)
             if not _is_active(u):
                 return redirect(url_for('auth_pending'))
-            return redirect(nxt if nxt.startswith('/') else '/')
+            return redirect(destination)
         _info = tr(lang, 'session_superseded') if request.args.get('superseded') else ''
         return _page(tr(lang, 'login_title'), _login_form(nxt, err=_info, lang=lang), lang=lang)
 
