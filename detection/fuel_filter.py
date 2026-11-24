@@ -247,6 +247,63 @@ def mm_str_mins_norm(raw, legacy=0) -> dict:
     return out
 
 
+# ── 🧭 ЧОТИРИ БАНЕРИ → ІНФОСАЙТ: зведення + збіг (вимога 25.11) ──────────
+# «Візуалізація на головному банері інфосайту із чотирьох показників банерів
+# головного бота — 🧮 МММ-Trend 🔮 МММ-Local 🧠 МММ-Decision 🧩 МММ-Готовність —
+# коли вони всі сходяться у напрямку, відбувається додаткова візуалізація» +
+# «додаткова візуалізація у загальному відсотку всіх банерів».
+MM4_BOOKS = (('new', '🧮', 'МММ-Trend', '_mm_bias_new', '_mmn_on'),
+             ('fc', '🔮', 'МММ-Local', '_mm_bias_fc', '_mmf_on'),
+             ('dec', '🧠', 'МММ-Decision', '_mm_bias_dec', '_mmd_on'),
+             ('rdy', '🧩', 'МММ-Готовність', '_mm_bias_rdy', '_mmr_on'))
+
+
+def mm4_consensus(items):
+    """ЧИСТА: банери → {items, n, on, data, agree, agree_since, total}.
+
+    • `agree` — бік, коли ВСІ ЧОТИРИ увімкнені, мають дані і ПІДТВЕРДЖЕНИЙ
+      статус кожного той самий (LONG/SHORT); `agree_since` — момент, коли
+      зійшовся останній (max `since`). Вимкнений блок / без даних / ⚖ → збігу
+      немає (а не «збіг трьох»).
+    • `total` — ЗАГАЛЬНИЙ відсоток: середній ЗНАКОВИЙ важіль `net` банерів, що
+      мають дані (⚖ входить своїм малим net — тягне до рівноваги). `pct` =
+      |середнє| × 100, бік — за знаком при |середнє| ≥ MM_BIAS_FLAT (той самий
+      поріг, що в кожного банера), інакше ⚖; `long_pct` — частка для подвійної
+      смуги (50 = рівно)."""
+    out, nets = [], []
+    for it in items or []:
+        it = dict(it or {})
+        has = bool(it.get('on')) and int(it.get('coins') or 0) > 0
+        it['data'] = has
+        if has:
+            try:
+                nets.append(float(it.get('net') or 0.0))
+            except (TypeError, ValueError):
+                pass
+        out.append(it)
+    dirs = [i.get('dir') for i in out if i['data']]
+    agree = None
+    if len(out) == 4 and len(dirs) == 4 and dirs[0] in ('LONG', 'SHORT') \
+            and all(d == dirs[0] for d in dirs):
+        agree = dirs[0]
+    agree_since = (max(int(i.get('since') or 0) for i in out) if agree else 0)
+    total = None
+    if nets:
+        m = sum(nets) / len(nets)
+        total = {'net': round(m, 4), 'pct': round(abs(m) * 100.0, 1),
+                 'dir': ('LONG' if m >= MM_BIAS_FLAT else
+                         ('SHORT' if m <= -MM_BIAS_FLAT else None)),
+                 'long_pct': round(max(0.0, min(100.0, (1.0 + m) * 50.0)), 1),
+                 'n': len(nets),
+                 'n_long': sum(1 for d in dirs if d == 'LONG'),
+                 'n_short': sum(1 for d in dirs if d == 'SHORT'),
+                 'n_flat': sum(1 for d in dirs if d not in ('LONG', 'SHORT'))}
+    return {'items': out, 'n': len(out),
+            'on': sum(1 for i in out if i.get('on')),
+            'data': len(nets), 'agree': agree,
+            'agree_since': agree_since or 0, 'total': total}
+
+
 def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
                  st_key: str = 'status', str_key: str = 'strength'):
     """⚖️ ОДИН крок важеля банера → `(bias, since, cand)`. ЧИСТА функція.
@@ -6094,6 +6151,26 @@ class FuelFilterDaemon:
         """
         with self._lock:
             return dict(getattr(self, '_mm_bias_new', {}) or {})
+
+    def mm4_view(self) -> Dict:
+        """🧭 Чотири банери (МММ-Trend · Local · Decision · Готовність) для
+        інфосайту — ЛИШЕ читання готових знімків (ті самі `_mm_bias_*`, що
+        малюють банери бота) + `mm4_consensus`. Тумблер блоку ще невідомий
+        (до першого такту) → судимо за наявністю даних у знімку."""
+        items = []
+        with self._lock:
+            for key, icon, name, battr, fattr in MM4_BOOKS:
+                b = dict(getattr(self, battr, {}) or {})
+                on = getattr(self, fattr, None)
+                if on is None:
+                    on = bool(b.get('coins'))
+                items.append({'key': key, 'icon': icon, 'name': name, 'on': bool(on),
+                              'dir': b.get('dir'), 'pct': b.get('pct'),
+                              'net': b.get('net'), 'since': b.get('since'),
+                              'coins': b.get('coins') or 0,
+                              'cand_dir': b.get('cand_dir'),
+                              'avg_str': b.get('avg_str')})
+        return mm4_consensus(items)
 
     def _mm_str_mins_cache(self, s: Dict) -> None:
         """⚑ Оновити кеш порогів «Сила ≥» обох книг із налаштувань."""

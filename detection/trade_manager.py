@@ -3042,7 +3042,7 @@ class TradeManager:
             # 📨 У ГРУПОВИЙ ТОПІК: це подія ВІДКРИТОЇ УГОДИ, а приватний бот
             # зарезервований під службові повідомлення (вимога 21.09).
             self._notify(f"⚖️ BE{' [paper]' if is_shadow else ''}: SL → {self._fmt_price(new_sl)} for "
-                          f"{pos['symbol']}{buf_note}", category='trades')
+                          f"{pos['symbol']}{buf_note}", is_test=is_shadow, category='trades')
             (self._persist_shadow_positions if is_shadow else self._persist_positions)()
         elif pos['side'] == 'SHORT' and current_price <= entry * (1 - trigger):
             new_sl = entry * (1 - buf)
@@ -3054,7 +3054,7 @@ class TradeManager:
             # 📨 У ГРУПОВИЙ ТОПІК: це подія ВІДКРИТОЇ УГОДИ, а приватний бот
             # зарезервований під службові повідомлення (вимога 21.09).
             self._notify(f"⚖️ BE{' [paper]' if is_shadow else ''}: SL → {self._fmt_price(new_sl)} for "
-                          f"{pos['symbol']}{buf_note}", category='trades')
+                          f"{pos['symbol']}{buf_note}", is_test=is_shadow, category='trades')
             (self._persist_shadow_positions if is_shadow else self._persist_positions)()
 
     # ============================================================
@@ -11014,8 +11014,10 @@ class TradeManager:
         """Send a Telegram notification — professionally routed, NO duplication.
 
         Routing:
-          • category set (a GROUP category, e.g. 'trades') → the shared GROUP
-            TOPIC only (notify_category). Market info is NEVER duplicated into the
+          • 'trades' + REAL trade (not is_test) → ONLY the owner's private
+            chat from the main bot (`_real_notify`, 25.11) — never the group;
+          • category set (a GROUP category, e.g. 'trades' for paper) → the shared
+            GROUP TOPIC only (notify_category). Market info is NEVER duplicated into the
             private bot — the private bot is reserved for administrative messages.
           • no category → a SERVICE / admin-only message → the admin's private
             chat via self.notifier.
@@ -11042,6 +11044,14 @@ class TradeManager:
                     print(f"[TM{self._owner_tag}] notify error: {e}")
             return
 
+        # 🏦 РЕАЛЬНА УГОДА → ЛИШЕ ОСОБИСТО ВЛАСНИКУ через головного TG-бота
+        # (вимога 25.11): відкриття / закриття / рівні / BE / реверс реальних
+        # угод — це гроші власника, у спільну групу вони НЕ йдуть. Paper
+        # (is_test=True) — як і раніше в тему «📈 Угоди».
+        if category == 'trades' and not is_test:
+            self._real_notify(msg)
+            return
+
         if category:
             # Market categories (trades/funding/…) go to the GROUP topic ONLY —
             # never duplicated into the private bot. The private bot is reserved
@@ -11061,6 +11071,25 @@ class TradeManager:
         except Exception as e:
             print(f"[TM] Notify error: {e}")
     
+    def _real_notify(self, msg: str) -> bool:
+        """🏦 Подія РЕАЛЬНОЇ угоди бота → особистий чат власника (адміна,
+        `TELEGRAM_CHAT_ID`) від ГОЛОВНОГО бота (`tg_bot.tg_send`). Головний бот
+        недоступний → резервний приватний `notifier` (теж лише адміну).
+        У групу — НІКОЛИ (тест-замок)."""
+        try:
+            from web.tg_bot import tg_send, _admin_chat
+            chat = _admin_chat()
+            if chat and tg_send(chat, msg):
+                return True
+        except Exception as e:
+            print(f"[TM] real-trade notify error: {e}")
+        if self.notifier:
+            try:
+                return bool(self.notifier.send_message(msg))
+            except Exception as e:
+                print(f"[TM] Notify error: {e}")
+        return False
+
     @staticmethod
     def _dir_dot(side):
         """🟢/🔴 direction indicator (Telegram has NO text colour — emoji is the

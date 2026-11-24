@@ -2575,7 +2575,15 @@ def recommended_payload(now=None):
         banners = spring_banners(sc, eng, now)
     except Exception:
         banners = []
+    mm4 = None
+    try:
+        from detection.fuel_filter import get_fuel_filter
+        _ff = get_fuel_filter()
+        mm4 = _ff.mm4_view() if (_ff is not None and hasattr(_ff, 'mm4_view')) else None
+    except Exception:
+        mm4 = None
     p = {'ok': True, 'rows': rows, 'banners': banners, 'counts': counts, 'dir_acc': dir_acc,
+         'mm4': mm4,
          'scan': scan_meta, 'wl_n': len(wl_recs), 'ai_ready': ai_n, 'ts': now}
     _rec_cache['p'] = (now, p)
     return p
