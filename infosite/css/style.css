@@ -113,16 +113,14 @@ button:disabled{cursor:not-allowed;opacity:.4}svg{display:block}button svg,a svg
 .btn-primary:hover{filter:brightness(1.09);box-shadow:0 6px 22px color-mix(in srgb,var(--accent) 35%,transparent)}
 .btn-ghost:hover{border-color:var(--accent)}
 
-/* Boot-екран: логотип «V» з анімацією + LOADING */
+/* Boot-екран: нерухомий головний логотип, анімоване світіння + LOADING */
 .boot-loader{flex-direction:column;gap:20px}
-.boot-loader .boot-mark{position:relative;width:78px;height:78px;border:0;border-radius:20px;animation:bootPop .55s cubic-bezier(.2,.8,.2,1) both}
-.boot-loader .boot-mark img{width:78px;height:78px;border-radius:20px;display:block;box-shadow:0 0 0 1px rgba(240,185,11,.4),0 14px 42px rgba(240,185,11,.28);animation:bootFloat 2.8s ease-in-out .55s infinite}
+.boot-loader .boot-mark{position:relative;width:78px;height:78px;border:0;border-radius:20px}
+.boot-loader .boot-mark img{width:78px;height:78px;border-radius:20px;display:block;box-shadow:0 0 0 1px rgba(240,185,11,.4),0 14px 42px rgba(240,185,11,.28)}
 .boot-loader .boot-mark:after{content:"";position:absolute;inset:-7px;border-radius:26px;border:1px solid #f0b90b;opacity:0;animation:orbitPulse 2.2s ease-out infinite}
 .boot-loader b{font:600 12px var(--mono);letter-spacing:.42em;text-indent:.42em;color:var(--txt-dim)}
 .boot-loader b:after{content:"";animation:bootDots 1.2s steps(1) infinite}
 .boot-loader .boot-spin{width:22px;height:22px;border:2px solid var(--line);border-top-color:#f0b90b;border-radius:50%;animation:spin .8s linear infinite}
-@keyframes bootPop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
-@keyframes bootFloat{50%{transform:translateY(-4px)}}
 @keyframes bootDots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
 
 /* Завантаження графіка: той самий логотип, що й на boot-екрані */
