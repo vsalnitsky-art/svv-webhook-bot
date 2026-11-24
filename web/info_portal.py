@@ -742,7 +742,7 @@ def info_vob_params(st):
 
 def _engine_sbr_last(sym, tf):
     """🔔 Останній сигнал SBR із ПАМ'ЯТІ рушія бота (той самий, що блок
-    🔔 МММ-SBR і Telegram). None → рушій монету на цьому TF не веде."""
+    🔔 VSV-SBR і Telegram). None → рушій монету на цьому TF не веде."""
     try:
         from detection.sbr_signals import get_sbr_engine
         eng = get_sbr_engine()
@@ -1113,17 +1113,17 @@ def _poc(sc, sym, allow_compute=True, price=None, days=None, tf=None):
     return ('ok', out)
 
 
-MM_TTL = 60.0                # кеш фолбеку МММ-бабло для монет поза знімком
-MM_SYMBOLS = ('BTCUSDT',)    # 🧭 назва кольором МММ-бабло — лише BTC
+MM_TTL = 60.0                # кеш фолбеку VSV-бабло для монет поза знімком
+MM_SYMBOLS = ('BTCUSDT',)    # 🧭 назва кольором VSV-бабло — лише BTC
 _mm_cache = {}               # {SYM: (ts, mark|None)}
 
 
 def mm_marks(symbols, ff=None, now=None):
-    """🧭 «МММ-бабло» по монетах кабінету (вимога 08.11): напис монети фарбується
-    так само, як рядок «МММ-бабло ↑ зверху → тягне в LONG / ↓ знизу → SHORT».
+    """🧭 «VSV-бабло» по монетах кабінету (вимога 08.11): напис монети фарбується
+    так само, як рядок «VSV-бабло ↑ зверху → тягне в LONG / ↓ знизу → SHORT».
 
     Формула в боті ОДНА: (fa−fb)/den по liq-map, поріг ±0.1 — її рахує
-    `FuelFilterDaemon._fuel_dir_legacy` (колонка «🧮 МММ LiQ»). Тут — ЛИШЕ
+    `FuelFilterDaemon._fuel_dir_legacy` (колонка «🧮 VSV LiQ»). Тут — ЛИШЕ
     читання: спершу готовий знімок двигуна (`mm_snapshot_for`), а для монет, яких
     у знімку немає, — той самий `_fuel_dir_legacy` над кешованим (20с) станом
     liq-map, з власним кешем MM_TTL. Біржу НЕ смикаємо і liq-map нових монет НЕ
@@ -1194,7 +1194,7 @@ def rows_for(symbols, sc=None):
         except Exception:
             pass
         rows.append({'symbol': sym, 'price': price, 'chg24': chg, 'src': src, 'err': err})
-    # 🧭 Колір «МММ-бабло» — ЛИШЕ для BTC (вимога 08.11): решта монет без
+    # 🧭 Колір «VSV-бабло» — ЛИШЕ для BTC (вимога 08.11): решта монет без
     # кольору, тож і рахувати по них нічого.
     try:
         mm = mm_marks([r['symbol'] for r in rows if r['symbol'] in MM_SYMBOLS])
@@ -3049,3 +3049,48 @@ def register_info_portal(app):
                         'tg_linked': bool(getattr(u, 'telegram_chat_id', None)),
                         'sbr_tfs': list(SBR_SUB_TFS), **cur,
                         'perms': pm, 'is_admin': bool(getattr(u, 'is_admin', False))})
+
+    @app.route('/api/i18n/<lang>', methods=['GET', 'POST'])
+    def api_i18n_dictionary(lang):
+        """Versioned dictionaries in BotSetting; local JSON is only a fallback."""
+        from web.i18n import SUPPORTED_LANGUAGES, normalize_language
+        from web.i18n_store import get_dictionary, save_dictionary
+        code = normalize_language(lang, default='')
+        if code not in SUPPORTED_LANGUAGES:
+            return jsonify({'ok': False, 'error': 'unsupported_language'}), 404
+        if request.method == 'GET':
+            response = jsonify(get_dictionary(code))
+            response.headers['Cache-Control'] = 'public, max-age=300'
+            return response
+        from flask import g
+        from web.auth import admin_access_ok
+        u = _me()
+        if not admin_access_ok(u, getattr(g, '_via_token', False)):
+            return jsonify({'ok': False, 'error': 'forbidden'}), 403
+        body = request.get_json(silent=True) or {}
+        strings = body.get('strings', body.get('dictionary'))
+        try:
+            return jsonify(save_dictionary(code, strings))
+        except (TypeError, ValueError) as exc:
+            return jsonify({'ok': False, 'error': str(exc)}), 400
+        except Exception as exc:
+            return jsonify({'ok': False, 'error': str(exc)[:200]}), 500
+
+    @app.route('/api/me/language', methods=['GET', 'POST'])
+    def api_me_language():
+        """The saved profile choice is authoritative on every new site load."""
+        from web.i18n import SUPPORTED_LANGUAGES, language_from_prefs, normalize_language
+        from web.auth import _load_prefs, set_user_pref
+        u = _me()
+        if u is None:
+            return jsonify({'ok': False, 'error': 'auth_required'}), 401
+        current = language_from_prefs(_load_prefs(u))
+        if request.method == 'POST':
+            body = request.get_json(silent=True) or {}
+            code = normalize_language(body.get('language'), default='')
+            if code not in SUPPORTED_LANGUAGES:
+                return jsonify({'ok': False, 'error': 'unsupported_language'}), 400
+            set_user_pref(u.id, 'language', code)
+            current = code
+        return jsonify({'ok': True, 'language': current, 'source': 'profile',
+                        'supported': list(SUPPORTED_LANGUAGES)})

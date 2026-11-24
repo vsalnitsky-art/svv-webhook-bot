@@ -116,12 +116,12 @@ def _admin_chat():
 _CAT_LABEL = {
     'funding':  '💰 Funding',
     # 🧮 ТЕМА ПЕРЕЙМЕНОВАНА (вимога 21.09): головне в ній тепер — зміни банера
-    # «🧮 МММ-монітор», а ₿-сеанс лишається тут же (він і був).
+    # «🧮 VSV-монітор», а ₿-сеанс лишається тут же (він і був).
     # ⚠️ КЛЮЧ категорії лишається `btc` — його знають `TELEGRAM_CHAT_BTC` /
     # `TELEGRAM_TOPIC_BTC`, збережені id тем (`tg_forum_topics`) і налаштування
     # адміна `notify_btc`. Перейменувати ключ означало б загубити і тему, і
     # тумблер (той самий прецедент, що з `q2_auto_ob_sl*`).
-    'btc':      '🧮 МММ-монітор',
+    'btc':      '🧮 VSV-монітор',
     'trades':   '📈 Угоди',
     'signal':   '🎯 Напрямок',
     # 🔔 Сигнали Session Band Reversal 1H/4H по монетах, відмічених кнопкою 🔔
@@ -144,7 +144,7 @@ _CAT_ENV = {
 # by category. Distinct from the per-symbol tags (#BTCUSDT) so they don't clash.
 _CAT_TAG = {
     'funding':  '#Funding',
-    'btc':      '#МММ_монітор',
+    'btc':      '#VSV_монітор',
     'trades':   '#Угода',
     'signal':   '#Напрямок',
     'sbr':      '#Сигнали',
@@ -183,7 +183,7 @@ def rename_error(category=''):
     """Причина невдалого перейменування ПО КОНКРЕТНІЙ категорії.
 
     ⚠️ Раніше це був ОДИН глобальний рядок на всі категорії, і 🩺 перевірка
-    теми «🧮 МММ-монітор» показувала чужу помилку (реальний кейс 22.09:
+    теми «🧮 VSV-монітор» показувала чужу помилку (реальний кейс 22.09:
     `trades: Bad Request: TOPIC_NOT_MODIFIED` у звіті про btc). Перевірка
     однієї теми мусить казати ПРО НЕЇ.
     """
@@ -199,7 +199,7 @@ def _forum_rename_if_needed(chat, category, tid):
 
     Тема створюється ОДИН раз, а її `message_thread_id` персиститься — тож
     зміна `_CAT_LABEL` сама по собі НЕ міняє назву в групі: у Telegram і далі
-    висіло б «₿ BTCUSDT» над повідомленнями про 🧮 МММ-монітор. Тобто без цього
+    висіло б «₿ BTCUSDT» над повідомленнями про 🧮 VSV-монітор. Тобто без цього
     перейменування вимога «зміни в групі назву» виконана б НЕ була.
 
     ⚠️ Назву, яку ми поставили, ЗАПАМʼЯТОВУЄМО в БД: інакше `editForumTopic`
@@ -380,7 +380,7 @@ def _cat_chat(category):
 
 
 def _cat_enabled(category):
-    """Whether a GROUP category is on. 💰 Funding / 🧮 МММ-монітор follow the admin's
+    """Whether a GROUP category is on. 💰 Funding / 🧮 VSV-монітор follow the admin's
     OWN cabinet toggle (notify_funding/notify_btc) — turning it off there stops
     the group too. Other categories default ON."""
     key = {'funding': 'notify_funding', 'btc': 'notify_btc'}.get(category)
@@ -516,16 +516,16 @@ def _link_begin(cid, arg, username=None, name=None):
         return False
     if not str(arg or '').startswith(TG_LINK_PREFIX):
         return False
+    from web.telegram_i18n import telegram_tr, language_for_chat
+    lang = language_for_chat(cid) or 'uk'
     ok, msg, uid = tg_link_consume(str(arg)[len(TG_LINK_PREFIX):], str(cid),
                                    username, name)
     if not ok:
-        tg_send(cid, f"⚠️ Не вдалось привʼязати Telegram: {msg}")
+        tg_send(cid, telegram_tr(lang, 'link_failed', reason=msg))
         return True
     info = get_user_by_chat(str(cid)) or {}
-    tg_send(cid, f"✅ Telegram привʼязано до акаунта <b>{msg}</b>.\n"
-                 + ("Сповіщення й доступ до групи — як у зареєстрованого користувача."
-                    if info.get('active') else
-                    "⏳ Акаунт ще очікує схвалення адміністратора."))
+    status = telegram_tr(lang, 'link_active' if info.get('active') else 'status_pending')
+    tg_send(cid, telegram_tr(lang, 'link_ok', login=msg, status=status))
     # Активний (не адмін) → персональне запрошення в групу, як після схвалення.
     if info.get('active') and not info.get('is_admin'):
         try:
@@ -790,7 +790,12 @@ def _api(method, payload=None, timeout=35):
 
 
 def tg_send(chat_id, text, buttons=None):
-    """Send an HTML message; `buttons` = list of rows of {text, url|callback_data}."""
+    """Send an HTML message in the linked user's profile language."""
+    try:
+        from web.telegram_i18n import translate_chat_message
+        text, buttons = translate_chat_message(chat_id, text, buttons)
+    except Exception:
+        pass                         # доставка не залежить від збою локалізації
     p = {'chat_id': chat_id, 'text': text, 'parse_mode': 'HTML',
          'disable_web_page_preview': False}
     if buttons:
@@ -817,8 +822,11 @@ def _send_get_id(chat_id, text, buttons=None):
     return (_api('sendMessage', p).get('result') or {}).get('message_id')
 
 
-def _answer_cb(cb_id, text=''):
-    _api('answerCallbackQuery', {'callback_query_id': cb_id, 'text': text})
+def _answer_cb(cb_id, text='', show_alert=False):
+    payload = {'callback_query_id': cb_id, 'text': text}
+    if show_alert:
+        payload['show_alert'] = True
+    _api('answerCallbackQuery', payload)
 
 
 def _edit(chat_id, msg_id, text):
@@ -834,8 +842,11 @@ def _site_url():
 
 def _handle_start(chat_id, username=None, name=None, lang=None, premium=None):
     from web.auth import get_user_by_chat, _make_tg_token
+    from web.i18n import language_for_user, normalize_language
+    from web.telegram_i18n import telegram_tr
     b = base_url()
     existing = get_user_by_chat(str(chat_id))
+    lang = language_for_user(existing['id']) if existing else normalize_language(lang)
     if existing:
         btns = None
         if existing['active']:
@@ -845,44 +856,25 @@ def _handle_start(chat_id, username=None, name=None, lang=None, premium=None):
                 site = _site_url()
                 if site:
                     tok = _make_info_token(existing['id'])
-                    btns = [[{'text': '🔓 Увійти на сайт', 'url': f"{site}#it={tok}"}]]
+                    btns = [[{'text': telegram_tr(lang, 'login_site'), 'url': f"{site}#it={tok}"}]]
             except Exception:
                 btns = None
-        tg_send(chat_id,
-                f"👋 Ви зареєстровані як <b>{existing['email']}</b>.\n"
-                + ("✅ Акаунт активний — тисніть «Увійти на сайт»."
-                   if existing['active'] else
-                   "⏳ Акаунт очікує схвалення адміністратора.")
-                + "\n\n💬 Питання чи труднощі? Напишіть сюди — адміністратор відповість.",
+        status = telegram_tr(lang, 'status_active' if existing['active'] else 'status_pending')
+        tg_send(chat_id, telegram_tr(lang, 'start_registered', email=existing['email'], status=status),
                 buttons=btns)
         return
     if not b:
-        tg_send(chat_id, "⚠️ Сервіс тимчасово недоступний (не задано публічну "
-                         "адресу). Зверніться до адміністратора.")
+        tg_send(chat_id, telegram_tr(lang, 'service_unavailable'))
         return
     tok = _make_tg_token(str(chat_id), username, name, lang, premium)
     link = f"{b}/register?tg={tok}"
-    tg_send(chat_id,
-            "👋 <b>Вітаю у VSV Bot!</b>\n\n"
-            "Потрапити до групи можна <b>лише через реєстрацію на інфо-сайті</b> — "
-            "інакше доступу до групи немає (нікого не додають вручну).\n\n"
-            "Щоб отримати доступ:\n"
-            "1️⃣ Натисніть «Реєстрація на сайті» і задайте <b>лише пароль</b> "
-            "(email не потрібен — вас підтверджує Telegram).\n"
-            "2️⃣ Адміністратор підтвердить вашу реєстрацію.\n"
-            "3️⃣ Ринкові сигнали (угоди, 🧮 МММ-монітор, 💰 Funding) приходитимуть "
-            "в <b>окрему групу</b> — посилання на вхід у групу надійде сюди "
-            "<b>автоматично, після підтвердження реєстрації адміністратором</b>.\n\n"
-            "🔗 <b>Уже маєте акаунт</b> (створений адміністратором)? Не "
-            "реєструйтесь вдруге — увійдіть на сайт і в особистому кабінеті "
-            "натисніть «🔗 Привʼязати Telegram».\n\n"
-            "💬 Виникли труднощі? Просто напишіть повідомлення сюди — "
-            "я передам його адміністратору, і він відповість тут.",
-            buttons=[[{'text': '📝 Реєстрація на сайті', 'url': link}]])
+    tg_send(chat_id, telegram_tr(lang, 'start_new'),
+            buttons=[[{'text': telegram_tr(lang, 'register_site'), 'url': link}]])
 
 
 def _handle_callback(cb):
-    from web.auth import (get_user_by_id, _update_user, approve_user)
+    from web.auth import (get_user_by_id, _update_user, approve_user,
+                          notify_user_rejected)
     data = cb.get('data', '') or ''
     cb_id = cb.get('id')
     msg = cb.get('message', {}) or {}
@@ -902,17 +894,32 @@ def _handle_callback(cb):
         _answer_cb(cb_id, 'Користувача нема')
         return
     if act == 'ap':
-        approve_user(u.id)            # approve + 30-day access + notify user
-        _answer_cb(cb_id, 'Схвалено ✓')
-        _edit(chat_id, msg_id, f"✅ <b>{u.email}</b> — схвалено (30 днів).")
+        sent = approve_user(u.id)       # рішення збережено навіть за збою Telegram
+        if sent:
+            _answer_cb(cb_id, 'Схвалено ✓ повідомлення доставлено')
+            _edit(chat_id, msg_id,
+                  f"✅ <b>{u.email}</b> — схвалено (30 днів); користувача повідомлено.")
+        else:
+            _answer_cb(cb_id, 'Схвалено, але повідомлення НЕ доставлено', True)
+            _edit(chat_id, msg_id,
+                  f"⚠️ <b>{u.email}</b> — схвалено (30 днів), "
+                  "але повідомлення користувачу НЕ доставлено.")
     elif act == 'rj':
         _update_user(u.id, approved=False, disabled=True)
+        sent = notify_user_rejected(u.id)
         try:
             group_access_sync(u.id)
         except Exception:
             pass
-        _answer_cb(cb_id, 'Відхилено ✗')
-        _edit(chat_id, msg_id, f"⛔ <b>{u.email}</b> — відхилено.")
+        if sent:
+            _answer_cb(cb_id, 'Відхилено ✗ повідомлення доставлено')
+            _edit(chat_id, msg_id,
+                  f"⛔ <b>{u.email}</b> — відхилено; користувача повідомлено.")
+        else:
+            _answer_cb(cb_id, 'Відхилено, але повідомлення НЕ доставлено', True)
+            _edit(chat_id, msg_id,
+                  f"⚠️ <b>{u.email}</b> — відхилено, "
+                  "але повідомлення користувачу НЕ доставлено.")
     else:
         _answer_cb(cb_id)
 

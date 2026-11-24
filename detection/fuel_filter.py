@@ -4,8 +4,8 @@ fuel_filter — server-side automated trading filter driven by liquidation
 
 Idea (operator spec):
   • Scan every WATCHLIST coin.
-  • When a coin shows "МММ зверху (тягне в LONG)" (fuel_dir > +0.1) or
-    the opposite "МММ знизу (тягне в SHORT)" (fuel_dir < -0.1) a per-coin
+  • When a coin shows "VSV зверху (тягне в LONG)" (fuel_dir > +0.1) or
+    the opposite "VSV знизу (тягне в SHORT)" (fuel_dir < -0.1) a per-coin
     TIMER starts.
   • If that same status holds continuously for ≥ duration_minutes
     (default 5) we OPEN a position in the fuel direction.
@@ -94,25 +94,25 @@ MM_GROW_WINDOW_SEC = 180
 # Це друга половина вимоги: показник не мерехтить, але й не видає за
 # виміряний той приріст, який виміряти ще не встиг.
 MM_GROW_MIN_SPAN_SEC = 60
-# 💹 НАПРЯМОК ЦІНИ в МММ-моніторі (вимога 15.09: «щоб було розуміння чи ціна
+# 💹 НАПРЯМОК ЦІНИ в VSV-моніторі (вимога 15.09: «щоб було розуміння чи ціна
 # росте чи падає»). Вікно і мертва зона СВІДОМО ті самі числа, що вже живлять
 # колонку «Price» у 💰 Funding (`funding_monitor.PRICE_WINDOW` = 15 хв ·
 # `PRICE_DEADZONE` = 0.10%) — інакше дві колонки на одній сторінці називали б
 # «росте» різні речі. Константи ДУБЛЮЮТЬСЯ, а не імпортуються, бо джерело
-# семплів тут ІНШЕ (знімок МММ раз на CYCLE_SECS проти 1-хв опитувань
+# семплів тут ІНШЕ (знімок VSV раз на CYCLE_SECS проти 1-хв опитувань
 # фандинг-сканера) і пакетний імпорт `detection.funding_monitor` тягнув би
 # півпроєкту в ізольовані тести. Тест-замок звіряє числа між файлами.
 MM_PRICE_WINDOW_SEC = 15 * 60
 MM_PRICE_DEADZONE = 0.10
-# ⚖️ БАНЕР «🧮 МММ-МОНІТОР»: межа, за якою перекіс вважається НАПРЯМКОМ.
+# ⚖️ БАНЕР «🧮 VSV-МОНІТОР»: межа, за якою перекіс вважається НАПРЯМКОМ.
 # Те саме число, що всюди в проєкті відділяє ⚖ рівновагу від напрямку
-# (`|dir| ≤ 0.1`), тож банер і комірки МММ не можуть казати різне.
+# (`|dir| ≤ 0.1`), тож банер і комірки VSV не можуть казати різне.
 MM_BIAS_FLAT = 0.10
 # 🐢 ГІСТЕРЕЗИС ВИХОДУ З НАПРЯМКУ (вимога 18.09: «перехід між статусами має
 # бути повільним, а НЕ різким і частим»). Зайти в напрямок можна лише за
 # `MM_BIAS_FLAT`, а ВИЙТИ — аж коли важіль просів нижче за цю, МЕНШУ межу.
 # Без різних порогів банер біля 0.10 перемикався б туди-сюди на шумі — той
-# самий прийом, що вже стоїть у `_fuel_hyst` для самого МММ.
+# самий прийом, що вже стоїть у `_fuel_hyst` для самого VSV.
 MM_BIAS_EXIT = 0.06
 
 # 🛑 СХОДИ ДЖЕРЕЛ Manual SL (вимога користувача 22.09, дослівно): «Якщо
@@ -147,8 +147,8 @@ FUEL_SHORT_THR = -0.1          # fuel_dir < -0.1 → SHORT bias
 # живе 15 хв, тож фон легкий; на VDS обидва можна тримати ввімкненими.)
 _CTR_1H = os.getenv('CTR_1H', '0').lower() in ('1', 'true', 'yes', 'on')
 _CTR_4H = os.getenv('CTR_4H', '0').lower() in ('1', 'true', 'yes', 'on')
-# 🎯 Професійна модель МММ (Liquidity Pull Vector на LIQMAP + whale/стакан/funding).
-# Коли ввімкнено — і per-coin МММ (_fuel_dir), і банер ₿ (_update_btc_verdict) беруть
+# 🎯 Професійна модель VSV (Liquidity Pull Vector на LIQMAP + whale/стакан/funding).
+# Коли ввімкнено — і per-coin VSV (_fuel_dir), і банер ₿ (_update_btc_verdict) беруть
 # напрямок із неї замість сирого (fa−fb)/den. Вимкнено = стара поведінка (0 ризику).
 _MM_MODEL = os.getenv('MM_MODEL', '0').lower() in ('1', 'true', 'yes', 'on')
 # Анти-залипання банера ₿: якщо сеанс тримається на паузі (WAIT/глибокий нейтрал)
@@ -184,10 +184,10 @@ MIN_HOLD_AFTER_OPEN_SEC = 90
 _DB_SETTINGS = 'fuel_filter_settings'
 _DB_STATE = 'fuel_filter_state'
 _DB_SCAN_LIST = 'fuel_filter_scan_list'   # which symbols FF is allowed to scan
-# 🗑 Ключі БД старого блоку «💰 Funding — МММ» (видалено 06.11) — міграція
+# 🗑 Ключі БД старого блоку «💰 Funding — VSV» (видалено 06.11) — міграція
 # прибирає їх (`_migrate_settings`), щоб мертві блоби не лежали в БД.
 _DB_DEAD_FUNDING_KEYS = ('fuel_filter_funding_archive', 'fuel_opportunity_stats')
-# 💾 Знімки шести МММ-книг + їхні СИРІ кеші (STC, прогноз, вердикти Decision,
+# 💾 Знімки шести VSV-книг + їхні СИРІ кеші (STC, прогноз, вердикти Decision,
 # скан Pull) — щоб після рестарту блоки лише ОНОВЛЮВАЛИСЬ, а не збирались з нуля.
 # Окремий ключ: блоб великий, а `_DB_STATE` пишеться щотакту.
 _DB_MM_BOOKS = 'fuel_filter_mm_books_v1'
@@ -203,7 +203,7 @@ _DB_MM_BOOKS = 'fuel_filter_mm_books_v1'
 #   1 = position closed (_close)
 #   2 = engine opened the trade (_engine_tick success)
 #   3 = engine: TM already holds the coin (_engine_tick)
-#   4 = МММ-flip purge of opposite-direction entries (_update_btc_verdict)
+#   4 = VSV-flip purge of opposite-direction entries (_update_btc_verdict)
 #   5 = manual delete ✕ (delete_timer)
 #   6 = manual "Очистити всі" (clear_all_timers)
 #   7 = remove_pending()
@@ -249,13 +249,13 @@ def mm_str_mins_norm(raw, legacy=0) -> dict:
 
 # ── 🧭 ЧОТИРИ БАНЕРИ → ІНФОСАЙТ: зведення + збіг (вимога 25.11) ──────────
 # «Візуалізація на головному банері інфосайту із чотирьох показників банерів
-# головного бота — 🧮 МММ-Trend 🔮 МММ-Local 🧠 МММ-Decision 🧩 МММ-Готовність —
+# головного бота — 🧮 VSV-Trend 🔮 VSV-Local 🧠 VSV-Decision 🧩 VSV-Готовність —
 # коли вони всі сходяться у напрямку, відбувається додаткова візуалізація» +
 # «додаткова візуалізація у загальному відсотку всіх банерів».
-MM4_BOOKS = (('new', '🧮', 'МММ-Trend', '_mm_bias_new', '_mmn_on'),
-             ('fc', '🔮', 'МММ-Local', '_mm_bias_fc', '_mmf_on'),
-             ('dec', '🧠', 'МММ-Decision', '_mm_bias_dec', '_mmd_on'),
-             ('rdy', '🧩', 'МММ-Готовність', '_mm_bias_rdy', '_mmr_on'))
+MM4_BOOKS = (('new', '🧮', 'VSV-Trend', '_mm_bias_new', '_mmn_on'),
+             ('fc', '🔮', 'VSV-Local', '_mm_bias_fc', '_mmf_on'),
+             ('dec', '🧠', 'VSV-Decision', '_mm_bias_dec', '_mmd_on'),
+             ('rdy', '🧩', 'VSV-Готовність', '_mm_bias_rdy', '_mmr_on'))
 
 
 def mm4_consensus(items):
@@ -308,8 +308,8 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
                  st_key: str = 'status', str_key: str = 'strength'):
     """⚖️ ОДИН крок важеля банера → `(bias, since, cand)`. ЧИСТА функція.
 
-    Єдине джерело правила для ОБОХ банерів: «🧮 МММ-монітор» (старий МММ,
-    `status`/`strength`) і «🧮 МММ-Trend» (новий МММ, `new_status`/
+    Єдине джерело правила для ОБОХ банерів: «🧮 VSV-монітор» (старий VSV,
+    `status`/`strength`) і «🧮 VSV-Trend» (новий VSV, `new_status`/
     `new_strength`). Дві копії формули з часом розійшлися б.
 
         важіль = (Σ сила LONG − Σ сила SHORT) / Σ сила ВСІХ монет
@@ -404,7 +404,7 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
         # (частка маси в один бік), а не сила. Сила = середнє по монетах ЛИШЕ
         # того боку, що переважає (знак `net`): переміг LONG → середня сила
         # LONG-монет, SHORT → SHORT-монет (вимога користувача). ⚖ і протилежний
-        # бік у середнє НЕ входять. Шкала 0-100, як у комірці МММ.
+        # бік у середнє НЕ входять. Шкала 0-100, як у комірці VSV.
         'avg_side': ('LONG' if net > 0 else ('SHORT' if net < 0 else None)),
         'avg_str': (round(wl / n_long, 1) if (net > 0 and n_long)
                     else (round(ws / n_short, 1) if (net < 0 and n_short)
@@ -415,7 +415,7 @@ def mm_bias_step(snap, now: float, need: int, prev_bias, prev_since, prev_cand,
     return bias, since, cand
 
 
-# ⚡ МММ-CTR (вимога 14.10): третій банер на STC (CTR) 1H + 4H.
+# ⚡ VSV-CTR (вимога 14.10): третій банер на STC (CTR) 1H + 4H.
 # Ваги: 4H — КОНТЕКСТ (повільний, рідко перемикається), 1H — ТАЙМІНГ. Старший
 # TF важить більше, але 1H не є голосом «для галочки»: при 4H у нейтралі саме
 # 1H дає напрямок. Сума ваг = 1, тож сила лишається в шкалі 0-100.
@@ -430,7 +430,7 @@ CTR_MM_FAIL_RETRY = 300.0
 
 
 def ctr_mm_dir(stc_1h, stc_4h) -> Optional[Dict]:
-    """⚡ Напрямок МММ-CTR по ОДНІЙ монеті з пари STC 1H/4H. ЧИСТА функція.
+    """⚡ Напрямок VSV-CTR по ОДНІЙ монеті з пари STC 1H/4H. ЧИСТА функція.
 
     Нахил кожного TF — та сама конвенція, що в бейджі ⚡ над графіком:
     STC < 50 → LONG-нахил, > 50 → SHORT-нахил, сила = |STC−50|/50.
@@ -438,7 +438,7 @@ def ctr_mm_dir(stc_1h, stc_4h) -> Optional[Dict]:
         dir = 0.4 · нахил_1H + 0.6 · нахил_4H      (−1 … +1, + = LONG)
 
     • |dir| ≤ MM_BIAS_FLAT (0.10) → ⚖ рівновага — ТОЙ САМИЙ поріг, що в
-      колонці МММ і банерах, щоб «рівновага» означала одне й те саме;
+      колонці VSV і банерах, щоб «рівновага» означала одне й те саме;
     • 1H і 4H ЯВНО в різні боки (кожен нахил > 0.10) → ⚖ рівновага-КОНФЛІКТ,
       навіть якщо зважена сума формально вийшла за поріг: таймінг проти
       контексту — це не напрямок, а очікування;
@@ -465,16 +465,16 @@ def ctr_mm_dir(stc_1h, stc_4h) -> Optional[Dict]:
             'conflict': bool(conflict)}
 
 
-# 🔮 МММ-LOCAL (вимога 15.10): четвертий банер на 🔮 Forecast 1H + 4H —
+# 🔮 VSV-LOCAL (вимога 15.10): четвертий банер на 🔮 Forecast 1H + 4H —
 # ТІ САМІ числа, що в бейджах «1H: 🔴 SHORT −12% · 50%» над графіком.
-# Ваги ті самі, що в ⚡ МММ-CTR (4H — контекст, 1H — таймінг): одне правило
+# Ваги ті самі, що в ⚡ VSV-CTR (4H — контекст, 1H — таймінг): одне правило
 # «як зважувати два TF» на обидва блоки, щоб «64%» означало одне й те саме.
 FC_MM_W_1H = CTR_MM_W_1H
 FC_MM_W_4H = CTR_MM_W_4H
 
 
 def fc_mm_dir(f1, f4) -> Optional[Dict]:
-    """🔮 Напрямок МММ-Local по ОДНІЙ монеті з пари прогнозів 1H/4H. ЧИСТА.
+    """🔮 Напрямок VSV-Local по ОДНІЙ монеті з пари прогнозів 1H/4H. ЧИСТА.
 
     `f1`/`f4` — рядки `{'side', 'pct', 'conf'}` із того самого кешу
     `forecast_engine.get()`, що малює бейджі. Нахил TF = `pct / 100`
@@ -513,7 +513,7 @@ def fc_mm_dir(f1, f4) -> Optional[Dict]:
             'conflict': bool(conflict)}
 
 
-# 🧭 МММ-PULL (вимога 20.10): п'ятий банер на скані ліквідності «куди тягне»
+# 🧭 VSV-PULL (вимога 20.10): п'ятий банер на скані ліквідності «куди тягне»
 # (📡 Tickr · 💧 скан, режим «🧭 куди тягне (звіт)»). Джерело — ГОТОВИЙ
 # `liq_scan.scan_liquidity`, той самий, що живить звіт на Tickr і 💧 Сканер:
 # свого розрахунку ліквідності тут НЕМАЄ (урок PD-зони).
@@ -533,7 +533,7 @@ def _mrow_num(row, key):
 
 
 def pull_mm_dir(row) -> Optional[Dict]:
-    """🧭 Напрямок МММ-Pull по ОДНІЙ монеті з рядка скану ліквідності. ЧИСТА.
+    """🧭 Напрямок VSV-Pull по ОДНІЙ монеті з рядка скану ліквідності. ЧИСТА.
 
     `row` — рядок `liq_scan.summarise` (`above_pct` / `below_pct` — частки маси
     рівнів ліквідації ВИЩЕ і НИЖЧЕ ціни, у сумі 100):
@@ -565,7 +565,7 @@ def pull_mm_dir(row) -> Optional[Dict]:
             'above_pct': round(a, 1), 'below_pct': round(b, 1)}
 
 
-# 🧠 МММ-DECISION (вимога 22.10): шостий банер на вердикті банера Decision
+# 🧠 VSV-DECISION (вимога 22.10): шостий банер на вердикті банера Decision
 # Center («SHORT 85% СИЛЬНИЙ»). Джерело — ТОЙ САМИЙ `TradeManager.
 # compute_decision`, що малює банер над графіком: свого вердикту тут НЕМАЄ
 # (урок PD-зони). Розрахунок ВАЖКИЙ (2× evaluate_entry на монету, з кешу
@@ -583,7 +583,7 @@ MMD_TICK_BUDGET_SEC = 10.0  # с — стеля часу на розрахуно
 
 
 def mmd_refresh_sec(settings) -> float:
-    """Період повного оновлення 🧠 МММ-Decision у секундах (з налаштувань)."""
+    """Період повного оновлення 🧠 VSV-Decision у секундах (з налаштувань)."""
     lo, hi = MMD_REFRESH_MIN_RANGE
     try:
         m = int(float((settings or {}).get('mmd_refresh_min', MMD_REFRESH_MIN_DEFAULT)))
@@ -599,7 +599,7 @@ def mmd_tick_quota(n_coins: int, period_sec: float) -> int:
     per = max(float(CYCLE_SECS), float(period_sec or 0))
     return max(1, -(-n_coins * CYCLE_SECS // int(per)))
 
-# 💾 ЗБЕРЕЖЕННЯ МММ-КНИГ МІЖ РЕСТАРТАМИ (вимога 22.10: «після рестарту лише
+# 💾 ЗБЕРЕЖЕННЯ VSV-КНИГ МІЖ РЕСТАРТАМИ (вимога 22.10: «після рестарту лише
 # обновити інформацію, а не чекати, поки все відновиться»).
 MM_BOOKS_PERSIST_SEC = 60.0       # як часто пишемо блоб (≈ одне оновлення liq-map)
 MM_BOOKS_SHOW_MAX_AGE = 6 * 3600.0  # знімок для ПОКАЗУ (з позначкою ↻) — до 6 год
@@ -645,7 +645,7 @@ def sbr_pd_fit(side, pct, premium_min=75.0, discount_max=25.0) -> Optional[Dict]
 
 
 def sbr_tfs_of(settings) -> tuple:
-    """🔔 TF, з якими працює банер МММ-SBR (тумблери `mms_tf_1h`/`mms_tf_4h`,
+    """🔔 TF, з якими працює банер VSV-SBR (тумблери `mms_tf_1h`/`mms_tf_4h`,
     деф. обидва). Обидва вимкнені → обидва (порожній банер читався б як «ринок
     у рівновазі», а не як «нічого не обрано»). ЧИСТА."""
     s = settings or {}
@@ -655,7 +655,7 @@ def sbr_tfs_of(settings) -> tuple:
 
 
 def sbr_mm_dir(row, tfs=('1h', '4h')) -> Optional[Dict]:
-    """🔔 Напрямок МММ-SBR по ОДНІЙ монеті з рядка рушія `sbr_signals`. ЧИСТА.
+    """🔔 Напрямок VSV-SBR по ОДНІЙ монеті з рядка рушія `sbr_signals`. ЧИСТА.
 
     • Напрямок = бік НАЙСВІЖІШОГО сигналу Session Band Reversal (1H або 4H —
       `sbr_signals.combine`); сила = його Score (0…100).
@@ -709,7 +709,7 @@ def sbr_mm_dir(row, tfs=('1h', '4h')) -> Optional[Dict]:
 
 
 def dec_mm_dir(dec) -> Optional[Dict]:
-    """🧠 Напрямок МММ-Decision по ОДНІЙ монеті з вердикту Decision. ЧИСТА.
+    """🧠 Напрямок VSV-Decision по ОДНІЙ монеті з вердикту Decision. ЧИСТА.
 
     • Напрямок = `recommended` банера (LONG / SHORT / NEUTRAL→⚖) — РІВНО той,
       що на банері; власного порогу поверх нього НЕ ставимо.
@@ -742,7 +742,7 @@ def dec_mm_dir(dec) -> Optional[Dict]:
             'headline': str(dec.get('headline') or '')}
 
 
-# 🧩 МММ-ГОТОВНІСТЬ (вимога 25.10): сьомий банер на SMC-«Готовності»
+# 🧩 VSV-ГОТОВНІСТЬ (вимога 25.10): сьомий банер на SMC-«Готовності»
 # (`grade_setup` — той самий грейд, що колонка «🎯 Готовність» Черги-4 і бейдж
 # TradingView-оверлея). Грейд НАПРЯМКОВИЙ, тож рахуємо ОБИДВА боки з ОДНИХ
 # свічок і порівнюємо.
@@ -762,7 +762,7 @@ MMR_RESTORE_MAX_AGE = 4 * 3600.0  # результат скану з минул�
 
 
 def mmr_interval_sec(settings) -> float:
-    """Інтервал скану 🧩 МММ-Готовності у секундах (з налаштувань)."""
+    """Інтервал скану 🧩 VSV-Готовності у секундах (з налаштувань)."""
     lo, hi = MMR_INTERVAL_MIN_RANGE
     try:
         m = int(float((settings or {}).get('mmr_interval_min', MMR_INTERVAL_MIN_DEFAULT)))
@@ -772,13 +772,13 @@ def mmr_interval_sec(settings) -> float:
 
 
 def rdy_mm_dir(gl, gs) -> Optional[Dict]:
-    """🧩 Напрямок МММ-Готовності по ОДНІЙ монеті з грейдів LONG і SHORT. ЧИСТА.
+    """🧩 Напрямок VSV-Готовності по ОДНІЙ монеті з грейдів LONG і SHORT. ЧИСТА.
 
     • Бік = той, чия «Готовність» ВИЩА; він стає напрямком, лише коли його
       бал ≥ СЕРЕДНІЙ (`grade_min`, єдине джерело порогів — setup_grader) І
       перевага над протилежним > `MM_BIAS_FLAT` (10 п.п.). Інакше ⚖.
     • Сила = ПЕРЕВАГА балів (|L − S|), а не бал переможця — той самий принцип,
-      що в 🧠 МММ-Decision: рівноважна монета («L 45 / S 40») інакше важила б
+      що в 🧠 VSV-Decision: рівноважна монета («L 45 / S 40») інакше важила б
       у знаменнику банера як сильна.
     • Немає жодного грейду → None («невідомо» ≠ «рівновага»).
     """
@@ -828,7 +828,7 @@ MMD_AUTO_WARMUP_SEC = 300.0
 
 
 def sbr_trade_alert(side, cur, opened_at=None) -> Optional[Dict]:
-    """🚨 Стан 🔔 МММ-SBR ВІДНОСНО відкритої угоди (вимога 29.10). ЧИСТА.
+    """🚨 Стан 🔔 VSV-SBR ВІДНОСНО відкритої угоди (вимога 29.10). ЧИСТА.
 
     `cur` — результат `sbr_mm_dir` по монеті (бік і сигнал, що його задав).
     Дослівно: «в 🚨 став, коли вже з'явиться протилежна позначка із TF».
@@ -858,13 +858,13 @@ def sbr_trade_alert(side, cur, opened_at=None) -> Optional[Dict]:
     if sig.get('time_kyiv'):
         when = f" #{sig.get('n') or 1} {sig.get('time_kyiv')} Kyiv"
     if st not in ('LONG', 'SHORT'):
-        level, text = 'none', 'сигналу 🔔 МММ-SBR по монеті немає'
+        level, text = 'none', 'сигналу 🔔 VSV-SBR по монеті немає'
     elif st == sd:
-        level, text = 'ok', f'🔔 МММ-SBR за угодою: {st} {tf}{when}'.strip()
+        level, text = 'ok', f'🔔 VSV-SBR за угодою: {st} {tf}{when}'.strip()
     elif oa <= 0 or sig_t >= oa:
-        level, text = 'against', f'ПРОТИ угоди: 🔔 МММ-SBR {st} {tf}{when}'.strip()
+        level, text = 'against', f'ПРОТИ угоди: 🔔 VSV-SBR {st} {tf}{when}'.strip()
     else:
-        level, text = 'pre', (f'🔔 МММ-SBR {st} {tf}{when} — сигнал був ще ДО '
+        level, text = 'pre', (f'🔔 VSV-SBR {st} {tf}{when} — сигнал був ще ДО '
                               f'входу (не новий, 🧱 не вмикає)')
     return {'level': level, 'side': st, 'tf': tf, 'sig_t': sig_t or None,
             'text': text}
@@ -880,7 +880,7 @@ def mmd_trade_key(symbol, side, opened_at) -> str:
     return f"{str(symbol or '').upper()}|{str(side or '').upper()}|{oa}"
 
 
-# 🧠 Фільтр «Вердикт ≥» блоку МММ-Decision (вимога 22.10) — поряд із «Сила ≥».
+# 🧠 Фільтр «Вердикт ≥» блоку VSV-Decision (вимога 22.10) — поряд із «Сила ≥».
 # Ранг слова сили банера Decision: СЛАБКИЙ < СЕРЕДНІЙ < СИЛЬНИЙ. '' = фільтр
 # не задіяно (як поріг «Сила ≥ 0»).
 DEC_VERDICT_RANK = {'poor': 1, 'marginal': 2, 'good': 3}
@@ -927,45 +927,45 @@ def _q_allowed(op: int) -> bool:
 # і тумблер, тож банери не ковтають події одне одного.
 _MM_BIAS_TG = {
     'old': {'pref': '_mm_bias_tg', 'key': 'mm_bias_tg', 'bias': '_mm_bias',
-            'title': '🧮 <b>МММ-МОНІТОР</b>', 'name': 'МММ-монітор', 'src': 'MMM'},
+            'title': '🧮 <b>VSV-МОНІТОР</b>', 'name': 'VSV-монітор', 'src': 'MMM'},
     'new': {'pref': '_mmn_bias_tg', 'key': 'mmn_bias_tg', 'bias': '_mm_bias_new',
-            'title': '🧮 <b>МММ-Trend</b>', 'name': 'МММ-Trend', 'src': 'MMN'},
-    # ⚡ Банер МММ-CTR (вимога 17.10) — та сама тема, власний тумблер.
+            'title': '🧮 <b>VSV-Trend</b>', 'name': 'VSV-Trend', 'src': 'MMN'},
+    # ⚡ Банер VSV-CTR (вимога 17.10) — та сама тема, власний тумблер.
     'ctr': {'pref': '_mmc_bias_tg', 'key': 'mmc_bias_tg', 'bias': '_mm_bias_ctr',
-            'title': '⚡ <b>МММ-CTR</b>', 'name': 'МММ-CTR', 'src': 'MMC'},
+            'title': '⚡ <b>VSV-CTR</b>', 'name': 'VSV-CTR', 'src': 'MMC'},
     'fc': {'pref': '_mmf_bias_tg', 'key': 'mmf_bias_tg', 'bias': '_mm_bias_fc',
-           'title': '🔮 <b>МММ-LOCAL</b>', 'name': 'МММ-Local', 'src': 'MMF'},
-    # 🧭 Банер МММ-Pull (вимога 20.10) — та сама тема, власний тумблер.
+           'title': '🔮 <b>VSV-LOCAL</b>', 'name': 'VSV-Local', 'src': 'MMF'},
+    # 🧭 Банер VSV-Pull (вимога 20.10) — та сама тема, власний тумблер.
     'pull': {'pref': '_mmp_bias_tg', 'key': 'mmp_bias_tg', 'bias': '_mm_bias_pull',
-             'title': '🧭 <b>МММ-PULL</b>', 'name': 'МММ-Pull', 'src': 'MMP'},
-    # 🧠 Банер МММ-Decision (вимога 22.10) — та сама тема, власний тумблер.
+             'title': '🧭 <b>VSV-PULL</b>', 'name': 'VSV-Pull', 'src': 'MMP'},
+    # 🧠 Банер VSV-Decision (вимога 22.10) — та сама тема, власний тумблер.
     'dec': {'pref': '_mmd_bias_tg', 'key': 'mmd_bias_tg', 'bias': '_mm_bias_dec',
-            'title': '🧠 <b>МММ-DECISION</b>', 'name': 'МММ-Decision', 'src': 'MMD'},
-    # 🧩 Банер МММ-Готовність (вимога 25.10) — та сама тема, власний тумблер.
+            'title': '🧠 <b>VSV-DECISION</b>', 'name': 'VSV-Decision', 'src': 'MMD'},
+    # 🧩 Банер VSV-Готовність (вимога 25.10) — та сама тема, власний тумблер.
     'rdy': {'pref': '_mmr_bias_tg', 'key': 'mmr_bias_tg', 'bias': '_mm_bias_rdy',
-            'title': '🧩 <b>МММ-ГОТОВНІСТЬ</b>', 'name': 'МММ-Готовність', 'src': 'MMR'},
-    # 🔔 Банер МММ-SBR (вимога 29.10) — та сама тема, власний тумблер.
+            'title': '🧩 <b>VSV-ГОТОВНІСТЬ</b>', 'name': 'VSV-Готовність', 'src': 'MMR'},
+    # 🔔 Банер VSV-SBR (вимога 29.10) — та сама тема, власний тумблер.
     'sbr': {'pref': '_mms_bias_tg', 'key': 'mms_bias_tg', 'bias': '_mm_bias_sbr',
-            'title': '🔔 <b>МММ-SBR</b>', 'name': 'МММ-SBR', 'src': 'MMS'},
+            'title': '🔔 <b>VSV-SBR</b>', 'name': 'VSV-SBR', 'src': 'MMS'},
 }
 
-# Чотири книги МММ (групове ✋ відкриття): назва, тумблер, знімок, мітка двигуна.
+# Чотири книги VSV (групове ✋ відкриття): назва, тумблер, знімок, мітка двигуна.
 _MM_BOOKS = {
-    'old': {'name': '🧮 МММ-монітор', 'key': 'mm_monitor_enabled',
+    'old': {'name': '🧮 VSV-монітор', 'key': 'mm_monitor_enabled',
             'snap': '_mm_snapshot', 'eng': 'MMM'},
-    'new': {'name': '🧮 МММ-Trend', 'key': 'mm_new_enabled',
+    'new': {'name': '🧮 VSV-Trend', 'key': 'mm_new_enabled',
             'snap': '_mmn_snapshot', 'eng': 'MMN'},
-    'ctr': {'name': '⚡ МММ-CTR', 'key': 'mm_ctr_enabled',
+    'ctr': {'name': '⚡ VSV-CTR', 'key': 'mm_ctr_enabled',
             'snap': '_mmc_snapshot', 'eng': 'MMC'},
-    'fc': {'name': '🔮 МММ-Local', 'key': 'mm_fc_enabled',
+    'fc': {'name': '🔮 VSV-Local', 'key': 'mm_fc_enabled',
            'snap': '_mmf_snapshot', 'eng': 'MMF'},
-    'pull': {'name': '🧭 МММ-Pull', 'key': 'mm_pull_enabled',
+    'pull': {'name': '🧭 VSV-Pull', 'key': 'mm_pull_enabled',
              'snap': '_mmp_snapshot', 'eng': 'MMP'},
-    'dec': {'name': '🧠 МММ-Decision', 'key': 'mm_dec_enabled',
+    'dec': {'name': '🧠 VSV-Decision', 'key': 'mm_dec_enabled',
             'snap': '_mmd_snapshot', 'eng': 'MMD'},
-    'rdy': {'name': '🧩 МММ-Готовність', 'key': 'mm_rdy_enabled',
+    'rdy': {'name': '🧩 VSV-Готовність', 'key': 'mm_rdy_enabled',
             'snap': '_mmr_snapshot', 'eng': 'MMR'},
-    'sbr': {'name': '🔔 МММ-SBR', 'key': 'mm_sbr_enabled',
+    'sbr': {'name': '🔔 VSV-SBR', 'key': 'mm_sbr_enabled',
             'snap': '_mms_snapshot', 'eng': 'MMS'},
 }
 
@@ -981,14 +981,14 @@ DEFAULT_SETTINGS = {
     # queue from growing forever. 0 = off (only manual/flip removal).
     'queue_ttl_hours': 24,
     'skip_wait_coins': False,     # (legacy) not used for auto-open anymore
-    # 🧮 ОБМЕЖЕНИЙ розрахунок МММ (важкий liqmap-fuel). True (дефолт) → МММ
+    # 🧮 ОБМЕЖЕНИЙ розрахунок VSV (важкий liqmap-fuel). True (дефолт) → VSV
     # рахується ЛИШЕ для монет «у роботі»: відкриті угоди + УСІ черги (1..4) +
     # фандинг-монети + монети WATCHLIST, ДОДАНІ ВРУЧНУ. False → повний режим:
     # додатково рахує ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Мета —
     # не ганяти важкий розрахунок по всьому списку.
     'mmm_limited_mode': True,
-    # 🧮 МММ-МОНІТОР — власний тумблер (як у кожної Черги). ВИМКНЕНО → знімок
-    # напрямків не будується взагалі (legacy-МММ по 200+ монетах щотакту не
+    # 🧮 VSV-МОНІТОР — власний тумблер (як у кожної Черги). ВИМКНЕНО → знімок
+    # напрямків не будується взагалі (legacy-VSV по 200+ монетах щотакту не
     # рахується), таблиця чесно каже «монітор вимкнено», групове відкриття
     # недоступне. Дефолт УВІМК: монітор нічого не відкриває сам, він лише
     # показує стан — тож увімкненим він потік угод не розширює.
@@ -1005,28 +1005,28 @@ DEFAULT_SETTINGS = {
     # Новий стан (LONG / SHORT / ⚖) мусить протриматись стільки, перш ніж
     # банер його ПОКАЖЕ. 0 = перемикати миттєво (стара поведінка).
     'mm_bias_confirm_sec': 120,
-    # 🆕 БЛОК «МММ-Trend» (вимога 01.10): власний тумблер (вимкнено → блок на
-    # НОВОМУ МММ не рахується і не показується), власний поріг «Сила ≥» і
+    # 🆕 БЛОК «VSV-Trend» (вимога 01.10): власний тумблер (вимкнено → блок на
+    # НОВОМУ VSV не рахується і не показується), власний поріг «Сила ≥» і
     # власне вікно підтвердження статусу банера.
     'mm_new_enabled': True,
     'mmn_str_min': 0,
     'mmn_str_mins': None,
     'mmn_bias_confirm_sec': 120,
-    # ⚡ БЛОК «МММ-CTR» (вимога 14.10) — третій банер на STC 1H+4H.
+    # ⚡ БЛОК «VSV-CTR» (вимога 14.10) — третій банер на STC 1H+4H.
     'mm_ctr_enabled': True,
     'mmc_str_min': 0,
     'mmc_str_mins': None,
     'mmc_bias_confirm_sec': 120,
-    # 🔮 БЛОК «МММ-Local» (вимога 15.10) — четвертий банер на Forecast 1H+4H.
+    # 🔮 БЛОК «VSV-Local» (вимога 15.10) — четвертий банер на Forecast 1H+4H.
     # Лише ЧИТАННЯ кешу прогнозу (жодного запиту до біржі), тож дефолт УВІМК.
     'mm_fc_enabled': True,
     'mmf_str_min': 0,
     'mmf_str_mins': None,
     'mmf_bias_confirm_sec': 120,
-    # 🧭 БЛОК «МММ-Pull» (вимога 20.10) — п'ятий банер на скані ліквідності.
+    # 🧭 БЛОК «VSV-Pull» (вимога 20.10) — п'ятий банер на скані ліквідності.
     # Параметри скану — дослівно як на скріні користувача: Binance · Watchlist
     # бота · 720 год · «🧭 куди тягне (звіт)». ⚠️ Тумблер — ВИМК: на відміну від
-    # інших МММ-блоків цей ХОДИТЬ НА БІРЖУ (2 запити на монету раз на
+    # інших VSV-блоків цей ХОДИТЬ НА БІРЖУ (2 запити на монету раз на
     # `mmp_interval_min`), тож новий рушій не має мовчки почати це робити.
     'mm_pull_enabled': False,
     'mmp_exchange': 'binance',
@@ -1037,8 +1037,8 @@ DEFAULT_SETTINGS = {
     'mmp_str_min': 0,
     'mmp_str_mins': None,
     'mmp_bias_confirm_sec': 120,
-    # 🧠 БЛОК «МММ-Decision» (вимога 22.10) — шостий банер на вердикті банера
-    # Decision Center. ⚠️ Тумблер — ВИМК: це найважчий розрахунок серед МММ-
+    # 🧠 БЛОК «VSV-Decision» (вимога 22.10) — шостий банер на вердикті банера
+    # Decision Center. ⚠️ Тумблер — ВИМК: це найважчий розрахунок серед VSV-
     # блоків (2× evaluate_entry на монету, рівномірна ротація mmd_refresh_min),
     # тож новий рушій не має мовчки навантажити такт на робочій установці.
     'mm_dec_enabled': False,
@@ -1052,7 +1052,7 @@ DEFAULT_SETTINGS = {
     # СИЛЬНИЙ · 'good' — лише СИЛЬНИЙ. Як і «Сила ≥» — налаштування БОТА.
     'mmd_verdict_min': '',
     'mmd_verdict_mins': None,
-    # 🧩 БЛОК «МММ-Готовність» (вимога 25.10) — сьомий банер на SMC-«Готовності».
+    # 🧩 БЛОК «VSV-Готовність» (вимога 25.10) — сьомий банер на SMC-«Готовності».
     # ⚠️ Тумблер — ВИМК: грейд — найважчий розрахунок проєкту (2 запити свічок
     # + SMC-аналіз на монету). Оновлення — фоновим сканом у спільній черзі
     # сканів раз на `mmr_interval_min` (деф. 15 хв).
@@ -1061,7 +1061,7 @@ DEFAULT_SETTINGS = {
     'mmr_str_mins': None,
     'mmr_bias_confirm_sec': 120,
     'mmr_interval_min': 15,
-    # 🔔 БЛОК «МММ-SBR» (вимога 29.10) — сигнали Session Band Reversal 1H+4H.
+    # 🔔 БЛОК «VSV-SBR» (вимога 29.10) — сигнали Session Band Reversal 1H+4H.
     # Дані рахує ОКРЕМИЙ рушій `detection/sbr_signals.py` одразу після
     # закриття бару; книга лише читає його стан. Дефолт УВІМК: монітор сам
     # нічого не відкриває, а рушій працює і без нього (Telegram «🔔 Сигнали»).
@@ -1077,25 +1077,25 @@ DEFAULT_SETTINGS = {
     'mms_pd_only': False,
     'mms_bias_tg': True,
     # 📨 Сповіщення в Telegram про ЗМІНУ СТАТУСУ банера (вимога 21.09) — у тему
-    # 🧮 МММ-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
+    # 🧮 VSV-монітор, яка раніше називалась «₿ BTCUSDT». Дефолт УВІМК: це тепер
     # ГОЛОВНИЙ вміст тієї теми. ⚠️ Майстер-вимикач теми лишається в кабінеті
     # адміна (`notify_btc`) — він гасить УСІ потоки теми (банер · ₿-сеанс).
     'mm_bias_tg': True,
-    # 📨 Те саме для банера «🧮 МММ-Trend» (вимога 09.10: «таке саме, як і в
-    # 🧮 МММ-МОНІТОР») — та сама тема, ВЛАСНИЙ тумблер.
+    # 📨 Те саме для банера «🧮 VSV-Trend» (вимога 09.10: «таке саме, як і в
+    # 🧮 VSV-МОНІТОР») — та сама тема, ВЛАСНИЙ тумблер.
     'mmn_bias_tg': True,
-    # 🔮 Те саме для банера «МММ-Local» (вимога 15.10) — власний тумблер.
+    # 🔮 Те саме для банера «VSV-Local» (вимога 15.10) — власний тумблер.
     'mmf_bias_tg': True,
-    # ⚡ Те саме для банера «МММ-CTR» (вимога 17.10) — власний тумблер.
+    # ⚡ Те саме для банера «VSV-CTR» (вимога 17.10) — власний тумблер.
     'mmc_bias_tg': True,
-    # 🧭 Те саме для банера «МММ-Pull» (вимога 20.10) — власний тумблер.
+    # 🧭 Те саме для банера «VSV-Pull» (вимога 20.10) — власний тумблер.
     'mmp_bias_tg': True,
-    # 🧠 Те саме для банера «МММ-Decision» (вимога 22.10) — власний тумблер.
+    # 🧠 Те саме для банера «VSV-Decision» (вимога 22.10) — власний тумблер.
     'mmd_bias_tg': True,
-    # 🧩 Те саме для банера «МММ-Готовність» (вимога 25.10) — власний тумблер.
+    # 🧩 Те саме для банера «VSV-Готовність» (вимога 25.10) — власний тумблер.
     'mmr_bias_tg': True,
     'manage_open_positions': True,  # if True, FF closes positions it opened
-    # Auto-close an open (real OR test) position when its МММ (fuel) STRENGTH
+    # Auto-close an open (real OR test) position when its VSV (fuel) STRENGTH
     # falls below this % (|fuel dir|×100). 0 = off. Works only while FF manages
     # the position (manage_open_positions=True).
     'manage_close_min_mm': 0,
@@ -1107,11 +1107,11 @@ DEFAULT_SETTINGS = {
     # close_on_btc_flip лишено як legacy-фолбек (True == 'flip').
     'close_on_btc_mode': 'off',
     'close_on_btc_flip': False,
-    'direction_smoothing_min': 0,   # EMA window (min) for МММ direction; 0 = OFF (raw)
-    'start_signal_minutes': 5,      # BTC МММ held ≥ this → START signal (else STOP)
+    'direction_smoothing_min': 0,   # EMA window (min) for VSV direction; 0 = OFF (raw)
+    'start_signal_minutes': 5,      # BTC VSV held ≥ this → START signal (else STOP)
     # ── ₿ BTCUSDT banner mode ──
     #   'live'    (default) — ПОВНЕ ДУБЛЮВАННЯ без затримок: банер миттєво
-    #             повторює напрямок МММ-бабло BTCUSDT (як сигнал), без сеансу/
+    #             повторює напрямок VSV-бабло BTCUSDT (як сигнал), без сеансу/
     #             паузи/таймера START.
     #   'session' — стара сеанс-механіка (WAIT=пауза, фліп=новий сеанс,
     #             START після start_signal_minutes).
@@ -1126,11 +1126,11 @@ DEFAULT_SETTINGS = {
     'engine_candle_tf': '5m',             # timeframe for the candle confirmation
     'engine_require_strong_hold': False,  # only open when SCORE=STRONG HOLD & dir matches
     # 🧭 Smart direction: ignore the queued signal side; derive each coin's
-    # direction from its LIVE fuel (МММ) instead, then apply ALL the usual FF
+    # direction from its LIVE fuel (VSV) instead, then apply ALL the usual FF
     # gates for THAT direction. Rescues coins that entered on the "wrong" signal
     # while every indicator favours the opposite side.
     'engine_smart_direction': False,
-    # Minimum МММ (fuel) STRENGTH % to OPEN a trade — SEPARATE per direction.
+    # Minimum VSV (fuel) STRENGTH % to OPEN a trade — SEPARATE per direction.
     # 0 = off, 30 = помірний (≥30%), 60 = сильне (≥60%). The engine skips a
     # candidate whose fuel strength (|fuel dir|×100) is below the threshold
     # for its direction. `engine_min_mm_strength` kept as legacy fallback.
@@ -1182,33 +1182,33 @@ DEFAULT_SETTINGS = {
     'queue3_open_min_score': 43,
     #   queue3_ignore_ctr — Черга-3 (розворотна) НЕ застосовує CTR-перевірку
     #     «м'якого запобіжника» у _open (свіжий CHoCH+BOS завжди проти CTR, тож
-    #     ця перевірка ріже кожен розворот). МММ/виснаженість лишаються. Дефолт ON.
+    #     ця перевірка ріже кожен розворот). VSV/виснаженість лишаються. Дефолт ON.
     'queue3_ignore_ctr': True,
     #   queue3_ttl_hours — протермінувати монету в Черзі-3 після N год, щоб вона
     #     не «висіла» нескінченно (без TTL монети накопичувались на годинник, бо
-    #     не проходили запобіжник МММ). 0 = без ліміту.
+    #     не проходили запобіжник VSV). 0 = без ліміту.
     'queue3_ttl_hours': 6,
     # ── Черга-4 «🎯 Усі шари» (приймає ВСІ сигнали з Alert mode, обидва боки).
     #   Відкриває угоду, коли ВСІ 4 шари збіглись за напрямком сигналу:
-    #   Новий МММ (сила ≥ queue4_mm_new_min), МММ LiQ (≥ queue4_mm_old_min),
+    #   Новий VSV (сила ≥ queue4_mm_new_min), VSV LiQ (≥ queue4_mm_old_min),
     #   Готовність (score ≥ queue4_setup_min), Запас (runway у бік). Тумблер OFF
     #   → черга повністю не працює. Протилежний сигнал стирає попередній запис.
     'queue4_enabled': False,
     # 🔘 Пер-шарові тумблери Черги-4: ВИМКНЕНИЙ шар НЕ рахується (не вантажимо
     #    сервер) і НЕ показується колонкою; `required` = к-сть УВІМКНЕНИХ (усі
     #    мають збігтись). Дефолт — усі ON (стара поведінка = 4 шари).
-    'queue4_new_mm_on': True,    # Новий МММ (шар + колонка + підрахунок)
-    'queue4_old_mm_on': True,    # МММ LiQ (у воротах + Складність)
+    'queue4_new_mm_on': True,    # Новий VSV (шар + колонка + підрахунок)
+    'queue4_old_mm_on': True,    # VSV LiQ (у воротах + Складність)
     'queue4_setup_on': True,     # Готовність
     'queue4_runway_on': True,    # Запас (runway)
-    'queue4_mm_new_min': 30,     # Новий МММ: 0 рівн/10 легк/30 помір/60 сильн/85 потуж
-    'queue4_mm_old_min': 10,     # МММ LiQ: ті самі band-и
-    # 🧭 Режим шару «МММ LiQ» у Черзі-4. МММ LiQ = контраріанський магніт
+    'queue4_mm_new_min': 30,     # Новий VSV: 0 рівн/10 легк/30 помір/60 сильн/85 потуж
+    'queue4_mm_old_min': 10,     # VSV LiQ: ті самі band-и
+    # 🧭 Режим шару «VSV LiQ» у Черзі-4. VSV LiQ = контраріанський магніт
     #    ліквідності (fa−fb): на падаючій монеті зашкалює в LONG (магніт зверху) —
     #    тобто СИСТЕМНО дивиться проти тренду й не давав збиратись 4/4.
     #    'require'   — вимагати збіг за напрямком (стара поведінка);
     #    'ignore'    — НЕ враховувати у ворота (дефолт) → Q4 фактично 3-шарова;
-    #    'contra_ok' — зараховувати, ЯКЩО МММ LiQ НЕ сильно ПРОТИ напрямку.
+    #    'contra_ok' — зараховувати, ЯКЩО VSV LiQ НЕ сильно ПРОТИ напрямку.
     'queue4_mm_old_mode': 'ignore',
     # Готовність: пороги = смуги грейда з setup_grader (24 СЛАБК / 38 СЕРЕД /
     # 53 ХОРОШ / 70 ВІДМІН). НЕ хардкодити інші числа — інакше назва порога
@@ -1216,7 +1216,7 @@ DEFAULT_SETTINGS = {
     'queue4_setup_min': 38,
     # 🚧 Фільтр ВХОДУ в Чергу-4: перед допуском сигналу дочекатись ПОВНОГО
     #    визначення всіх шарів і перевірити, скільки ПОКАЗНИКІВ реально дивляться
-    #    в бік сигналу (сирий напрямок Новий/МММ LiQ/Готовність/Запас, БЕЗ
+    #    в бік сигналу (сирий напрямок Новий/VSV LiQ/Готовність/Запас, БЕЗ
     #    порогів сили й БЕЗ авто-ok «ігнору»). Якщо менше за queue4_entry_min_layers
     #    — сигнал у чергу НЕ пускати (немає сенсу: жоден показник не за напрямком).
     #    Поки шари ще не визначені (Готовність рахується) — сигнал ЧЕКАЄ, не ріжеться.
@@ -1429,10 +1429,10 @@ DEFAULT_SETTINGS = {
     # / 'off' (CTR нейтральний). Впливає на «Готовність» усюди (черги, funding).
     'setup_ctr_mode': 'soft',
     'queue3_vob_sl_buffer_pct': 0.10,      # буфер SL за межі блоку OB, % ціни
-    # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (МММ<поріг / CTR
+    # 🛡 М'який запобіжник відкриття — блокує 3 «вбивці» (VSV<поріг / CTR
     # нейтральний-чи-проти / виснажено). Це РЕАЛЬНО впливає на відкриття угод.
     'safeguard_on': True,
-    'safeguard_mm_min': 30,     # мін. сила МММ, %
+    'safeguard_mm_min': 30,     # мін. сила VSV, %
     'safeguard_exh_max': 80,    # макс. виснаженість, %
     'safeguard_ctr': True,      # вимагати CTR не нейтральний і не проти напрямку
 }
@@ -1447,7 +1447,7 @@ def mm_window_change(hist, now: float, window: float) -> Dict:
     коли в вікні менше двох точок.
 
     ⚠️ Одна реалізація на ОБИДВІ метрики монітора (💹 рух ціни і 📈 приріст
-    сили МММ). Дві «однакові» функції з часом розійшлись би, і «за 3 хв» у
+    сили VSV). Дві «однакові» функції з часом розійшлись би, і «за 3 хв» у
     сусідніх колонках означало б різні речі.
     ⚠️ **`span` віддається ЗАВЖДИ і показується в UI.** Вікно набирається
     тактами двигуна, тож одразу після старту (чи після того, як монета
@@ -1551,10 +1551,10 @@ class FuelFilterDaemon:
         # per cycle in _refresh_score_cache (cheap; read by both tables).
         self._fuel_str: Dict[str, int] = {}
         self._fuel_str_prev: Dict[str, int] = {}
-        # 🧮 МММ-МОНІТОР: знімок напрямку МММ по КОЖНІЙ порахованій монеті,
+        # 🧮 VSV-МОНІТОР: знімок напрямку VSV по КОЖНІЙ порахованій монеті,
         # {SYMBOL: {'status','dir','strength','mark_price'}} + час знімка.
         # ⚠️ Пише його ДВИГУН (`_tick`) із ТИХ САМИХ `_fuel_dir_smoothed`, що
-        # живлять колонку «МММ» у чергах — `get_state` лише ЧИТАЄ. Той самий
+        # живлять колонку «VSV» у чергах — `get_state` лише ЧИТАЄ. Той самий
         # урок, що з шарами Черги-4 (B2): якби монітор рахував сам, таблиця
         # показувала б інші числа, ніж ті, за якими ухвалює рішення двигун.
         self._mm_snapshot: Dict[str, Dict] = {}
@@ -1592,7 +1592,7 @@ class FuelFilterDaemon:
         # 🧮 Чи увімкнено монітор — пише `_mm_capture` на кожному такті. None =
         # ще жодного такту (тоді `mm_gate_view` один раз читає налаштування).
         self._mm_mon_on: Optional[bool] = None
-        self._mmn_on: Optional[bool] = None   # 🆕 тумблер блоку «МММ-Trend»
+        self._mmn_on: Optional[bool] = None   # 🆕 тумблер блоку «VSV-Trend»
         # ⚑ Пороги «Сила ≥» вкладок обох книг (вимога 12.10) — кеш для воріт
         # сигналів, щоб ворота не ходили в БД на кожен сигнал. None = ще не
         # зчитано (тоді ворота беруть налаштування напряму).
@@ -1606,11 +1606,11 @@ class FuelFilterDaemon:
         # СВІДОМО не персиститься: вікно підтвердження коротке, і після
         # рестарту чесніше почати відлік заново, ніж «дорахувати» чужий.
         self._mm_bias_cand: Dict = {}
-        # ⚖️ Банер «🧮 МММ-Trend» (новий МММ) — ті самі три поля, окремий стан.
+        # ⚖️ Банер «🧮 VSV-Trend» (новий VSV) — ті самі три поля, окремий стан.
         self._mm_bias_new: Dict = {}
         self._mm_bias_new_since: float = 0.0
         self._mm_bias_new_cand: Dict = {}
-        # 🆕 БЛОК «МММ-Trend» (вимога 01.10): ВЛАСНИЙ знімок на НОВОМУ МММ і ті
+        # 🆕 БЛОК «VSV-Trend» (вимога 01.10): ВЛАСНИЙ знімок на НОВОМУ VSV і ті
         # самі історії, що в 🧮 монітора, — окремі, бо монети й стани інші.
         # Рядок знімка має ТУ САМУ форму (`status`/`dir`/`strength`), тож усі
         # трекери й рендер спільні — відрізняється РІВНО джерело.
@@ -1621,7 +1621,7 @@ class FuelFilterDaemon:
         self._mmn_state_since: Dict = {}
         self._mmn_price_hist: Dict[str, list] = {}
         self._mmn_stats: Dict = {}
-        # ⚡ БЛОК «МММ-CTR» (вимога 14.10) — третя книга, та сама форма рядка.
+        # ⚡ БЛОК «VSV-CTR» (вимога 14.10) — третя книга, та сама форма рядка.
         self._mmc_on: Optional[bool] = None
         self._mmc_snapshot: Dict[str, Dict] = {}
         self._mmc_snapshot_ts: float = 0.0
@@ -1631,7 +1631,7 @@ class FuelFilterDaemon:
         self._mm_bias_ctr: Dict = {}
         self._mm_bias_ctr_since: float = 0.0
         self._mm_bias_ctr_cand: Dict = {}
-        # 🔮 БЛОК «МММ-Local» (вимога 15.10) — четверта книга, та сама форма.
+        # 🔮 БЛОК «VSV-Local» (вимога 15.10) — четверта книга, та сама форма.
         self._mmf_on: Optional[bool] = None
         self._mmf_snapshot: Dict[str, Dict] = {}
         self._mmf_snapshot_ts: float = 0.0
@@ -1641,7 +1641,7 @@ class FuelFilterDaemon:
         self._mm_bias_fc: Dict = {}
         self._mm_bias_fc_since: float = 0.0
         self._mm_bias_fc_cand: Dict = {}
-        # 🧭 БЛОК «МММ-Pull» (вимога 20.10) — п'ята книга, та сама форма.
+        # 🧭 БЛОК «VSV-Pull» (вимога 20.10) — п'ята книга, та сама форма.
         # Джерело — періодичний скан ліквідності (`_mmp_scan`), що біжить у
         # ФОНОВОМУ потоці через спільну чергу сканів: такт двигуна його не чекає.
         self._mmp_on: Optional[bool] = None
@@ -1660,7 +1660,7 @@ class FuelFilterDaemon:
         self._mmp_bias_tg_last = '__none__'
         self._mmp_bias_tg_at = 0.0
         self._mmp_bias_tg_restored = False
-        # 🧠 БЛОК «МММ-Decision» (вимога 22.10) — шоста книга, та сама форма.
+        # 🧠 БЛОК «VSV-Decision» (вимога 22.10) — шоста книга, та сама форма.
         # `_mmd_dec` — кеш вердиктів {СИМВОЛ: (ts, вердикт)}: розрахунок важкий,
         # тож оновлюється порціями (найстаріші першими).
         self._mmd_on: Optional[bool] = None
@@ -1672,9 +1672,9 @@ class FuelFilterDaemon:
         self._mmd_dec: Dict[str, tuple] = {}
         self._mmd_boot_at: float = time.time()   # старт процесу → прогрів 🚨
         # 🚨 Пік вердикту в бік угоди {'SYM|SIDE': вердикт} — база сигналу
-        # «МММ-Decision слабшає» у таблицях угод. Персиститься.
+        # «VSV-Decision слабшає» у таблицях угод. Персиститься.
         self._mmd_trade_peak: Dict[str, Dict] = {}
-        # 🔔 Колонки 🚨 угод з 29.10 живуть на МММ-SBR: поточний стан по монетах
+        # 🔔 Колонки 🚨 угод з 29.10 живуть на VSV-SBR: поточний стан по монетах
         # у відкритій угоді {SYM: (ts, sbr_mm_dir)}. Піку немає — 🚨 судить сам
         # факт протилежного сигналу після входу.
         self._mmt_trade: Dict[str, tuple] = {}
@@ -1685,7 +1685,7 @@ class FuelFilterDaemon:
         self._mmd_bias_tg_last = '__none__'
         self._mmd_bias_tg_at = 0.0
         self._mmd_bias_tg_restored = False
-        # 🧩 БЛОК «МММ-Готовність» (вимога 25.10) — сьома книга, та сама форма.
+        # 🧩 БЛОК «VSV-Готовність» (вимога 25.10) — сьома книга, та сама форма.
         # Джерело — ФОНОВИЙ скан грейдів (`_mmr_scan`) у спільній черзі сканів.
         self._mmr_on: Optional[bool] = None
         self._mmr_snapshot: Dict[str, Dict] = {}
@@ -1703,7 +1703,7 @@ class FuelFilterDaemon:
         self._mmr_bias_tg_last = '__none__'
         self._mmr_bias_tg_at = 0.0
         self._mmr_bias_tg_restored = False
-        # 🔔 БЛОК «МММ-SBR» (вимога 29.10) — восьма книга, та сама форма.
+        # 🔔 БЛОК «VSV-SBR» (вимога 29.10) — восьма книга, та сама форма.
         # Джерело — рушій `sbr_signals` (свій потік, бари 1H/4H на закритті).
         self._mms_on: Optional[bool] = None
         self._mms_snapshot: Dict[str, Dict] = {}
@@ -1728,7 +1728,7 @@ class FuelFilterDaemon:
         # почався з рестарту — тоді тривалість позначається ↻ як неповна.
         self._mm_bias_tg_at = 0.0
         self._mm_bias_tg_restored = False
-        # 🆕 Ті самі позначки для банера МММ-Trend (свої — книги незалежні).
+        # 🆕 Ті самі позначки для банера VSV-Trend (свої — книги незалежні).
         self._mmn_bias_tg_last = '__none__'
         self._mmn_bias_tg_at = 0.0
         self._mmn_bias_tg_restored = False
@@ -1750,7 +1750,7 @@ class FuelFilterDaemon:
         self._engine_attempts: Dict[str, int] = {}
         # ── Diagnostics: WHY the engine didn't open a coin this tick ──
         # {symbol: human UA reason} — surfaced per-row in the ❤️ queue so the
-        # operator sees exactly which gate blocked each coin (e.g. «МММ не
+        # operator sees exactly which gate blocked each coin (e.g. «VSV не
         # SHORT», «виснаж 88%>75%», «рішення СЛАБКИЙ»). Cleared/refreshed each
         # engine tick.  _engine_gate = a GLOBAL reason when the engine as a whole
         # can't open anything right now (двигун вимкнено / BTC пауза / чекає
@@ -1773,8 +1773,8 @@ class FuelFilterDaemon:
         self._btc_last_dir: Optional[str] = None
         # Latest BTC fuel snapshot — pinned permanently at the top of the table.
         self._btc_state: Dict = {}
-        # ── BTC МММ "session" ──────────────────────────────────────────────
-        # A session = a committed BTC МММ direction (LONG/SHORT). WAIT (ML
+        # ── BTC VSV "session" ──────────────────────────────────────────────
+        # A session = a committed BTC VSV direction (LONG/SHORT). WAIT (ML
         # балансований) is a PAUSE — it keeps the session, its start time and
         # the queue. Only an OPPOSITE flip (LONG↔SHORT) ends the session, resets
         # the timer and CLEARS the queue. `_btc_verdict_dir`/`_btc_verdict_since`
@@ -1784,7 +1784,7 @@ class FuelFilterDaemon:
         self._btc_verdict_since: float = 0.0           # session start (persists through pause)
         self._btc_paused: bool = False                 # live ML is WAIT within the session
         self._btc_fuel_strength: int = 0               # BTC fuel strength 0..100 (banner bar)
-        # LIVE МММ-бабло напрямок BTCUSDT (миттєвий, БЕЗ сеанс-логіки) — для
+        # LIVE VSV-бабло напрямок BTCUSDT (миттєвий, БЕЗ сеанс-логіки) — для
         # режиму банера 'live' (повне дублювання без затримок). Оновлюється
         # щотіку в _update_btc_verdict; get_state читає його дешево (без API).
         self._btc_live_dir: Optional[str] = None
@@ -1792,7 +1792,7 @@ class FuelFilterDaemon:
         # у режимі 'live' — «скільки триває сеанс/напрямок»).
         self._btc_live_since: float = 0.0
         self._btc_pause_since: float = 0.0             # коли почалась поточна пауза (анти-залипання)
-        self._btc_mm: Dict = {}                       # останній повний вихід моделі МММ для BTC
+        self._btc_mm: Dict = {}                       # останній повний вихід моделі VSV для BTC
         # ❤️ FF "база" — intercepted coins WAITING to open. Populated by
         # intercept() (every coin the main LONG/SHORT flow would open while FF
         # is on), direction = the signal side (self-overwrites on re-entry).
@@ -1808,7 +1808,7 @@ class FuelFilterDaemon:
         # source as Queue 1, own queue, opened by grade_setup.hot. Persisted.
         self._pending3: Dict[str, Dict] = {}
         # ── Черга-4 «🎯 Усі шари»: приймає ВСІ сигнали сканера (alert_mode),
-        #   обидва напрямки; відкриває, коли 4 шари (Новий/МММ LiQ,
+        #   обидва напрямки; відкриває, коли 4 шари (Новий/VSV LiQ,
         #   Готовність, Запас) збіглись за напрямком. Персистентна.
         self._pending4: Dict[str, Dict] = {}
         # ⏳ {symbol: ts останнього разу, коли ХОЧ ОДИН показник Черги-4 світився в
@@ -1867,7 +1867,7 @@ class FuelFilterDaemon:
     # ключі вічно лежали б у БД мертвим вантажем і їздили б назад у UI.
     PURGED_SETTING_PREFIXES = ('mm_corr_', 'funding_', 'scalp_tg_', 'layer_tg_',
                                'opportunity_', 'ff_tg_')
-    # 🗑 06.11: старий блок «💰 Funding — МММ» (шари, скальп, VOB→Черга-4,
+    # 🗑 06.11: старий блок «💰 Funding — VSV» (шари, скальп, VOB→Черга-4,
     # авто-відкриття, усі його TG) видалено повністю — його ключі теж.
     PURGED_SETTING_KEYS = ('mm_move_window_min', 'spike_tg', 'spike_auto_open',
                            'queue3_vob_open', 'queue3_vob_block_against_trend',
@@ -1895,7 +1895,7 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] settings migration warn: {e}")
 
     def _purge_dead_funding_blobs(self):
-        """🗑 06.11: окремі блоби старого «💰 Funding — МММ» (архів монет і
+        """🗑 06.11: окремі блоби старого «💰 Funding — VSV» (архів монет і
         епізоди 🎯-рекомендацій) — обнулити, щоб не лежали в БД мертвим вантажем.
         Ідемпотентно; збій БД не підіймається."""
         for _dk in _DB_DEAD_FUNDING_KEYS:
@@ -2148,7 +2148,7 @@ class FuelFilterDaemon:
         s['mmn_bias_tg'] = bool(s.get('mmn_bias_tg', True))
         s['mmf_bias_tg'] = bool(s.get('mmf_bias_tg', True))
         s['mmc_bias_tg'] = bool(s.get('mmc_bias_tg', True))
-        # 🆕 БЛОК «МММ-Trend» (вимога 01.10) — ВЛАСНІ тумблер, поріг «Сила ≥» і
+        # 🆕 БЛОК «VSV-Trend» (вимога 01.10) — ВЛАСНІ тумблер, поріг «Сила ≥» і
         # вікно підтвердження статусу банера. Ті самі межі, що в 🧮 монітора.
         s['mm_new_enabled'] = bool(s.get('mm_new_enabled', True))
         try:
@@ -2177,7 +2177,7 @@ class FuelFilterDaemon:
                 int(float(s.get('mmf_bias_confirm_sec', 120)))))
         except (TypeError, ValueError):
             s['mmf_bias_confirm_sec'] = 120
-        # 🧭 БЛОК «МММ-Pull» — тумблер, параметри скану, поріг, вікно банера.
+        # 🧭 БЛОК «VSV-Pull» — тумблер, параметри скану, поріг, вікно банера.
         s['mm_pull_enabled'] = bool(s.get('mm_pull_enabled', False))
         s['mmp_bias_tg'] = bool(s.get('mmp_bias_tg', True))
         _ex = str(s.get('mmp_exchange') or 'binance').lower()
@@ -2203,7 +2203,7 @@ class FuelFilterDaemon:
                 int(float(s.get('mmp_bias_confirm_sec', 120)))))
         except (TypeError, ValueError):
             s['mmp_bias_confirm_sec'] = 120
-        # 🧠 БЛОК «МММ-Decision» — тумблер, поріг, вікно банера, TG.
+        # 🧠 БЛОК «VSV-Decision» — тумблер, поріг, вікно банера, TG.
         s['mm_dec_enabled'] = bool(s.get('mm_dec_enabled', False))
         s['mmd_bias_tg'] = bool(s.get('mmd_bias_tg', True))
         _vm = str(s.get('mmd_verdict_min') or '')
@@ -2222,7 +2222,7 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             s['mmd_bias_confirm_sec'] = 120
         s['mmd_refresh_min'] = int(mmd_refresh_sec(s) // 60)
-        # 🧩 БЛОК «МММ-Готовність» — тумблер, вікно банера, інтервал скану, TG.
+        # 🧩 БЛОК «VSV-Готовність» — тумблер, вікно банера, інтервал скану, TG.
         s['mm_rdy_enabled'] = bool(s.get('mm_rdy_enabled', False))
         s['mmr_bias_tg'] = bool(s.get('mmr_bias_tg', True))
         try:
@@ -2235,7 +2235,7 @@ class FuelFilterDaemon:
         except (TypeError, ValueError):
             s['mmr_bias_confirm_sec'] = 120
         s['mmr_interval_min'] = int(mmr_interval_sec(s) // 60)
-        # 🔔 БЛОК «МММ-SBR» — тумблер і вікно банера.
+        # 🔔 БЛОК «VSV-SBR» — тумблер і вікно банера.
         s['mm_sbr_enabled'] = bool(s.get('mm_sbr_enabled', True))
         s['mms_bias_tg'] = bool(s.get('mms_bias_tg', True))
         s['mms_tf_1h'] = bool(s.get('mms_tf_1h', True))
@@ -2353,7 +2353,7 @@ class FuelFilterDaemon:
             return ''
         _kind_lbl = {'choch': 'CHoCH', 'choch_bos': 'CHoCH+BOS',
                      'vob': 'Volumized OB', 'vob_alert': 'Volumized OB',
-                     'mm_vob': '🧮 VOB з МММ-монітора',
+                     'mm_vob': '🧮 VOB з VSV-монітора',
                      'liq_vob': '💧 VOB + Сканер ліквідності',
                      'ai': '🤖 Сигнал ШІ',
                      'poc': '🎯 POC-сетап', 'opp': '🔄 Реверс'}.get(kind, kind or '?')
@@ -2559,7 +2559,7 @@ class FuelFilterDaemon:
             _r1 = ' · новий тип замінив застарілий' if refreshed_q1 else ''
             log_activity(sym, 'queued', f'Черга-1 · {_kind_lbl}{_r1}{_sc_ctr_sfx}', side=side, source='Q1')
             if _MM_MODEL and not refreshed_q1:
-                self._log_coin_mm(sym, 'queued')   # МММ монети у «Лог роботи бота»
+                self._log_coin_mm(sym, 'queued')   # VSV монети у «Лог роботи бота»
         if q3:
             log_activity(sym, 'queued', f'Черга-3 🎯 Готовність · {_kind_lbl}{_sc_ctr_sfx}', side=side, source='Q3')
         if q4 and not _already_open and _q4_gate_reject:
@@ -2817,7 +2817,7 @@ class FuelFilterDaemon:
             if isinstance(hy, dict):
                 self._fuel_hyst = {str(k).upper(): (v if v in ('LONG', 'SHORT') else None)
                                    for k, v in hy.items()}
-            # Restore the BTC МММ SESSION first (direction + start time).
+            # Restore the BTC VSV SESSION first (direction + start time).
             bvd = st.get('btc_verdict_dir')
             self._btc_verdict_dir = bvd if bvd in ('LONG', 'SHORT') else None
             try:
@@ -2825,7 +2825,7 @@ class FuelFilterDaemon:
             except (TypeError, ValueError):
                 self._btc_verdict_since = 0.0
             self._btc_paused = False
-            # ⚖️ БАНЕР 🧮 МММ-МОНІТОРА: повертаємо важіль І таймер.
+            # ⚖️ БАНЕР 🧮 VSV-МОНІТОРА: повертаємо важіль І таймер.
             # Без цього кожен рестарт показував би «⏸ FLAT 00:00» ще до першого
             # такту, а потім таймер стартував би з нуля, хоча напрямок ринку не
             # мінявся — тобто банер міряв би ВІК ПРОЦЕСУ, а не віку СТАНУ.
@@ -2875,7 +2875,7 @@ class FuelFilterDaemon:
             if self._mm_bias_since > time.time() + 60:
                 self._mm_bias_since = 0.0
                 self._mm_bias = {}
-            # ⚖️ Банер «МММ-Trend» — те саме відновлення (таймер не обнуляється).
+            # ⚖️ Банер «VSV-Trend» — те саме відновлення (таймер не обнуляється).
             _mbn = st.get('mm_bias_new')
             self._mm_bias_new = dict(_mbn) if isinstance(_mbn, dict) else {}
             if self._mm_bias_new:
@@ -2887,7 +2887,7 @@ class FuelFilterDaemon:
             if self._mm_bias_new_since > time.time() + 60:
                 self._mm_bias_new_since = 0.0
                 self._mm_bias_new = {}
-            # ⚡ Банер «МММ-CTR» — те саме відновлення.
+            # ⚡ Банер «VSV-CTR» — те саме відновлення.
             _mbc = st.get('mm_bias_ctr')
             self._mm_bias_ctr = dict(_mbc) if isinstance(_mbc, dict) else {}
             if self._mm_bias_ctr:
@@ -2899,7 +2899,7 @@ class FuelFilterDaemon:
             if self._mm_bias_ctr_since > time.time() + 60:
                 self._mm_bias_ctr_since = 0.0
                 self._mm_bias_ctr = {}
-            # 🔮 Банер «МММ-Local» — те саме відновлення.
+            # 🔮 Банер «VSV-Local» — те саме відновлення.
             _mbf = st.get('mm_bias_fc')
             self._mm_bias_fc = dict(_mbf) if isinstance(_mbf, dict) else {}
             if self._mm_bias_fc:
@@ -2911,7 +2911,7 @@ class FuelFilterDaemon:
             if self._mm_bias_fc_since > time.time() + 60:
                 self._mm_bias_fc_since = 0.0
                 self._mm_bias_fc = {}
-            # 🧭 Банер «МММ-Pull» — те саме відновлення.
+            # 🧭 Банер «VSV-Pull» — те саме відновлення.
             _mbp = st.get('mm_bias_pull')
             self._mm_bias_pull = dict(_mbp) if isinstance(_mbp, dict) else {}
             if self._mm_bias_pull:
@@ -2923,7 +2923,7 @@ class FuelFilterDaemon:
             if self._mm_bias_pull_since > time.time() + 60:
                 self._mm_bias_pull_since = 0.0
                 self._mm_bias_pull = {}
-            # 🧠 Банер «МММ-Decision» — те саме відновлення.
+            # 🧠 Банер «VSV-Decision» — те саме відновлення.
             _mbd = st.get('mm_bias_dec')
             self._mm_bias_dec = dict(_mbd) if isinstance(_mbd, dict) else {}
             if self._mm_bias_dec:
@@ -2935,7 +2935,7 @@ class FuelFilterDaemon:
             if self._mm_bias_dec_since > time.time() + 60:
                 self._mm_bias_dec_since = 0.0
                 self._mm_bias_dec = {}
-            # 🧩 Банер «МММ-Готовність» — те саме відновлення.
+            # 🧩 Банер «VSV-Готовність» — те саме відновлення.
             _mbr = st.get('mm_bias_rdy')
             self._mm_bias_rdy = dict(_mbr) if isinstance(_mbr, dict) else {}
             if self._mm_bias_rdy:
@@ -2947,7 +2947,7 @@ class FuelFilterDaemon:
             if self._mm_bias_rdy_since > time.time() + 60:
                 self._mm_bias_rdy_since = 0.0
                 self._mm_bias_rdy = {}
-            # 🔔 Банер «МММ-SBR» — те саме відновлення.
+            # 🔔 Банер «VSV-SBR» — те саме відновлення.
             _mbs = st.get('mm_bias_sbr')
             self._mm_bias_sbr = dict(_mbs) if isinstance(_mbs, dict) else {}
             if self._mm_bias_sbr:
@@ -2962,7 +2962,7 @@ class FuelFilterDaemon:
             # Restore the entry queue PER SESSION. We persist the queue now and
             # bring it back on boot, tied to the session it belonged to. The
             # session-flip logic in _update_btc_verdict handles staleness: on the
-            # first tick, if the live МММ is OPPOSITE the restored session, the
+            # first tick, if the live VSV is OPPOSITE the restored session, the
             # queue is cleared (session mismatch → fresh start). If the ML is the
             # same direction (or WAIT/pause), the queued coins are still valid and
             # keep waiting. This replaces the old blanket-ephemeral behaviour.
@@ -3030,7 +3030,7 @@ class FuelFilterDaemon:
                 'manual_closed_at': self._manual_closed_at,
                 'last_trade_end': self._last_trade_end,
                 'consumed_signal_at': self._consumed_signal_at,
-                # ⚖️ БАНЕР 🧮 МММ-МОНІТОРА — важіль І ЙОГО ТАЙМЕР (вимога 17.09:
+                # ⚖️ БАНЕР 🧮 VSV-МОНІТОРА — важіль І ЙОГО ТАЙМЕР (вимога 17.09:
                 # «банер не має втрачати таймер і показники після кожного
                 # рестарту»). `botupdate` роблять часто, а таймер міряє, скільки
                 # ринок тримає напрямок, — обнуляти його рестартом бота означало
@@ -3048,33 +3048,33 @@ class FuelFilterDaemon:
                 'mm_bias_since': float(self._mm_bias_since or 0.0),
                 'mm_bias_new': dict(getattr(self, '_mm_bias_new', {}) or {}),
                 'mm_bias_new_since': float(getattr(self, '_mm_bias_new_since', 0.0) or 0.0),
-                # 🆕 Таймери стану монет блоку «МММ-Trend» — те саме правило.
+                # 🆕 Таймери стану монет блоку «VSV-Trend» — те саме правило.
                 'mmn_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmn_state_since', {})
                                                  or {}).items()},
-                # ⚡ Блок «МММ-CTR» — банер і таймери стану монет.
+                # ⚡ Блок «VSV-CTR» — банер і таймери стану монет.
                 'mm_bias_ctr': dict(getattr(self, '_mm_bias_ctr', {}) or {}),
                 'mm_bias_ctr_since': float(getattr(self, '_mm_bias_ctr_since', 0.0) or 0.0),
                 'mmc_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmc_state_since', {})
                                                  or {}).items()},
-                # 🔮 Блок «МММ-Local» — банер і таймери стану монет.
+                # 🔮 Блок «VSV-Local» — банер і таймери стану монет.
                 'mm_bias_fc': dict(getattr(self, '_mm_bias_fc', {}) or {}),
                 'mm_bias_fc_since': float(getattr(self, '_mm_bias_fc_since', 0.0) or 0.0),
                 'mmf_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmf_state_since', {})
                                                  or {}).items()},
-                # 🧭 Блок «МММ-Pull» — банер і таймери стану монет.
+                # 🧭 Блок «VSV-Pull» — банер і таймери стану монет.
                 'mm_bias_pull': dict(getattr(self, '_mm_bias_pull', {}) or {}),
                 'mm_bias_pull_since': float(getattr(self, '_mm_bias_pull_since', 0.0) or 0.0),
                 'mmp_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmp_state_since', {})
                                                  or {}).items()},
-                # 🧠 Блок «МММ-Decision» — банер і таймери стану монет.
+                # 🧠 Блок «VSV-Decision» — банер і таймери стану монет.
                 'mm_bias_dec': dict(getattr(self, '_mm_bias_dec', {}) or {}),
                 'mm_bias_dec_since': float(getattr(self, '_mm_bias_dec_since', 0.0) or 0.0),
                 # 🚨 Пік вердикту в бік угоди (база сигналу «слабшає»).
@@ -3082,14 +3082,14 @@ class FuelFilterDaemon:
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmd_state_since', {})
                                                  or {}).items()},
-                # 🧩 Блок «МММ-Готовність» — банер і таймери стану монет.
+                # 🧩 Блок «VSV-Готовність» — банер і таймери стану монет.
                 'mm_bias_rdy': dict(getattr(self, '_mm_bias_rdy', {}) or {}),
                 'mm_bias_rdy_since': float(getattr(self, '_mm_bias_rdy_since', 0.0) or 0.0),
                 'mmr_state_since': {k: {'st': v.get('st'),
                                         'since': float(v.get('since') or 0)}
                                     for k, v in (getattr(self, '_mmr_state_since', {})
                                                  or {}).items()},
-                # 🔔 Блок «МММ-SBR» — банер і таймери стану монет.
+                # 🔔 Блок «VSV-SBR» — банер і таймери стану монет.
                 'mm_bias_sbr': dict(getattr(self, '_mm_bias_sbr', {}) or {}),
                 'mm_bias_sbr_since': float(getattr(self, '_mm_bias_sbr_since', 0.0) or 0.0),
                 'mms_state_since': {k: {'st': v.get('st'),
@@ -3101,10 +3101,10 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] state persist error: {e}")
 
     # ------------------------------------------------------------------
-    # 💾 МММ-КНИГИ МІЖ РЕСТАРТАМИ (вимога 22.10)
+    # 💾 VSV-КНИГИ МІЖ РЕСТАРТАМИ (вимога 22.10)
     # ------------------------------------------------------------------
     def _mm_books_persist(self, now: float, force: bool = False) -> bool:
-        """💾 Записати знімки шести МММ-книг + сирі кеші в `_DB_MM_BOOKS`.
+        """💾 Записати знімки шести VSV-книг + сирі кеші в `_DB_MM_BOOKS`.
 
         Чому це потрібно: банер і таймери вже переживали рестарт, а ТАБЛИЦІ й
         джерела — ні. Після `botupdate` ⚡ CTR добирав STC по 10 значень за такт
@@ -3161,13 +3161,13 @@ class FuelFilterDaemon:
             return False
 
     def _mm_books_load(self):
-        """💾 Відновити МММ-книги після рестарту. ДВА різні рівні довіри:
+        """💾 Відновити VSV-книги після рестарту. ДВА різні рівні довіри:
 
         1. ЗНІМКИ для ПОКАЗУ (≤ `MM_BOOKS_SHOW_MAX_AGE`) лягають в окреме
            `_mm_books_shown` і читаються ЛИШЕ `mm_monitor_state`, доки книга не
            порахується вперше. ⚠️ У `_X_snapshot` їх НЕ кладемо: звідти читають
            ворота сигналів (`mm_gate_view`), колонки угод і правило виходу
-           «🧮 МММ LiQ ⚖ → вихід» — торгувати чи закривати угоду за числом із
+           «🧮 VSV LiQ ⚖ → вихід» — торгувати чи закривати угоду за числом із
            минулого запуску не можна (урок «немає даних ≠ рівновага»).
         2. СИРІ КЕШІ джерел (≤ `MM_BOOKS_RAW_MAX_AGE`) — STC 1H/4H, вердикти
            Decision (зі СВОЇМ часом, тож вони першими стають у чергу
@@ -3327,12 +3327,12 @@ class FuelFilterDaemon:
         return None
 
     def _price_trend_signed(self, symbol: str, tf: str) -> Optional[float]:
-        """Знаковий імпульс ЦІНИ [-1..+1] (+ вгору) для реконсиляції МММ — ШВИДШИЙ
+        """Знаковий імпульс ЦІНИ [-1..+1] (+ вгору) для реконсиляції VSV — ШВИДШИЙ
         за SCORE-момент і розворото-чутливий:
           • 2 останні бари (замість 3) → менше лагу на свіжому розвороті;
           • ШТРАФ, якщо остання ЗАКРИТА свічка йде ПРОТИ напрямку → стале LONG/SHORT
             швидко гасне, коли ціна щойно розвернулась (саме той випадок «вже
-            пішли вниз, а МММ ще LONG»)."""
+            пішли вниз, а VSV ще LONG»)."""
         try:
             pd2, ps2 = self._candle_momentum_graded(symbol, tf, bars=2)
             m = ps2 if pd2 == 'LONG' else (-ps2 if pd2 == 'SHORT' else 0.0)
@@ -3685,11 +3685,11 @@ class FuelFilterDaemon:
 
         Magnitude blends, all relative to that live direction:
           • room     (30%) — 1 − exhaustion (how much of the move is left)
-          • hold     (15%) — МММ hold duration vs the show threshold (~3× sat.)
+          • hold     (15%) — VSV hold duration vs the show threshold (~3× sat.)
           • fuel     (25%) — liq-fuel imbalance aligned with the direction
           • momentum (30%) — candle momentum aligned with the direction
         When fuel bias and price momentum DISAGREE the score is hard-capped
-        (→ WEAK at best) and `conflict` is set, because the МММ setup is being
+        (→ WEAK at best) and `conflict` is set, because the VSV setup is being
         violated by price. Returns {score,label,color,dir,conflict}."""
         # Fuel bias (where liquidity sits) — SMOOTHED + hysteresis, read-only.
         fuel_dir = None
@@ -3755,7 +3755,7 @@ class FuelFilterDaemon:
         # CTR-тайминг (SCORE v2): якість моменту входу за STC у напрямку live_dir.
         ctr_term = self._ctr_timing_term(symbol, live_dir) if _SCORE_V2 else None
         if _SCORE_V2 and ctr_term is not None:
-            # 5 складників: запас 25 · утримання 10 · МММ/МММ 22 · імпульс 25 · CTR 18.
+            # 5 складників: запас 25 · утримання 10 · VSV/VSV 22 · імпульс 25 · CTR 18.
             w_room, w_hold, w_fuel, w_mom, w_ctr = 0.25, 0.10, 0.22, 0.25, 0.18
             if not held_sec or held_sec <= 0:
                 _tw = w_room + w_fuel + w_mom + w_ctr
@@ -3792,12 +3792,12 @@ class FuelFilterDaemon:
         return {'score': int(round(score)), 'label': label, 'color': color,
                 'dir': live_dir, 'conflict': conflict, 'exh': exf,
                 # Розклад складників (0..1, до вагування) — для тултипа-роз'яснення:
-                # запас ходу / імпульс свічок / тиск МММ / утримання.
+                # запас ходу / імпульс свічок / тиск VSV / утримання.
                 'components': {'room': round(room, 2), 'mom': round(mom, 2),
                                'fuel': round(fmag, 2), 'hold': round(hold, 2),
                                'ctr': (round(ctr_term, 2) if ctr_term is not None else None),
                                'vol': round(vol_factor, 2)},
-                # Per-coin МММ (liq-fuel) direction — shown in its own column in
+                # Per-coin VSV (liq-fuel) direction — shown in its own column in
                 # the ❤️ queue table. LONG / SHORT / None(=збалансований).
                 'fuel_dir': fuel_dir,
                 'fuel_strength': fuel_strength}
@@ -3849,7 +3849,7 @@ class FuelFilterDaemon:
 
     def setup_snapshot(self, symbol: str) -> Optional[str]:
         """Compact SMC-«Готовність» string for `symbol` RIGHT NOW, e.g.
-        'ХОРОШИЙ 58% 🎯 · ✓Структура ✓Зона ✓МММ ≈Таймінг · ⚠виснажено'. Stamped
+        'ХОРОШИЙ 58% 🎯 · ✓Структура ✓Зона ✓VSV ≈Таймінг · ⚠виснажено'. Stamped
         on a position AT OPEN so the CLOSED record carries the entry setup —
         зіставляємо «Готовність на вході → результат» для валідації грейдера."""
         su = self._setup_cache.get((symbol or '').upper())
@@ -3896,7 +3896,7 @@ class FuelFilterDaemon:
         return self._liq_profile
 
     def _liq_state(self, symbol: str, force: bool = False) -> Optional[Dict]:
-        """⚡ ЄДИНА точка отримання знімка liq-map для МММ (A1+A2).
+        """⚡ ЄДИНА точка отримання знімка liq-map для VSV (A1+A2).
 
         Раніше `_fuel_dir` і `_fuel_dir_legacy` кожен будував `lm.get_state()`
         САМОСТІЙНО — тобто для однієї монети в одну й ту саму мить знімок
@@ -3972,7 +3972,7 @@ class FuelFilterDaemon:
             return None
 
     def _fuel_dir_legacy(self, symbol: str) -> Optional[Dict]:
-        """Показник МММ LiQ: сирий (fa−fb)/den по liq-map (розташування кластерів
+        """Показник VSV LiQ: сирий (fa−fb)/den по liq-map (розташування кластерів
         відносно ціни, дистанц-вага 1/(1+dist/2)) — для порівняння з бабло-моделлю.
         Рахується від живої ціни (як і нова модель)."""
         try:
@@ -4032,7 +4032,7 @@ class FuelFilterDaemon:
             if not mark or mark <= 0:
                 return None
 
-            # 🎯 Професійна модель МММ (LIQMAP Liquidity-Pull + whale/стакан/funding).
+            # 🎯 Професійна модель VSV (LIQMAP Liquidity-Pull + whale/стакан/funding).
             # Funding-запит лише для BTC, щоб масовий скан не смикав біржу. При будь-
             # якій невдачі — падаємо у стару (fa−fb)/den нижче.
             if _MM_MODEL:
@@ -4123,7 +4123,7 @@ class FuelFilterDaemon:
                 'status': status, 'raw_dir': raw, 'raw_status': fd.get('status'),
                 'runway': fd.get('runway'), 'target': fd.get('target')}
 
-    # ═══════════ 🧮 МММ-МОНІТОР (жива таблиця напрямків + групове відкриття) ═══
+    # ═══════════ 🧮 VSV-МОНІТОР (жива таблиця напрямків + групове відкриття) ═══
     def _mm_open_sides(self) -> Dict[str, Optional[str]]:
         """{МОНЕТА: 'LONG'|'SHORT'|None} — монети з ВІДКРИТОЮ позицією
         (FF-керовані + книги TM real/paper) і бік угоди.
@@ -4131,7 +4131,7 @@ class FuelFilterDaemon:
         ЄДИНЕ місце, де збирається цей набір: ним і помічається рядок «в угоді»
         в моніторі (разом із боком — колонка «📍 Стан»), і визначається, для
         кого знімок будується навіть при ВИМКНЕНОМУ моніторі (колонка
-        «🧮 МММ LiQ» у таблицях угод). Бік TM (реальна → паперова) сильніший за
+        «🧮 VSV LiQ» у таблицях угод). Бік TM (реальна → паперова) сильніший за
         позначку FF; невідомий бік — None, а не вигаданий.
         """
         def _side(v):
@@ -4161,7 +4161,7 @@ class FuelFilterDaemon:
         """{'SYM|SIDE|OPENED_AT'} — КОЖНА відкрита позиція TM (real + paper
         окремо: бік у книгах може різнитись). `opened_at` у ключі — щоб нова
         угода тієї самої монети й боку НЕ успадкувала пік попередньої. Для
-        сигналу «🧠 МММ-Decision слабшає» у таблицях угод."""
+        сигналу «🧠 VSV-Decision слабшає» у таблицях угод."""
         out = set()
         try:
             tm = self._get_tm() if self._get_tm else None
@@ -4221,11 +4221,11 @@ class FuelFilterDaemon:
                 print(f"[FF] mmd→opp-ob auto warn {k}: {e}")
 
     def dec_trade_for(self, pairs) -> Dict[str, Dict]:
-        """🔔 МММ-SBR + 🚨 сигнал по відкритих угодах — ЛИШЕ ЧИТАННЯ.
+        """🔔 VSV-SBR + 🚨 сигнал по відкритих угодах — ЛИШЕ ЧИТАННЯ.
 
-        ⚠️ Назва історична (колонки жили на 🧠 МММ-Decision, потім 🧮 МММ-Trend;
-        з 29.10 — 🔔 МММ-SBR). `pairs` — [(символ, бік, opened_at)], стан —
-        `_mmt_trade` (той самий `sbr_mm_dir`, що й таблиця блоку МММ-SBR, на
+        ⚠️ Назва історична (колонки жили на 🧠 VSV-Decision, потім 🧮 VSV-Trend;
+        з 29.10 — 🔔 VSV-SBR). `pairs` — [(символ, бік, opened_at)], стан —
+        `_mmt_trade` (той самий `sbr_mm_dir`, що й таблиця блоку VSV-SBR, на
         тих самих TF банера), сигнал — `sbr_trade_alert`. ⚠️ Жодних
         розрахунків: ендпоінт `/api/tm/state` опитується кожні 5с.
         → {mmd_trade_key(...): {mm, strength, tf, sig, src, ts,
@@ -4327,7 +4327,7 @@ class FuelFilterDaemon:
     def _mm_track_growth(self, snap: Dict, now: float,
                          hist_attr: str = '_mm_str_hist',
                          grow_attr: str = '_mm_grow_since'):
-        """📈 Приріст сили МММ за ВІКНОМ + ⏱ таймер безперервного росту.
+        """📈 Приріст сили VSV за ВІКНОМ + ⏱ таймер безперервного росту.
 
         Дописує в кожен рядок знімка: `strength_prev` (база — найстаріший
         семпл у вікні), `delta` (пункти), `delta_rel` (% від бази, лише для
@@ -4446,16 +4446,16 @@ class FuelFilterDaemon:
 
     def _mm_track_bias(self, snap: Dict, now: float,
                        settings: Optional[Dict] = None):
-        """⚖️ ВАЖІЛЬ НАПРЯМКУ ПО ВСІХ МОНЕТАХ МОНІТОРА → банер «🧮 МММ-МОНІТОР».
+        """⚖️ ВАЖІЛЬ НАПРЯМКУ ПО ВСІХ МОНЕТАХ МОНІТОРА → банер «🧮 VSV-МОНІТОР».
 
         **Вимога користувача (17.09), дослівно:** «За основу банера візьми
-        показники LONG і SHORT із МММ-монітор. Але не просто визначай загальний
+        показники LONG і SHORT із VSV-монітор. Але не просто визначай загальний
         відсоток LONG і SHORT, а враховуй які відсотки мають монети, низькі чи
         високі — бери це до уваги і розраховуй важіль в напрямку за рахунок
         величини відсотків по кожній монеті.»
 
         Тому це НЕ «скільки монет у кожен бік», а **сума СИЛ**: кожна монета
-        тисне рівно настільки, наскільки в неї виражений МММ.
+        тисне рівно настільки, наскільки в неї виражений VSV.
 
             важіль = (Σ сила LONG − Σ сила SHORT) / Σ сила ВСІХ монет
 
@@ -4464,17 +4464,17 @@ class FuelFilterDaemon:
         монета з 12% при двадцяти безнапрямкових дала б «100% LONG» — тобто
         банер кричав би там, де ринок якраз НЕ визначився.
         ⚠️ **Сила береться З ТОГО САМОГО знімка**, що малює рядки таблиці, тож
-        банер і колонка «🧮 МММ LiQ» не можуть показати різні числа
+        банер і колонка «🧮 VSV LiQ» не можуть показати різні числа
         (той самий урок, що з шарами Черги-4: двигун рахує — стан читає).
         ⚠️ **РАХУЮТЬСЯ ВСІ МОНЕТИ МОНІТОРА, у тому числі ті, що В РОБОТІ**
-        (вимога 18.09, дослівно: «за показник банера "МММ-монітор" мають
+        (вимога 18.09, дослівно: «за показник банера "VSV-монітор" мають
         відповідати всі монети, для цього і повернули щоб всі монети були у
         таблиці»). Раніше монети у відкритій угоді з важеля ВИКИДАЛИСЬ — це
         трималось на старому правилі «таблиця показує лише кандидатів». Правило
         скасовано, тож і виняток пішов: банер знову описує РІВНО те, що під ним
         видно, і його число сходиться з рядками таблиці.
         ⚠️ Поріг напрямку — `MM_BIAS_FLAT` (0.10), ТЕ САМЕ число, за яким
-        комірка МММ пише «⚖ рівновага». Інакше банер казав би LONG там, де в
+        комірка VSV пише «⚖ рівновага». Інакше банер казав би LONG там, де в
         кожному рядку стоїть рівновага.
 
         ⏱ Таймер: `_mm_bias_since` — момент, ВІДКОЛИ тримається поточний
@@ -4482,7 +4482,7 @@ class FuelFilterDaemon:
         його; решту часу він просто біжить.
 
         🐢 **ПЕРЕХІД МІЖ СТАТУСАМИ — ПОВІЛЬНИЙ (вимога 18.09, дослівно:
-        «Перехід в банері МММ-монітор між статусами має бути повільним, а НЕ
+        «Перехід в банері VSV-монітор між статусами має бути повільним, а НЕ
         різким і частим, має бути антиспам»).** Захисти ДВА, і вони різні:
 
           1. **ГІСТЕРЕЗИС** (`MM_BIAS_EXIT` < `MM_BIAS_FLAT`): зайти в напрямок
@@ -4512,7 +4512,7 @@ class FuelFilterDaemon:
         self._mm_bias, self._mm_bias_since, self._mm_bias_cand = bias, since, cand
         side = bias.get('dir')
         # 📨 TELEGRAM: зміна ПІДТВЕРДЖЕНОГО статусу банера (вимога 21.09 —
-        # тепер це ГОЛОВНЕ, заради чого існує тема 🧮 МММ-монітор).
+        # тепер це ГОЛОВНЕ, заради чого існує тема 🧮 VSV-монітор).
         # ⚠️ Кличемо на КОЖНОМУ такті, а НЕ під `if side != prev` — саме через
         # це перша РЕАЛЬНА зміна після кожного рестарту мовчки ковталась
         # (див. `_mm_bias_alert`: там позначка «перший показ» і живе).
@@ -4527,9 +4527,9 @@ class FuelFilterDaemon:
 
     def _mm_track_bias_new(self, snap: Dict, now: float,
                            settings: Optional[Dict] = None):
-        """⚖️ Банер блоку «🧮 МММ-Trend» — той самий важіль, але з НОВОГО МММ.
+        """⚖️ Банер блоку «🧮 VSV-Trend» — той самий важіль, але з НОВОГО VSV.
 
-        `snap` — ВЛАСНИЙ знімок книги МММ-Trend (`_mmn_snapshot`), рядки якого
+        `snap` — ВЛАСНИЙ знімок книги VSV-Trend (`_mmn_snapshot`), рядки якого
         мають ту саму форму, що в 🧮 (`status`/`strength`), тож розрахунок —
         ТА САМА чиста `mm_bias_step` (формула, ⚖ у знаменнику, гістерезис,
         вікно підтвердження). Вікно підтвердження — ВЛАСНЕ
@@ -4551,14 +4551,14 @@ class FuelFilterDaemon:
         self._mm_bias_alert(bias.get('dir'), now, _s, book='new')
 
     def _mm_bias_alert(self, side, now: float, settings: Dict, book: str = 'old'):
-        """📨 «Банер 🧮 МММ-монітора змінив статус» — у групу, тему 🧮.
+        """📨 «Банер 🧮 VSV-монітора змінив статус» — у групу, тему 🧮.
 
-        `book='new'` — те саме для банера «🧮 МММ-Trend» (вимога 09.10): та сама
+        `book='new'` — те саме для банера «🧮 VSV-Trend» (вимога 09.10): та сама
         тема, ВЛАСНИЙ тумблер `mmn_bias_tg` і ВЛАСНІ позначки `_mmn_bias_tg_*`
         (банери незалежні — спільна позначка ковтала б події одне одного).
 
         **Вимога (21.09):** «основним тепер сюди напрявляй оповіщення стосовно
-        змін банера "🧮 МММ-МОНІТОР"».
+        змін банера "🧮 VSV-МОНІТОР"».
 
         ⚠️ **КЛИЧЕТЬСЯ НА КОЖНОМУ ТАКТІ, а не «коли статус змінився».** Саме
         тут живе позначка «перший показ після старту», і якщо викликати лише
@@ -4640,7 +4640,7 @@ class FuelFilterDaemon:
     def _mm_clear_book(self, new: bool = False, keep_snapshot: bool = False):
         """Погасити книгу монітора (знімок + історії + банер).
 
-        `new=False` — 🧮 МММ-монітор (МММ LiQ), `new=True` — 🧮 МММ-Trend.
+        `new=False` — 🧮 VSV-монітор (VSV LiQ), `new=True` — 🧮 VSV-Trend.
         ⚠️ «Заморожені» числа, які вже ніхто не перераховує, виглядають як
         живі — гірше за порожній блок, тож вимкнений тумблер чистить ВСЕ.
         `keep_snapshot=True` — гасимо лише банер (знімок 🧮 лишається для монет
@@ -4676,16 +4676,16 @@ class FuelFilterDaemon:
 
     def _mm_capture(self, fuels: Dict, settings: Optional[Dict] = None,
                     now: Optional[float] = None):
-        """Зберегти знімки МММ по всіх монетах, які двигун порахував ЦЬОГО такту.
+        """Зберегти знімки VSV по всіх монетах, які двигун порахував ЦЬОГО такту.
 
         ДВІ НЕЗАЛЕЖНІ КНИГИ (вимога 01.10), кожна під СВОЇМ тумблером:
-          • 🧮 МММ-монітор (`mm_monitor_enabled`) — МММ LiQ (`_fuel_dir_legacy`);
-          • 🧮 МММ-Trend (`mm_new_enabled`) — НОВИЙ МММ (`_fuel_dir_smoothed`,
+          • 🧮 VSV-монітор (`mm_monitor_enabled`) — VSV LiQ (`_fuel_dir_legacy`);
+          • 🧮 VSV-Trend (`mm_new_enabled`) — НОВИЙ VSV (`_fuel_dir_smoothed`,
             тобто РІВНО ті `fuels`, за якими двигун ухвалює рішення).
         Рядки обох книг мають ОДНУ форму (`status`/`dir`/`strength`/…), тож
         трекери, банер і рендер спільні — відрізняється лише джерело.
 
-        ⚠️ Викликається ЛИШЕ з тактів двигуна. Монітор не має права рахувати МММ
+        ⚠️ Викликається ЛИШЕ з тактів двигуна. Монітор не має права рахувати VSV
         сам: інакше в таблиці стояло б одне число, а рішення двигун ухвалював би
         за іншим (урок шарів Черги-4 — «двигун рахує, get_state читає»).
         """
@@ -4711,7 +4711,7 @@ class FuelFilterDaemon:
         _now = float(now) if now else time.time()
         # 👁 Лише монети WATCHLIST (вимога 26.10). Монета поза списком, але з
         # відкритою угодою, лишається ТІЛЬКИ в знімку 🧮 (позначка
-        # `unwatched`) — там вона живить правило виходу «🧮 МММ LiQ ⚖ → вихід»
+        # `unwatched`) — там вона живить правило виходу «🧮 VSV LiQ ⚖ → вихід»
         # (liq-map по ній живий); у таблицях і банерах її немає.
         _W = self._mm_watched()
         _fuels_all = fuels or {}
@@ -4732,7 +4732,7 @@ class FuelFilterDaemon:
                 _fc[sym] = self._mm_fc_remember(sym, self._mm_forecast(_fe, sym), _now)
             return _fc[sym]
 
-        # МММ LiQ теж потрібен ОБОМ книгам (у МММ-Trend це колонка «МММ-LiQ»):
+        # VSV LiQ теж потрібен ОБОМ книгам (у VSV-Trend це колонка «VSV-LiQ»):
         # рахуємо раз на монету за такт. Це арифметика над уже кешованим
         # `_liq_state`, мережі не коштує.
         _lg: Dict[str, Optional[Dict]] = {}
@@ -4745,10 +4745,10 @@ class FuelFilterDaemon:
                     _lg[sym] = None
             return _lg[sym]
 
-        # ═══ 🧮 КНИГА МММ LiQ ═══
+        # ═══ 🧮 КНИГА VSV LiQ ═══
         # ⚠️ ВИНЯТОК при вимкненому моніторі — монети У ВІДКРИТІЙ УГОДІ (їх
-        # одиниці). Їхній рядок живить колонку «🧮 МММ LiQ» у таблицях угод і
-        # правило виходу «🧮 МММ LiQ ⚖ → вихід» — це не монітор, а супровід
+        # одиниці). Їхній рядок живить колонку «🧮 VSV LiQ» у таблицях угод і
+        # правило виходу «🧮 VSV LiQ ⚖ → вихід» — це не монітор, а супровід
         # угод, і вимикати його чужим тумблером не можна. Банера, списку і
         # watchlist-монет при цьому НЕМАЄ.
         _keep = self._mm_open_syms() if not _mon else None
@@ -4768,7 +4768,7 @@ class FuelFilterDaemon:
                     continue
                 # 🧮 `_fuel_dir_legacy` (сирий (fa−fb)/den по кластерах liq-map)
                 # читає той самий кешований `_liq_state`, що щойно взяв новий
-                # МММ, — мережі це не коштує нічого.
+                # VSV, — мережі це не коштує нічого.
                 old = _legacy(sym)
                 if not old:
                     continue
@@ -4781,13 +4781,13 @@ class FuelFilterDaemon:
                     # Ціна — з нового зрізу: legacy її не повертає, а `mark_price`
                     # в обох один (знімок liq-map + `_live_price`).
                     'mark_price': f.get('mark_price'),
-                    # 🆕 Колонка «МММ-Trend» у 🧮 таблиці — ТІ САМІ `fuels`, що
-                    # живлять книгу МММ-Trend (одне число в обох таблицях).
+                    # 🆕 Колонка «VSV-Trend» у 🧮 таблиці — ТІ САМІ `fuels`, що
+                    # живлять книгу VSV-Trend (одне число в обох таблицях).
                     'new_status': (f.get('status')
                                    if f.get('status') in ('LONG', 'SHORT') else None),
                     'new_strength': int(round(abs(_nd) * 100)),
-                    # 🎯 «Запас» (вимога 04.10) — ТОЙ САМИЙ `runway` Нового МММ,
-                    # що в таблиці МММ-Trend і TradingView-оверлеї.
+                    # 🎯 «Запас» (вимога 04.10) — ТОЙ САМИЙ `runway` Нового VSV,
+                    # що в таблиці VSV-Trend і TradingView-оверлеї.
                     'runway': f.get('runway'),
                     **_fcast(sym),
                 }
@@ -4814,7 +4814,7 @@ class FuelFilterDaemon:
                 # згаслим блоком не рахуємо.
                 self._mm_clear_book(new=False, keep_snapshot=True)
 
-        # ═══ 🆕 КНИГА «МММ-Trend» ═══
+        # ═══ 🆕 КНИГА «VSV-Trend» ═══
         if not _new:
             self._mm_clear_book(new=True)
         else:
@@ -4828,14 +4828,14 @@ class FuelFilterDaemon:
                 snap_n[str(sym).upper()] = {
                     'status': st,
                     'dir': round(d, 3),
-                    # Сила = |dir|×100 — те саме правило, що в колонці «МММ» черг.
+                    # Сила = |dir|×100 — те саме правило, що в колонці «VSV» черг.
                     'strength': int(round(abs(d) * 100)),
                     'mark_price': f.get('mark_price'),
-                    # «МММ-LiQ» — той самий `_fuel_dir_legacy`, що 🧮 книга.
+                    # «VSV-LiQ» — той самий `_fuel_dir_legacy`, що 🧮 книга.
                     'liq_status': (_old.get('status')
                                    if _old.get('status') in ('LONG', 'SHORT') else None),
                     'liq_strength': (int(_old.get('strength') or 0) if _old else None),
-                    # 🎯 «Запас» — ТОЙ САМИЙ `runway` зі зрізу Нового МММ, що
+                    # 🎯 «Запас» — ТОЙ САМИЙ `runway` зі зрізу Нового VSV, що
                     # показує TradingView-оверлей і шар «Запас» Черги-4.
                     'runway': f.get('runway'),
                     **_fcast(sym),
@@ -4851,7 +4851,7 @@ class FuelFilterDaemon:
                                    'data': len(snap_n), 'ts': _now}
             self._mm_track_bias_new(snap_n, _now, s)
 
-        # ═══ ⚡ КНИГА «МММ-CTR» (вимога 14.10) ═══
+        # ═══ ⚡ КНИГА «VSV-CTR» (вимога 14.10) ═══
         # Набір монет — ТОЙ САМИЙ, що в 🧮/🆕 (ключі `fuels`), джерело
         # напрямку — STC 1H + 4H (`ctr_mm_dir`). Форма рядка та сама, тож
         # трекери, банер і рендер спільні.
@@ -4901,7 +4901,7 @@ class FuelFilterDaemon:
             # 📨 ⚡ Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram (вимога 17.10).
             self._mm_bias_alert(bias.get('dir'), _now, s, book='ctr')
 
-        # ═══ 🔮 КНИГА «МММ-Local» (вимога 15.10) ═══
+        # ═══ 🔮 КНИГА «VSV-Local» (вимога 15.10) ═══
         # Набір монет — ТОЙ САМИЙ (ключі `fuels`), джерело напрямку — пара
         # прогнозів 1H/4H, яку `_fcast` уже прочитав для колонок 🔮 інших книг
         # (ОДНЕ читання кешу на монету за такт, мережі не коштує нічого).
@@ -4949,7 +4949,7 @@ class FuelFilterDaemon:
             # рішення «подія чи ні» ухвалює сама функція).
             self._mm_bias_alert(bias.get('dir'), _now, s, book='fc')
 
-        # ═══ 🧭 КНИГА «МММ-Pull» (вимога 20.10) ═══
+        # ═══ 🧭 КНИГА «VSV-Pull» (вимога 20.10) ═══
         # Набір монет — СВІЙ: те, що віддав останній скан ліквідності (за
         # замовчуванням watchlist бота). Скан біжить у ФОНІ (`_mmp_scan_tick`
         # лише вирішує, чи пора), тож такт читає ГОТОВИЙ результат.
@@ -5016,18 +5016,18 @@ class FuelFilterDaemon:
             # 📨 Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram.
             self._mm_bias_alert(bias.get('dir'), _now, s, book='pull')
 
-        # ═══ 🧠 КНИГА «МММ-Decision» (вимога 22.10) ═══
+        # ═══ 🧠 КНИГА «VSV-Decision» (вимога 22.10) ═══
         # Набір монет — ТОЙ САМИЙ (ключі `fuels`), джерело напрямку — вердикт
         # банера Decision Center (`TradeManager.compute_decision`).
         # `_mmd_decisions` веде рівномірну ротацію: кожна монета — раз за
         # `mmd_refresh_min`, за такт порівну (вимога 24.10).
         # 🚨 Монети У ВІДКРИТІЙ УГОДІ отримують вердикт ЗАВЖДИ (навіть при
-        # вимкненому блоці): він живить колонку «🧠 МММ-Decision» і сигнал
+        # вимкненому блоці): він живить колонку «🧠 VSV-Decision» і сигнал
         # «слабшає / ПРОТИ» у таблицях угод — це супровід угод, а не монітор.
         _tpairs = self._mm_open_pairs()
         _tsyms = {p.split('|')[0] for p in _tpairs} | self._mm_open_syms()
-        # 🔔 Колонки угод (з 29.10) — МММ-SBR: той самий `sbr_mm_dir` на тих
-        # самих TF банера, що й таблиця блоку МММ-SBR. Рушій SBR веде КОЖНУ
+        # 🔔 Колонки угод (з 29.10) — VSV-SBR: той самий `sbr_mm_dir` на тих
+        # самих TF банера, що й таблиця блоку VSV-SBR. Рушій SBR веде КОЖНУ
         # монету watchlist І кожну монету відкритої угоди (вимога 11.11:
         # угода з 🔭 скану / ✋ ручна поза watchlist теж має 🚨) — дані живі,
         # тож фільтр «поза watchlist» (26.10) тут більше не потрібен: монети
@@ -5082,7 +5082,7 @@ class FuelFilterDaemon:
             # 📨 Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram.
             self._mm_bias_alert(bias.get('dir'), _now, s, book='dec')
 
-        # ═══ 🧩 КНИГА «МММ-Готовність» (вимога 25.10) ═══
+        # ═══ 🧩 КНИГА «VSV-Готовність» (вимога 25.10) ═══
         # Набір монет — ТОЙ САМИЙ (ключі `fuels`), але рахує їх ФОНОВИЙ скан у
         # спільній черзі сканів раз на `mmr_interval_min`; такт читає ГОТОВИЙ
         # результат (як 🧭 Pull).
@@ -5132,7 +5132,7 @@ class FuelFilterDaemon:
             # 📨 Зміна ПІДТВЕРДЖЕНОГО статусу → Telegram.
             self._mm_bias_alert(bias.get('dir'), _now, s, book='rdy')
 
-        # ═══ 🔔 КНИГА «МММ-SBR» (вимога 29.10) ═══
+        # ═══ 🔔 КНИГА «VSV-SBR» (вимога 29.10) ═══
         # Сигнали Session Band Reversal 1H + 4H рахує ОКРЕМИЙ рушій одразу
         # після закриття бару (`sbr_signals`); такт лише ЧИТАЄ його стан.
         if not _sbb:
@@ -5148,7 +5148,7 @@ class FuelFilterDaemon:
         self._mm_books_persist(_now)
 
     def _ctr_mm_readings(self, syms, fe=None) -> Dict[str, tuple]:
-        """⚡ STC 1H/4H по монетах для МММ-CTR → {СИМВОЛ: (stc_1h, stc_4h)}.
+        """⚡ STC 1H/4H по монетах для VSV-CTR → {СИМВОЛ: (stc_1h, stc_4h)}.
 
         Джерело — ТОЙ САМИЙ кеш forecast-двигуна (`get_ctr_tf`), що малює бейдж
         «⚡ 1h · 4H» над графіком, тож числа в банері й на бейджі однакові.
@@ -5227,7 +5227,7 @@ class FuelFilterDaemon:
                 if v.get('1h') is not None and v.get('4h') is not None}
 
     def _mm_clear_ctr(self):
-        """Погасити книгу ⚡ МММ-CTR (вимкнений тумблер — застиглі числа
+        """Погасити книгу ⚡ VSV-CTR (вимкнений тумблер — застиглі числа
         виглядали б живими)."""
         with self._lock:
             self._mmc_snapshot = {}
@@ -5240,7 +5240,7 @@ class FuelFilterDaemon:
             self._mm_bias_ctr_cand = {}
 
     def _mm_clear_fc(self):
-        """Погасити книгу 🔮 МММ-Local (вимкнений тумблер)."""
+        """Погасити книгу 🔮 VSV-Local (вимкнений тумблер)."""
         with self._lock:
             self._mmf_snapshot = {}
             self._mmf_snapshot_ts = 0.0
@@ -5275,7 +5275,7 @@ class FuelFilterDaemon:
         per = float(period) if period else mmd_refresh_sec({})
         syms = {str(k).upper(): (v or {}) for k, v in (fuels or {}).items() if v}
         # 🚨 `extra` — монети у відкритій угоді: беруть участь навіть без
-        # даних МММ (ціна тоді жива) і йдуть першими серед тих, кому час.
+        # даних VSV (ціна тоді жива) і йдуть першими серед тих, кому час.
         _ex = {str(x).upper() for x in (extra or ())}
         for S in _ex:
             syms.setdefault(S, {})
@@ -5359,7 +5359,7 @@ class FuelFilterDaemon:
         return {S: v[1] for S, v in cache.items()}
 
     def _mm_clear_dec(self, keep_syms=None):
-        """Погасити книгу 🧠 МММ-Decision (вимкнений тумблер). Кеш вердиктів
+        """Погасити книгу 🧠 VSV-Decision (вимкнений тумблер). Кеш вердиктів
         теж забуваємо: після вмикання старі вердикти виглядали б живими.
         ⚠️ `keep_syms` — монети у відкритій угоді: їхні вердикти лишаються
         (колонка й сигнал у таблицях угод), решта кешу забувається."""
@@ -5378,7 +5378,7 @@ class FuelFilterDaemon:
             self._mm_bias_dec_cand = {}
 
     def _mm_clear_pull(self):
-        """Погасити книгу 🧭 МММ-Pull (вимкнений тумблер). Результат скану
+        """Погасити книгу 🧭 VSV-Pull (вимкнений тумблер). Результат скану
         теж забуваємо: після вмикання застиглі числа виглядали б живими."""
         with self._lock:
             self._mmp_snapshot = {}
@@ -5393,7 +5393,7 @@ class FuelFilterDaemon:
             self._mmp_scan_at = 0.0
 
     def _mm_ob4h_marks(self, symbols, tf: str = '4h') -> Dict[str, Dict]:
-        """🏷 Позначка «останній OB 4H/1H» для рядків МММ-таблиць — ЄДИНЕ
+        """🏷 Позначка «останній OB 4H/1H» для рядків VSV-таблиць — ЄДИНЕ
         джерело `SMCScanner.ob_mark_for` (те саме, що поле Side відкритих
         угод). Лише памʼять сканера: ні мережі, ні БД. Сканера немає → порожньо."""
         try:
@@ -5473,7 +5473,7 @@ class FuelFilterDaemon:
                 str(s.get('mmp_sort', 'pull_report')))
 
     def _mmp_scan_tick(self, s: Dict, now: float) -> bool:
-        """🧭 Чи пора запускати скан ліквідності для МММ-Pull → True, якщо
+        """🧭 Чи пора запускати скан ліквідності для VSV-Pull → True, якщо
         запущено. Скан біжить у ФОНІ: такт двигуна (30с) не може чекати
         десятки секунд мережі.
 
@@ -5574,9 +5574,9 @@ class FuelFilterDaemon:
             self._mmp_scan_at = now
             self._mmp_scan_running = False
 
-    # ── 🧩 МММ-Готовність: фоновий скан грейдів (вимога 25.10) ────────────
+    # ── 🧩 VSV-Готовність: фоновий скан грейдів (вимога 25.10) ────────────
     def _mm_clear_rdy(self):
-        """Погасити книгу 🧩 МММ-Готовність (вимкнений тумблер). Результат
+        """Погасити книгу 🧩 VSV-Готовність (вимкнений тумблер). Результат
         скану теж забуваємо: після вмикання застиглі числа виглядали б живими."""
         with self._lock:
             self._mmr_snapshot = {}
@@ -5590,9 +5590,9 @@ class FuelFilterDaemon:
             self._mmr_scan = {}
             self._mmr_scan_at = 0.0
 
-    # ── 🔔 МММ-SBR: читання рушія Session Band Reversal (вимога 29.10) ────
+    # ── 🔔 VSV-SBR: читання рушія Session Band Reversal (вимога 29.10) ────
     def _mm_clear_sbr(self):
-        """Погасити книгу 🔔 МММ-SBR (вимкнений тумблер). Рушій сигналів і
+        """Погасити книгу 🔔 VSV-SBR (вимкнений тумблер). Рушій сигналів і
         Telegram «🔔 Сигнали» від цього НЕ зупиняються — гасне лише показ."""
         with self._lock:
             self._mms_snapshot = {}
@@ -5606,7 +5606,7 @@ class FuelFilterDaemon:
 
     def _mm_sbr_rebuild(self, s: Dict, now: float, fuels=None, fcast=None,
                         watched='__auto__'):
-        """🔔 Перебудувати книгу МММ-SBR зі стану рушія: знімок, таймери стану,
+        """🔔 Перебудувати книгу VSV-SBR зі стану рушія: знімок, таймери стану,
         банер. Кличеться з такту двигуна І одразу з рушія після нових барів
         (`on_sbr_update`) — щоб вкладки LONG/SHORT змінювались у ту саму мить,
         коли закрився бар, а не з наступним тактом (до 30с)."""
@@ -5800,10 +5800,10 @@ class FuelFilterDaemon:
 
     def mm_monitor_state(self, settings: Optional[Dict] = None,
                          book: str = 'old') -> Dict:
-        """🧮 Рядки МММ-монітора — ЧИТАННЯ готового знімка, без розрахунків.
+        """🧮 Рядки VSV-монітора — ЧИТАННЯ готового знімка, без розрахунків.
 
-        `book='old'` — блок 🧮 МММ-монітор (МММ LiQ), `book='new'` — блок
-        🧮 МММ-Trend (НОВИЙ МММ). Форма відповіді ОДНА на обидва блоки: фронт
+        `book='old'` — блок 🧮 VSV-монітор (VSV LiQ), `book='new'` — блок
+        🧮 VSV-Trend (НОВИЙ VSV). Форма відповіді ОДНА на обидва блоки: фронт
         малює їх ТИМ САМИМ рендером (вимога 01.10: «повністю ідентичне»).
 
         Повертає {'rows': [...], 'ts', 'enabled', 'limited'}.
@@ -5811,7 +5811,7 @@ class FuelFilterDaemon:
         ⚠️ **МОНЕТИ У ВІДКРИТІЙ УГОДІ В РЯДКИ НЕ ПОТРАПЛЯЮТЬ** (вимога 15.09:
         «монета, яка в угоді, не потрібно відображати у таблиці»). Монітор —
         це список КАНДИДАТІВ; те, що вже в роботі, живе в таблицях угод. Зі
-        ЗНІМКА такі монети НЕ прибираються: він живить колонку «🧮 МММ LiQ»
+        ЗНІМКА такі монети НЕ прибираються: він живить колонку «🧮 VSV LiQ»
         у тих таблицях (`mm_snapshot_for`).
         ⚠️ **ЛІЧИЛЬНИКІВ ТУТ НЕМАЄ.** Вкладки рахує ФРОНТ — і рахує вже з
         урахуванням фільтра «Сила ≥», який теж живе на фронті. Серверне число
@@ -5819,7 +5819,7 @@ class FuelFilterDaemon:
         кількість рядків під нею — різні речі (саме це й було видно на скріні).
         `enabled=False` — тумблер монітора вимкнено: знімка немає СВІДОМО, і
         порожню таблицю треба підписати саме так, а не «немає даних».
-        `limited=True` означає, що `mmm_limited_mode` УВІМКНЕНО і МММ рахується
+        `limited=True` означає, що `mmm_limited_mode` УВІМКНЕНО і VSV рахується
         НЕ по всьому watchlist, а лише по монетах «у роботі» (₿ + угоди + черги
         + фандинг + додані вручну). Це ОБОВʼЯЗКОВО віддати у відповідь: інакше
         коротка таблиця читалась би як «бот нічого не бачить», а не як «режим
@@ -5827,12 +5827,12 @@ class FuelFilterDaemon:
         ліквідності — обрізання має бути НАЗВАНЕ вголос).
         """
         s = settings if isinstance(settings, dict) else self.get_settings()
-        # ⚡ Третя книга `ctr` (МММ-CTR, 14.10) — та сама форма відповіді.
-        # 🔮 Четверта книга `fc` (МММ-Local, 15.10) — та сама форма.
-        # 🧭 П'ята книга `pull` (МММ-Pull, 20.10) — та сама форма + стан скану.
-        # 🧠 Шоста книга `dec` (МММ-Decision, 22.10) — та сама форма.
-        # 🧩 Сьома книга `rdy` (МММ-Готовність, 25.10) — та сама форма + скан.
-        # 🔔 Восьма книга `sbr` (МММ-SBR, 29.10) — та сама форма + стан рушія.
+        # ⚡ Третя книга `ctr` (VSV-CTR, 14.10) — та сама форма відповіді.
+        # 🔮 Четверта книга `fc` (VSV-Local, 15.10) — та сама форма.
+        # 🧭 П'ята книга `pull` (VSV-Pull, 20.10) — та сама форма + стан скану.
+        # 🧠 Шоста книга `dec` (VSV-Decision, 22.10) — та сама форма.
+        # 🧩 Сьома книга `rdy` (VSV-Готовність, 25.10) — та сама форма + скан.
+        # 🔔 Восьма книга `sbr` (VSV-SBR, 29.10) — та сама форма + стан рушія.
         _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec', 'rdy',
                                'sbr') else 'old'
         _nb = (_bk == 'new')
@@ -5853,7 +5853,7 @@ class FuelFilterDaemon:
             # ⚠️ ВИМКНЕНИЙ блок → рядків НЕМАЄ, і це перевіряється ЯВНО, а не
             # покладається на порожній знімок: при вимкненому 🧮 знімок СВІДОМО
             # лишається для монет у відкритих угодах (він живить колонку
-            # «🧮 МММ LiQ» у таблицях угод), і без цієї перевірки вони
+            # «🧮 VSV LiQ» у таблицях угод), і без цієї перевірки вони
             # протекли б у таблицю монітора, який щойно вимкнули.
             snap = dict(getattr(self, _p + '_snapshot', {}) or {}) if _on else {}
             _cov = dict(getattr(self, _p + '_stats', {}) or {})
@@ -5896,7 +5896,7 @@ class FuelFilterDaemon:
             st = v.get('status') if v.get('status') in ('LONG', 'SHORT') else None
             stren = int(v.get('strength') or 0)
             # ⚠️ Віддаємо САМУ базову силу, а не готове «up/down»: стрілку
-            # малює той самий спільний віджет `ffFuelCell`, що й у колонці «МММ»
+            # малює той самий спільний віджет `ffFuelCell`, що й у колонці «VSV»
             # черг. Друге правило тренду на фронті розійшлося б із першим.
             # База — зі ЗНІМКА (`_mm_track_growth`), тобто найстаріший семпл у
             # вікні приросту, а не «попередній такт».
@@ -5944,24 +5944,24 @@ class FuelFilterDaemon:
                 'f4': v.get('f4'),
                 # 🆕 Сусідній показник (форма рядка ОДНА на обидві книги, тож
                 # поля є завжди; у «чужій» книзі вони просто None):
-                #   🧮 книга → «МММ-Trend» (Новий МММ монети);
-                #   🆕 книга → «МММ-LiQ» і «Запас».
+                #   🧮 книга → «VSV-Trend» (Новий VSV монети);
+                #   🆕 книга → «VSV-LiQ» і «Запас».
                 'new_mm': v.get('new_status'),
                 'new_strength': v.get('new_strength'),
                 'liq_mm': v.get('liq_status'),
                 'liq_strength': v.get('liq_strength'),
                 'runway': v.get('runway'),
-                # ⚡ Книга МММ-CTR: сирі STC обох TF, їхні нахили і прапорець
+                # ⚡ Книга VSV-CTR: сирі STC обох TF, їхні нахили і прапорець
                 # конфлікту (1H проти 4H) — для колонок і підказки.
                 'stc_1h': v.get('stc_1h'),
                 'stc_4h': v.get('stc_4h'),
                 'lean_1h': v.get('lean_1h'),
                 'lean_4h': v.get('lean_4h'),
                 'ctr_conflict': v.get('ctr_conflict'),
-                # 🔮 Книга МММ-Local: конфлікт 1H проти 4H (самі прогнози
+                # 🔮 Книга VSV-Local: конфлікт 1H проти 4H (самі прогнози
                 # їдуть полями f1/f4, нахили — lean_1h/lean_4h).
                 'fc_conflict': v.get('fc_conflict'),
-                # 🧭 Книга МММ-Pull: частки маси ліквідності вище/нижче ціни,
+                # 🧭 Книга VSV-Pull: частки маси ліквідності вище/нижче ціни,
                 # найбільший магніт і хто РЕАЛЬНО дав числа (фолбек біржі).
                 'above_pct': v.get('above_pct'),
                 'below_pct': v.get('below_pct'),
@@ -5973,13 +5973,13 @@ class FuelFilterDaemon:
                 'magnet_dist_pct': v.get('magnet_dist_pct'),
                 'liq_exchange': v.get('liq_exchange'),
                 'liq_fallback': v.get('liq_fallback'),
-                # 🧠 Книга МММ-Decision: вердикт банера (ймовірність боку,
+                # 🧠 Книга VSV-Decision: вердикт банера (ймовірність боку,
                 # слово сили, впевненість, заголовок «SHORT 85%»).
                 'dec_prob': v.get('dec_prob'),
                 'dec_verdict': v.get('dec_verdict'),
                 'dec_conf': v.get('dec_conf'),
                 'dec_headline': v.get('dec_headline'),
-                # 🧩 Книга МММ-Готовність: бали обох боків, бік-переможець,
+                # 🧩 Книга VSV-Готовність: бали обох боків, бік-переможець,
                 # його бал / слово грейда / 🎯 HOT.
                 'rdy_l': v.get('rdy_l'),
                 'rdy_s': v.get('rdy_s'),
@@ -5987,7 +5987,7 @@ class FuelFilterDaemon:
                 'rdy_score': v.get('rdy_score'),
                 'rdy_grade': v.get('rdy_grade'),
                 'rdy_hot': v.get('rdy_hot'),
-                # 🔔 Книга МММ-SBR: які TF дали поточний бік ('1H'/'4H'/'1H+4H'),
+                # 🔔 Книга VSV-SBR: які TF дали поточний бік ('1H'/'4H'/'1H+4H'),
                 # вирішальний сигнал (час Kyiv, Trigger, Score, Risk, SL, #N),
                 # сигнали по кожному TF і прапорець «щойно, на останньому барі».
                 'sbr_tfs': v.get('sbr_tfs'),
@@ -6017,7 +6017,7 @@ class FuelFilterDaemon:
             r['ob4h'] = _ob4.get(r['symbol'])
             r['ob1h'] = _ob1.get(r['symbol'])
             r['tradeable'] = (None if _trd is None else (r['symbol'] in _trd))
-        # 📍 PD-зона для 🔔 МММ-SBR (вимога 04.11) — лише ЧИТАННЯ кешу сканера.
+        # 📍 PD-зона для 🔔 VSV-SBR (вимога 04.11) — лише ЧИТАННЯ кешу сканера.
         if _bk == 'sbr' and rows:
             _pd = self._mm_pd_marks([r['symbol'] for r in rows])
             for r in rows:
@@ -6031,7 +6031,7 @@ class FuelFilterDaemon:
             'rows': rows,
             'ts': ts,
             'enabled': _on,
-            # 🧭 МММ-Pull бере монети зі СВОГО скану — режим економії liq-map
+            # 🧭 VSV-Pull бере монети зі СВОГО скану — режим економії liq-map
             # його не стосується, тож і попередження про нього не показуємо.
             'limited': bool(s.get('mmm_limited_mode', True)) and _bk not in ('pull', 'sbr'),
             # ⚑ Поріг «Сила ≥» їде З СЕРВЕРА — одне число на всі браузери.
@@ -6039,7 +6039,7 @@ class FuelFilterDaemon:
             # ⚑ …і свій поріг на КОЖНУ вкладку (вимога 12.10).
             'str_mins': mm_str_mins_norm(s.get(f'{_sk}_str_mins'),
                                          s.get(f'{_sk}_str_min', 0)),
-            # 🧠 Фільтр «Вердикт ≥» — лише у книги МММ-Decision.
+            # 🧠 Фільтр «Вердикт ≥» — лише у книги VSV-Decision.
             'verdict_min': (str(s.get('mmd_verdict_min') or '') if _bk == 'dec' else ''),
             # 🧠 …і свій «Вердикт ≥» на КОЖНУ вкладку (вимога 22.10).
             'verdict_mins': (dec_verdict_mins_norm(s.get('mmd_verdict_mins'),
@@ -6048,7 +6048,7 @@ class FuelFilterDaemon:
             'book': _bk,
             # 📍 Фільтр «лише у вигідній зоні PD» — лише книга SBR (вимога 04.11).
             'pd_only': (bool(s.get('mms_pd_only', False)) if _bk == 'sbr' else False),
-            # 🧭 МММ-Pull: стан ФОНОВОГО скану ліквідності (коли був, скільки
+            # 🧭 VSV-Pull: стан ФОНОВОГО скану ліквідності (коли був, скільки
             # тривав, наступний, чи біжить зараз, причина невдачі, параметри).
             'scan': (self._mmp_scan_info(s) if (_bk == 'pull' and _on) else
                      self._mmr_scan_info(s) if (_bk == 'rdy' and _on) else
@@ -6059,7 +6059,7 @@ class FuelFilterDaemon:
             # «у WATCHLIST 51, а монітор працює із 49 — чому?»). Різниця
             # НІКОЛИ не має бути здогадкою, тож віддаємо ПОВНИЙ розклад:
             #   targeted — скільки монет двигун узяв у роботу цього такту;
-            #   no_data  — узяв, але МММ LiQ по них ще не порахувався
+            #   no_data  — узяв, але VSV LiQ по них ще не порахувався
             #              (liq-map не зібрала рівнів / монета щойно додана);
             #   in_trade — скільки з ПОКАЗАНИХ рядків уже В УГОДІ.
             # ⚠️ З 18.09 монети в угоді з таблиці НЕ зникають (вимога), тож
@@ -6090,17 +6090,17 @@ class FuelFilterDaemon:
         }
 
     def mm_snapshot_for(self, symbols) -> Dict:
-        """🧮 МММ LiQ по вказаних монетах — ЧИТАННЯ знімка двигуна.
+        """🧮 VSV LiQ по вказаних монетах — ЧИТАННЯ знімка двигуна.
 
-        Живить колонку «🧮 МММ LiQ» у таблицях ВІДКРИТИХ УГОД. Сюди
+        Живить колонку «🧮 VSV LiQ» у таблицях ВІДКРИТИХ УГОД. Сюди
         свідомо винесено рівно те, що потрібно спільному віджету `ffFuelCell`
         (напрямок + сила + попередня сила для стрілки) плюс момент старту росту.
 
         ⚠️ ЖОДНИХ РОЗРАХУНКІВ: `/api/tm/state` опитується кожні 5с, і будь-яка
         арифметика тут блокувала б бота під одним gunicorn-воркером — той самий
-        урок, через який колонку «МММ» колись і прибрали з цих таблиць.
+        урок, через який колонку «VSV» колись і прибрали з цих таблиць.
         Тепер число бере ГОТОВИЙ знімок, який двигун уже порахував, тож
-        таблиця угод і 🧮 МММ-монітор показують ОДНЕ І ТЕ САМЕ значення.
+        таблиця угод і 🧮 VSV-монітор показують ОДНЕ І ТЕ САМЕ значення.
         """
         want = {str(x).upper() for x in (symbols or []) if x}
         if not want:
@@ -6126,7 +6126,7 @@ class FuelFilterDaemon:
         return out
 
     def mm_bias(self) -> Dict:
-        """⚖️ ВАЖІЛЬ БАНЕРА «🧮 МММ-монітор» — ПУБЛІЧНЕ читання готового знімка.
+        """⚖️ ВАЖІЛЬ БАНЕРА «🧮 VSV-монітор» — ПУБЛІЧНЕ читання готового знімка.
 
         Потрібен 💧 Сканеру ліквідності: він відбирає монети САМЕ в той бік,
         який банер показує ЗАРАЗ, і пересканує на його фліпі.
@@ -6142,18 +6142,18 @@ class FuelFilterDaemon:
             return dict(getattr(self, '_mm_bias', {}) or {})
 
     def mm_bias_new(self) -> Dict:
-        """⚖️ ВАЖІЛЬ БАНЕРА «🧮 МММ-Trend» — ПУБЛІЧНЕ читання готового знімка.
+        """⚖️ ВАЖІЛЬ БАНЕРА «🧮 VSV-Trend» — ПУБЛІЧНЕ читання готового знімка.
 
         З 01.10 саме його читає 💧 Сканер ліквідності (бік відбору, перескан на
-        фліпі, VOB-сигнал): «Більше перевірок на банері МММ-монітор не робимо».
+        фліпі, VOB-сигнал): «Більше перевірок на банері VSV-монітор не робимо».
         `dir` — ПІДТВЕРДЖЕНИЙ статус (гістерезис + вікно `mmn_bias_confirm_sec`).
-        Вимкнений блок МММ-Trend чистить знімок → `{}` (напрямку немає).
+        Вимкнений блок VSV-Trend чистить знімок → `{}` (напрямку немає).
         """
         with self._lock:
             return dict(getattr(self, '_mm_bias_new', {}) or {})
 
     def mm4_view(self) -> Dict:
-        """🧭 Чотири банери (МММ-Trend · Local · Decision · Готовність) для
+        """🧭 Чотири банери (VSV-Trend · Local · Decision · Готовність) для
         інфосайту — ЛИШЕ читання готових знімків (ті самі `_mm_bias_*`, що
         малюють банери бота) + `mm4_consensus`. Тумблер блоку ще невідомий
         (до першого такту) → судимо за наявністю даних у знімку."""
@@ -6197,31 +6197,31 @@ class FuelFilterDaemon:
             pass
 
     def mm_gate_view(self, symbol: str, book: str = 'new') -> Dict:
-        """🆕 Що каже блок «МММ-Trend» про монету — для воріт сигналів сканера
-        («🧮 Через МММ-Trend», вимога 01.10).
+        """🆕 Що каже блок «VSV-Trend» про монету — для воріт сигналів сканера
+        («🧮 Через VSV-Trend», вимога 01.10).
 
-        → `{'on': блок МММ-Trend увімкнено?, 'dir': напрямок БАНЕРА МММ-Trend
+        → `{'on': блок VSV-Trend увімкнено?, 'dir': напрямок БАНЕРА VSV-Trend
         (підтверджений) | None, 'coin': вкладка монети у «Списку монет»
-        МММ-Trend — 'LONG'/'SHORT'/'FLAT' | None (немає в знімку)}`.
+        VSV-Trend — 'LONG'/'SHORT'/'FLAT' | None (немає в знімку)}`.
         ⚠️ ЛИШЕ ЧИТАННЯ готового знімка `_mmn_snapshot` (урок B2): ворота
         кличуться на кожен сигнал і кожен тік 🔁 recheck Черги-4.
         ⚠️ `coin` — ТЕ САМЕ правило (`status`), що кладе монету у вкладку
-        🟢/🔴/⚖ таблиці МММ-Trend, інакше «монета у вкладці LONG» і рішення
+        🟢/🔴/⚖ таблиці VSV-Trend, інакше «монета у вкладці LONG» і рішення
         воріт могли б розійтись.
         """
-        # `book='old'` (вимога 09.10) — те саме для блоку 🧮 МММ-монітор:
+        # `book='old'` (вимога 09.10) — те саме для блоку 🧮 VSV-монітор:
         # тумблер `mm_monitor_enabled` · банер `_mm_bias` · знімок `_mm_snapshot`
-        # (вкладки 🟢/🔴/⚖ таблиці МММ-монітора за МММ LiQ).
+        # (вкладки 🟢/🔴/⚖ таблиці VSV-монітора за VSV LiQ).
         # ⚠️ Вимкнений 🧮 тримає знімок лише для монет в угодах → `on=False`,
         # тож ворота не діють і НЕ читають той урізаний знімок.
-        # ⚡ `book='ctr'` (вимога 15.10) — блок «МММ-CTR»: тумблер
+        # ⚡ `book='ctr'` (вимога 15.10) — блок «VSV-CTR»: тумблер
         # `mm_ctr_enabled` · банер `_mm_bias_ctr` · знімок `_mmc_snapshot`.
-        # 🔮 `book='fc'` (вимога 15.10) — блок «МММ-Local»: тумблер
+        # 🔮 `book='fc'` (вимога 15.10) — блок «VSV-Local»: тумблер
         # `mm_fc_enabled` · банер `_mm_bias_fc` · знімок `_mmf_snapshot`.
-        # 🧭 `book='pull'` (вимога 20.10) — блок «МММ-Pull».
-        # 🧠 `book='dec'` (вимога 22.10) — блок «МММ-Decision».
-        # 🧩 `book='rdy'` (вимога 25.10) — блок «МММ-Готовність».
-        # 🔔 `book='sbr'` (вимога 29.10) — блок «МММ-SBR».
+        # 🧭 `book='pull'` (вимога 20.10) — блок «VSV-Pull».
+        # 🧠 `book='dec'` (вимога 22.10) — блок «VSV-Decision».
+        # 🧩 `book='rdy'` (вимога 25.10) — блок «VSV-Готовність».
+        # 🔔 `book='sbr'` (вимога 29.10) — блок «VSV-SBR».
         _bk = book if book in ('old', 'new', 'ctr', 'fc', 'pull', 'dec', 'rdy',
                                'sbr') else 'new'
         _P = {'old': ('_mm_mon_on', 'mm_monitor_enabled', '_mm_bias', '_mm_snapshot',
@@ -6284,7 +6284,7 @@ class FuelFilterDaemon:
         return out
 
     def _sbr_gate_fresh(self, sym: str) -> bool:
-        """🔒 Ворота «Через МММ-SBR» судять лише за АКТУАЛЬНИМ станом монети
+        """🔒 Ворота «Через VSV-SBR» судять лише за АКТУАЛЬНИМ станом монети
         (кейс OKBUSDT 31.10: VOB-сигнал на закритті 5m збігся із закриттям
         1h-бару, прохід рушія SBR ще не дійшов до монети, і LONG пройшов
         ворота за старим станом, хоча на тому самому барі вже був SHORT).
@@ -6326,13 +6326,13 @@ class FuelFilterDaemon:
         return out
 
     def group_open(self, symbols: List[str], book: str = 'old') -> Dict:
-        """✋ ГРУПОВЕ відкриття обраних монет МММ-монітора.
+        """✋ ГРУПОВЕ відкриття обраних монет VSV-монітора.
 
-        `book='old'` — блок 🧮 МММ-монітор (напрямок = МММ LiQ), `book='new'` —
-        блок 🧮 МММ-Trend (напрямок = НОВИЙ МММ). Кожен блок відкриває рівно
+        `book='old'` — блок 🧮 VSV-монітор (напрямок = VSV LiQ), `book='new'` —
+        блок 🧮 VSV-Trend (напрямок = НОВИЙ VSV). Кожен блок відкриває рівно
         за тим показником, який людина бачила в ЙОГО таблиці.
 
-        Напрямок КОЖНОЇ монети — її власний МММ зі ЗНІМКА, тобто рівно те, що
+        Напрямок КОЖНОЇ монети — її власний VSV зі ЗНІМКА, тобто рівно те, що
         людина бачила в рядку. Ворота черг пропускаються (як у ✋ ручному
         відкритті з Черги-4 — рішення ухвалює людина), але лишаються:
           • 🚦 головні кнопки напрямку — `_open` перевіряє їх ЗАВЖДИ, і ✋ ручне
@@ -6348,9 +6348,9 @@ class FuelFilterDaemon:
         out = {'ok': True, 'opened': 0, 'failed': 0, 'results': []}
         # ✋ Майстер-тумблер ❤️ Fuel Auto-Filter вимикає АВТОМАТИКУ черг, а не
         # руки людини (вимога 25.10 «любе ручне відкриття не має блокуватись»):
-        # знімки МММ рахуються і при вимкнених чергах (`_mm_only_tick`).
+        # знімки VSV рахуються і при вимкнених чергах (`_mm_only_tick`).
         # ⚠️ Вимкнений монітор = знімка НЕМАЄ, тож напрямок брати нізвідки.
-        # Кажемо це прямо: інакше кожна монета отримала б причину «МММ без
+        # Кажемо це прямо: інакше кожна монета отримала б причину «VSV без
         # напрямку», що виглядало б як «ринок у рівновазі», а не як тумблер.
         _bk = book if book in _MM_BOOKS else 'old'
         _name = _MM_BOOKS[_bk]['name']
@@ -6385,14 +6385,14 @@ class FuelFilterDaemon:
 
     def _mm_open_one(self, sym: str, mm: Dict, s: Dict, log_activity,
                      book: str = 'old') -> Dict:
-        """Одна монета групового відкриття. Напрямок — ЛИШЕ з МММ-знімка
+        """Одна монета групового відкриття. Напрямок — ЛИШЕ з VSV-знімка
         ТОГО блоку, з якого відкривають (`book`)."""
         _bk = book if book in _MM_BOOKS else 'old'
         _name = _MM_BOOKS[_bk]['name']
         side = mm.get('status')
         if side not in ('LONG', 'SHORT'):
             return {'symbol': sym, 'side': None, 'ok': False,
-                    'reason': 'МММ без напрямку (⚖ рівновага) — нічого відкривати'}
+                    'reason': 'VSV без напрямку (⚖ рівновага) — нічого відкривати'}
         if self._tm_blocks_open(sym):
             return {'symbol': sym, 'side': side, 'ok': False,
                     'reason': 'уже в угоді (відкрита позиція)'}
@@ -6427,7 +6427,7 @@ class FuelFilterDaemon:
             self._timers[sym] = {'dir': side, 'since': time.time(),
                                  'start_price': mark}
         log_activity(sym, 'opened',
-                     f'{_name}: ✋ ГРУПОВЕ відкриття {side} за живим МММ '
+                     f'{_name}: ✋ ГРУПОВЕ відкриття {side} за живим VSV '
                      f'(сила {mm.get("strength")}%) — ворота черг пропущено '
                      '(рішення користувача)',
                      side=side, source='MMM')
@@ -6443,7 +6443,7 @@ class FuelFilterDaemon:
                   source: str, note: str = '', price: Optional[float] = None,
                   book: Optional[str] = None) -> Dict:
         """✋ РУЧНЕ відкриття ОДНІЄЇ монети з будь-якої таблиці-рекомендації
-        (напр. 🔭 Пружина — скан біржі). Той самий шлях, що ✋ групове МММ:
+        (напр. 🔭 Пружина — скан біржі). Той самий шлях, що ✋ групове VSV:
         `_open(by_hand=True)` (жодних воріт, лише технічні умови) → таймер →
         той самий Manual SL `_q4_set_vob_sl`. Мітка `manual → <engine>`."""
         from detection.activity_log import log_activity
@@ -6625,11 +6625,11 @@ class FuelFilterDaemon:
 
     def _btc_liqfuel_raw(self):
         """RAW liq-fuel (fa−fb)/den для BTCUSDT — ТОЧНО той самий алгоритм, що й
-        рядок «МММ-бабло ↑/↓ → тягне в …» у compute_bias (Smart Direction):
+        рядок «VSV-бабло ↑/↓ → тягне в …» у compute_bias (Smart Direction):
         та сама liq-map (lookback 24h, профіль liqmap_decay_profile), те саме
         зважування usd/(1+dist/2) у межах 15% від марк-ціни, той самий поріг ±0.1.
         Раніше банер брав _fuel_dir → compute_mm (ІНША модель) і РОЗХОДИВСЯ з
-        «МММ-бабло». Тепер джерело банера ЄДИНЕ з reason-рядком.
+        «VSV-бабло». Тепер джерело банера ЄДИНЕ з reason-рядком.
         Повертає (dir_float, status|None, strength 0..100)."""
         try:
             lst = self._liq_state('BTCUSDT')   # ⚡ спільний знімок (A1+A2)
@@ -6665,13 +6665,13 @@ class FuelFilterDaemon:
     def _btc_banner_live_refresh(self) -> Optional[str]:
         """Оновити ЖИВІ поля банера ₿ (режим «🔁 Дублювання») → напрямок або None.
 
-        **Скарга 18.09, дослівно:** «він має повторювати "МММ-бабло ↑ зверху →
+        **Скарга 18.09, дослівно:** «він має повторювати "VSV-бабло ↑ зверху →
         тягне в LONG" бо увімкнено "дублювання", а він показує "рівновага", це
         взагалі як так?»
 
         **ДІАГНОЗ: модель тут ні до чого.** Джерело банера — `_btc_liqfuel_raw`,
         тобто РІВНО той самий `(fa−fb)/den` із тим самим зважуванням
-        `usd/(1+dist/2)`, вікном 15% і порогом ±0.1, що й рядок «МММ-бабло» у
+        `usd/(1+dist/2)`, вікном 15% і порогом ±0.1, що й рядок «VSV-бабло» у
         `compute_bias` (це вже приводили до спільного знаменника раніше).
         Розійтись вони не можуть — банер показував **СТАРЕ** число, бо ці поля
         оновлював ЛИШЕ `_update_btc_verdict`, а він живе в ПОВНОМУ такті. При
@@ -6698,12 +6698,12 @@ class FuelFilterDaemon:
         return live
 
     def _update_btc_verdict(self):
-        """BTC МММ *session* tracker (drives the ₿ banner + START engine + queue).
+        """BTC VSV *session* tracker (drives the ₿ banner + START engine + queue).
 
-        A SESSION = a committed BTC МММ direction. The live МММ = the МММ-БАБЛО
+        A SESSION = a committed BTC VSV direction. The live VSV = the VSV-БАБЛО
         (liquidation-fuel) direction — the SAME `_fuel_dir_smoothed` status the
-        coins' «МММ» cell shows: LONG / SHORT / None (|dir| ≤ 0.1 → ⚖ рівновага,
-        «напрямку немає» → WAIT). Панель повністю повторює алгоритм МММ-бабло.
+        coins' «VSV» cell shows: LONG / SHORT / None (|dir| ≤ 0.1 → ⚖ рівновага,
+        «напрямку немає» → WAIT). Панель повністю повторює алгоритм VSV-бабло.
 
         Session rules (per user's "сеанси"):
           • WAIT / data gap → PAUSE: keep the session direction, keep its start
@@ -6714,11 +6714,11 @@ class FuelFilterDaemon:
         So the queue is cleared ONLY on a genuine session flip — never on a
         transient WAIT. Called once per cycle."""
         try:
-            # 🎯 Банер ₿ = «МММ-бабло» ОДИН-В-ОДИН із reason-рядком Smart Direction.
+            # 🎯 Банер ₿ = «VSV-бабло» ОДИН-В-ОДИН із reason-рядком Smart Direction.
             # Джерело — RAW liq-fuel (fa−fb)/den (_btc_liqfuel_raw), ТОЧНО як у
             # compute_bias. Раніше тут стояв _fuel_dir_smoothed → compute_mm (ІНША,
-            # «професійна» МММ-модель), через що банер показував рівновагу/іншу силу,
-            # поки reason казав SHORT. Тепер алгоритм ЄДИНИЙ — банер і «МММ-бабло»
+            # «професійна» VSV-модель), через що банер показував рівновагу/іншу силу,
+            # поки reason казав SHORT. Тепер алгоритм ЄДИНИЙ — банер і «VSV-бабло»
             # завжди збігаються.
             live = self._btc_banner_live_refresh()
             # ⚠️ `fdir` раніше рахувався тут інлайном; після винесення в
@@ -6737,7 +6737,7 @@ class FuelFilterDaemon:
                 except Exception:
                     pass
         except Exception as e:
-            print(f"[FuelFilter] BTC МММ calc error: {e}")
+            print(f"[FuelFilter] BTC VSV calc error: {e}")
             return
         now = time.time()
         sess = self._btc_verdict_dir        # current session direction
@@ -6795,13 +6795,13 @@ class FuelFilterDaemon:
         self._persist_state()
 
     def _log_btc_mm(self, event: str, fdir):
-        """Пише подію банера ₿ МММ у «Лог роботи бота» (category=MM) для аналізу
+        """Пише подію банера ₿ VSV у «Лог роботи бота» (category=MM) для аналізу
         моделі: score, сила, сеанс, внесок кожного сигналу і ціль-магніт."""
         try:
             mm = getattr(self, '_btc_mm', None) or {}
             comp = mm.get('components') or {}
             tgt = mm.get('target') or {}
-            parts = [f"₿ МММ {event}",
+            parts = [f"₿ VSV {event}",
                      f"score={fdir if fdir is not None else '—'}",
                      f"str={mm.get('strength', self._btc_fuel_strength)}",
                      f"sess={self._btc_verdict_dir or '—'}"]
@@ -6817,14 +6817,14 @@ class FuelFilterDaemon:
             pass
 
     def _log_coin_mm(self, sym: str, event: str):
-        """Per-coin МММ у «Лог роботи бота» (category=MM) для аналізу: напрямок,
+        """Per-coin VSV у «Лог роботи бота» (category=MM) для аналізу: напрямок,
         score, сила і внесок сигналів + ціль-магніт. Викликається на рідкісних
         подіях (вхід у чергу), тож обсяг логу лишається обмеженим."""
         try:
             fd = self._fuel_dir(sym) or {}
             comp = fd.get('components') or {}
             tgt = fd.get('target') or {}
-            parts = [f"МММ {sym} {event}",
+            parts = [f"VSV {sym} {event}",
                      f"dir={fd.get('status') or '—'}",
                      f"score={fd.get('dir')}",
                      f"str={fd.get('strength', '—')}"]
@@ -6964,8 +6964,8 @@ class FuelFilterDaemon:
             'max_exhaustion': settings.get('max_exhaustion_pct', 75),
         }
         # Fuel direction (timer trigger) — smoothed + hysteresis, read-only.
-        # Also expose the МММ STRENGTH (|fuel dir|×100, 0..100) + raw dir so
-        # external overlays can show the exact same МММ the bot uses.
+        # Also expose the VSV STRENGTH (|fuel dir|×100, 0..100) + raw dir so
+        # external overlays can show the exact same VSV the bot uses.
         try:
             fuel_data = self._fuel_dir_smoothed(symbol)
             out['fuel_status'] = fuel_data.get('status') if fuel_data else None
@@ -6976,7 +6976,7 @@ class FuelFilterDaemon:
             # 🎯 Запас ходу (до ліквідності попереду руху) + ціль-магніт.
             out['runway'] = (fuel_data or {}).get('runway')
             out['mm_target'] = (fuel_data or {}).get('target')
-            # Старий показник МММ (сирий (fa−fb)/den) — для порівняння в оверлеї.
+            # Старий показник VSV (сирий (fa−fb)/den) — для порівняння в оверлеї.
             out['mm_old'] = self._fuel_dir_legacy(symbol)
         except Exception:
             out['fuel_status'] = None
@@ -7057,7 +7057,7 @@ class FuelFilterDaemon:
         # Той самий контракт полів (dir/paused/status/strength), що й веб-банер,
         # тож TradingView-оверлей НЕ треба міняти — він рендерить те, що прийде.
         # Режим 'live' (дефолт) = ПОВНЕ ДУБЛЮВАННЯ без затримок: миттєвий напрямок
-        # МММ-бабло BTCUSDT, без сеансу/паузи/таймера. 'session' = стара механіка.
+        # VSV-бабло BTCUSDT, без сеансу/паузи/таймера. 'session' = стара механіка.
         try:
             if (settings.get('btc_banner_mode', 'live') or 'live') == 'live':
                 bdir = self._btc_live_dir if self._btc_live_dir in ('LONG', 'SHORT') else None
@@ -7077,7 +7077,7 @@ class FuelFilterDaemon:
         except Exception:
             out['btc'] = {'dir': None, 'paused': False, 'status': 'STOP', 'strength': 0}
         # ── 💰 Funding — ставка з 💰 Funding Rate Scanner (таблиці «💰 Funding —
-        # МММ» більше немає, 06.11): монета є в сканері → є ставка. ──
+        # VSV» більше немає, 06.11): монета є в сканері → є ставка. ──
         try:
             with self._lock:
                 _fr = (self._funding_rates or {}).get(str(symbol).upper())
@@ -7189,14 +7189,14 @@ class FuelFilterDaemon:
     def _soft_safeguard(self, symbol: str, side: str, settings: Dict,
                         skip_ctr: bool = False):
         """🛡 М'який запобіжник відкриття — (ok, reason). Блокує 3 найгірші
-        входи, що системно давали збитки: слабкий тиск МММ, нейтральний або
+        входи, що системно давали збитки: слабкий тиск VSV, нейтральний або
         протилежний CTR, виснажений хід. Це НЕ повний SMC-грейдер, а три
         прості «вбивці» — щоб мінімально втручатись, але відсіяти мотлох.
         Вимикається safeguard_on=False; пороги налаштовні.
         skip_ctr=True — НЕ застосовувати CTR-перевірку (для РОЗВОРОТНОЇ Черги-3:
         свіжий CHoCH+BOS за визначенням проти CTR, тож ця перевірка ріже кожен
-        розворот). МММ і виснаженість лишаються активними."""
-        # 1) МММ (сила бабло-тиску) — має бути хоча б помірним.
+        розворот). VSV і виснаженість лишаються активними."""
+        # 1) VSV (сила бабло-тиску) — має бути хоча б помірним.
         try:
             mm_min = float(settings.get('safeguard_mm_min', 30) or 0)
         except (TypeError, ValueError):
@@ -7205,7 +7205,7 @@ class FuelFilterDaemon:
         if mm_str is None:
             mm_str = (self._score_cache.get(symbol) or {}).get('fuel_strength')
         if mm_min > 0 and (mm_str is None or float(mm_str) < mm_min):
-            return (False, f"МММ слабкий ({int(mm_str or 0)}%<{int(mm_min)}%)")
+            return (False, f"VSV слабкий ({int(mm_str or 0)}%<{int(mm_min)}%)")
         # 2) Виснаженість ходу — не входити у вже вичерпаний рух.
         try:
             exh_max = float(settings.get('safeguard_exh_max', 80) or 0)
@@ -7354,7 +7354,7 @@ class FuelFilterDaemon:
                         pass
                 return False
 
-        # 🛡 М'який запобіжник: слабкий МММ / нейтральний(проти) CTR / виснажений
+        # 🛡 М'який запобіжник: слабкий VSV / нейтральний(проти) CTR / виснажений
         # хід — три «вбивці», що системно давали збиткові входи. Єдиний чок-пойнт
         # усіх шляхів відкриття (Черга-1/2, сигнал). Причину — у per-row діагностику.
         if settings.get('safeguard_on', True) and not skip_safeguard and not by_hand:
@@ -7773,7 +7773,7 @@ class FuelFilterDaemon:
 
         Монету, яку прибрали з watchlist, сканер більше не веде: прогноз,
         OB 4H, Decision по ній застигають. Навіть якщо по ній ще відкрита
-        угода, МММ-таблиці, банери і колонки 🧠/🚨 угод її НЕ показують.
+        угода, VSV-таблиці, банери і колонки 🧠/🚨 угод її НЕ показують.
         Сканер недоступний / список порожній → None (фільтр не діє, fail-open:
         інакше збій читання погасив би всі блоки)."""
         try:
@@ -7787,8 +7787,8 @@ class FuelFilterDaemon:
         return {str(x).upper() for x in wl}
 
     def _mm_watchlist_part(self, settings: Dict) -> List[str]:
-        """WATCHLIST-частина набору монет для МММ — ЄДИНЕ джерело на ОБИДВА
-        такти (повний і редукований «МММ-only»).
+        """WATCHLIST-частина набору монет для VSV — ЄДИНЕ джерело на ОБИДВА
+        такти (повний і редукований «VSV-only»).
 
         У ПОВНОМУ режимі (`mmm_limited_mode=False`) беремо ВЕСЬ watchlist, в
         обмеженому — лише додані ВРУЧНУ. Два «однакових» набори в двох місцях
@@ -7804,22 +7804,22 @@ class FuelFilterDaemon:
             if self._get_watchlist:
                 return list(self._get_watchlist() or [])   # fallback: full list
         except Exception as e:
-            print(f"[FuelFilter] МММ watchlist set error: {e}")
+            print(f"[FuelFilter] VSV watchlist set error: {e}")
         return []
 
     def _mm_only_tick(self, settings: Dict):
-        """🧮 РЕДУКОВАНИЙ ТАКТ: лише знімок МММ, коли ❤️ Fuel Auto-Filter ВИМКНЕНО.
+        """🧮 РЕДУКОВАНИЙ ТАКТ: лише знімок VSV, коли ❤️ Fuel Auto-Filter ВИМКНЕНО.
 
-        **Скарга 18.09:** «МММ-монітор взагалі перестав працювати. Навіть у
+        **Скарга 18.09:** «VSV-монітор взагалі перестав працювати. Навіть у
         таблиці відкритих угод не відображається.» На скріні ❤️ Fuel
         Auto-Filter стояв **OFF** — а `init_fuel_filter` при вимкненому тумблері
         навіть НЕ ЗАПУСКАВ потік, тож `_tick` (а з ним `_mm_capture`) не
         виконувався ЖОДНОГО разу.
 
-        ⚠️ **ЗНІМОК МММ — НЕ ЧАСТИНА ЧЕРГ.** Він живить ТРИ речі, дві з яких до
+        ⚠️ **ЗНІМОК VSV — НЕ ЧАСТИНА ЧЕРГ.** Він живить ТРИ речі, дві з яких до
         черг стосунку не мають:
-          • 🧮 МММ-монітор (окрема секція, свій тумблер);
-          • колонку «🧮 МММ LiQ» у таблицях ВІДКРИТИХ УГОД;
+          • 🧮 VSV-монітор (окрема секція, свій тумблер);
+          • колонку «🧮 VSV LiQ» у таблицях ВІДКРИТИХ УГОД;
           • **правило виходу `use_mm_flat_exit`** — тобто з вимкненими чергами
             відкриті позиції МОВЧКИ втрачали цей вихід (`mm_snapshot_for` →
             порожньо → «немає даних» → правило не спрацьовує НІКОЛИ).
@@ -7833,7 +7833,7 @@ class FuelFilterDaemon:
         # 🧮 і 🆕 — два блоки зі СВОЇМИ тумблерами; WATCHLIST рахуємо, лише
         # коли хоч один із них увімкнено (вимога 01.10: вимкнений блок «має
         # повністю припинити роботу»). Монети у відкритих угодах — завжди:
-        # вони живлять колонку «🧮 МММ LiQ» в угодах і правило виходу.
+        # вони живлять колонку «🧮 VSV LiQ» в угодах і правило виходу.
         _mon = (bool(settings.get('mm_monitor_enabled', True))
                 or bool(settings.get('mm_new_enabled', True))
                 or bool(settings.get('mm_ctr_enabled', True))
@@ -7856,7 +7856,7 @@ class FuelFilterDaemon:
         fuels = {s: self._fuel_dir_smoothed(s, update=True) for s in relevant}
         self._mm_capture(fuels, settings)
         # ₿ банер у режимі «🔁 Дублювання» — ЧИСТИЙ ПОКАЗ, тож оновлюємо і тут:
-        # інакше він застигав на нулях («⚪ рівновага»), поки рядок «МММ-бабло»
+        # інакше він застигав на нулях («⚪ рівновага»), поки рядок «VSV-бабло»
         # у банері рішення рахувався наново і казав LONG (скарга 18.09).
         # ⚠️ САМЕ сеансні поля (`_btc_verdict_dir/_since`, пауза, START/STOP,
         # OP-4) тут НЕ чіпаються — сеанс належить чергам, а вони вимкнені.
@@ -7866,21 +7866,21 @@ class FuelFilterDaemon:
             print(f"[FuelFilter] ₿ live banner refresh error: {e}")
         print(f"[FF] mm-only tick: {len(relevant)} coins in "
               f"{(time.time() - _t0):.1f}s (❤️ Fuel Auto-Filter OFF — "
-              f"рахуємо ЛИШЕ знімок МММ)")
+              f"рахуємо ЛИШЕ знімок VSV)")
 
     def _tick(self):
         settings = self.get_settings()
         self._last_tick_ts = time.time()
         _t0 = self._last_tick_ts
         if not settings.get('enabled'):
-            # ⚠️ ТУТ ВМИРАВ 🧮 МММ-МОНІТОР. Раніше тут стояв голий `return`, і
-            # знімка МММ не було НІКОЛИ — разом із ним мовчки зникали колонка
-            # «🧮 МММ LiQ» в угодах і ПРАВИЛО ВИХОДУ `use_mm_flat_exit`.
+            # ⚠️ ТУТ ВМИРАВ 🧮 VSV-МОНІТОР. Раніше тут стояв голий `return`, і
+            # знімка VSV не було НІКОЛИ — разом із ним мовчки зникали колонка
+            # «🧮 VSV LiQ» в угодах і ПРАВИЛО ВИХОДУ `use_mm_flat_exit`.
             # Тепер вимкнений майстер-тумблер зупиняє ЧЕРГИ І ВІДКРИТТЯ, а не
             # показник, за яким ведуться вже відкриті угоди.
             self._mm_only_tick(settings)
             return
-        # BTC banner direction = main-window МММ indicator (compute_bias fuel).
+        # BTC banner direction = main-window VSV indicator (compute_bias fuel).
         self._update_btc_verdict()
         now = time.time()
 
@@ -7897,7 +7897,7 @@ class FuelFilterDaemon:
             self._funding_trends = self._get_funding_trends()
             managed = list(self._fuel_managed.keys())
             pending = list(self._pending.keys())
-            # УСІ черги (1..4) — усі вони «в роботі», їм потрібен розрахунок МММ.
+            # УСІ черги (1..4) — усі вони «в роботі», їм потрібен розрахунок VSV.
             pending_all = list(dict.fromkeys(
                 list(self._pending.keys()) + list(self._pending2.keys())
                 + list(self._pending3.keys()) + list(self._pending4.keys())))
@@ -7954,7 +7954,7 @@ class FuelFilterDaemon:
                 managed = list(self._fuel_managed.keys())
             self._persist_state()
 
-        # 🧮 МММ target set. Coins «в роботі» рахуються ЗАВЖДИ: BTC + відкриті
+        # 🧮 VSV target set. Coins «в роботі» рахуються ЗАВЖДИ: BTC + відкриті
         # угоди (managed) + УСІ черги (1..4) + монети WATCHLIST,
         # додані ВРУЧНУ. У ПОВНОМУ режимі (mmm_limited_mode=False) додається ще й
         # ВЕСЬ WATCHLIST (у т.ч. bulk із Tickr-добірки). Обмежений режим (дефолт)
@@ -7984,9 +7984,9 @@ class FuelFilterDaemon:
             fuels[sym] = self._fuel_dir_smoothed(sym, update=True)
         _t_fuel = time.time() - _tp0
 
-        # 🧮 ЗНІМОК ДЛЯ МММ-МОНІТОРА — рівно ті числа, які щойно порахував
+        # 🧮 ЗНІМОК ДЛЯ VSV-МОНІТОРА — рівно ті числа, які щойно порахував
         # двигун. Нічого не перераховуємо пізніше: монітор, колонка «Старий
-        # МММ» у Черзі-4 і рішення двигуна мусять показувати ОДНЕ значення.
+        # VSV» у Черзі-4 і рішення двигуна мусять показувати ОДНЕ значення.
         _tp0 = time.time()
         self._mm_capture(fuels, settings)
         _t_mm = time.time() - _tp0
@@ -8101,9 +8101,9 @@ class FuelFilterDaemon:
             if track.get('faded_since'):
                 with self._lock:
                     track.pop('faded_since', None)
-        # exit: МММ (fuel) strength fell below the configured minimum (optional).
+        # exit: VSV (fuel) strength fell below the configured minimum (optional).
         # Closes even while direction is unchanged — a fading-but-not-flipped
-        # position (e.g. МММ 80% → 15%) is no longer worth holding.
+        # position (e.g. VSV 80% → 15%) is no longer worth holding.
         try:
             _min_close_mm = int(settings.get('manage_close_min_mm', 0) or 0)
         except (TypeError, ValueError):
@@ -8152,7 +8152,7 @@ class FuelFilterDaemon:
         base (_pending + _pending2) + open FF positions (_timers) + funding-fuel
         coins — off the request path so the UI never blocks on liq-map/kline
         work. Queue 2 MUST be included too, otherwise a coin that sits ONLY in
-        Queue 2 shows empty МММ / виснаженість / SCORE columns."""
+        Queue 2 shows empty VSV / виснаженість / SCORE columns."""
         try:
             dur = float(settings.get('duration_minutes', 5) or 0) * 60
             tf = settings.get('engine_candle_tf', '5m')
@@ -8164,7 +8164,7 @@ class FuelFilterDaemon:
                 pending4 = list(self._pending4.items())   # Queue 4 «Усі шари»
                 timers = list(self._timers.items())       # open positions
             # ALL open TM positions (real + paper) — so the open-position tables'
-            # МММ / виснаженість columns are filled for EVERY trade, regardless of
+            # VSV / виснаженість columns are filled for EVERY trade, regardless of
             # how it was opened (Черга-1, Черга-2 or a direct open). Read outside
             # self._lock (separate lock on TM's side).
             tm_positions = []   # (sym, side, opened_at)
@@ -8301,8 +8301,8 @@ class FuelFilterDaemon:
     def _setup_inputs(self, symbol: str, settings: Dict,
                       base_tf: str = '1h', htf_tf: str = '4h') -> Optional[Dict]:
         """Спільні вхідні дані SMC-«готовності» — НЕ залежать від напрямку:
-        свічки, SMC-аналіз, ліквідність, МММ, CTR, ₿-сесія, funding. Винесено
-        з `_compute_setup`, щоб 🧩 МММ-Готовність рахувала ОБИДВА боки з
+        свічки, SMC-аналіз, ліквідність, VSV, CTR, ₿-сесія, funding. Винесено
+        з `_compute_setup`, щоб 🧩 VSV-Готовність рахувала ОБИДВА боки з
         одного аналізу (а не двічі тягнула свічки й двічі аналізувала)."""
         kl1_raw = self._setup_klines(symbol, base_tf, 150)
         if not kl1_raw or len(kl1_raw) < 40:
@@ -8330,7 +8330,7 @@ class FuelFilterDaemon:
                 mark = lst.get('mark_price')
         except Exception:
             pass
-        # 4) МММ (бабло) — з повної моделі; strength/conflict — з кешу SCORE.
+        # 4) VSV (бабло) — з повної моделі; strength/conflict — з кешу SCORE.
         mm = self._fuel_dir(symbol) or {}
         sc = self._score_cache.get(symbol) or {}
         mm_strength = self._fuel_str.get(symbol)
@@ -8347,7 +8347,7 @@ class FuelFilterDaemon:
             ctr1h = None
         # 6) ₿-сесія + funding/обсяг-контекст.
         btc_dir, btc_start = self._btc_session(settings)
-        # Таблиці «💰 Funding — МММ» більше немає (06.11): ставка/тренд —
+        # Таблиці «💰 Funding — VSV» більше немає (06.11): ставка/тренд —
         # напряму з 💰 Funding Rate Scanner; обсягу «до/після» і spike немає.
         _frate = (self._funding_rates or {}).get(symbol.upper())
         return {
@@ -8710,7 +8710,7 @@ class FuelFilterDaemon:
         """⚡ B1: ЄДИНЕ місце вводу-виводу для шарів Черги-4.
 
         Раніше `_queue4_layers` змішував читання даних і арифметику, тож кожен
-        виклик заново смикав МММ. А двигун кличе його ДВІЧІ (свій бік + фліп-
+        виклик заново смикав VSV. А двигун кличе його ДВІЧІ (свій бік + фліп-
         кандидат) — тобто дані тягнулись двічі поспіль для тієї самої монети в
         ту саму мить. Тепер знімок робиться ОДИН раз, а `_q4_layers_from` — чиста
         функція над ним, тож ДРУГИЙ напрямок коштує НУЛЬ.
@@ -8723,12 +8723,12 @@ class FuelFilterDaemon:
         on_old = bool(s.get('queue4_old_mm_on', True))
         on_setup = bool(s.get('queue4_setup_on', True))
         on_runway = bool(s.get('queue4_runway_on', True))
-        # 1+4) Новий МММ і Запас живляться ОДНИМИ даними (`fn`) → тягнемо їх,
+        # 1+4) Новий VSV і Запас живляться ОДНИМИ даними (`fn`) → тягнемо їх,
         #      лише якщо потрібен хоч один із цих шарів (економія liq-map).
         fn = {}
         if on_new or on_runway:
             fn = self._fuel_dir_smoothed(sym) or {}
-        # 2) МММ LiQ — окремий показник; читаємо лише коли шар увімкнено.
+        # 2) VSV LiQ — окремий показник; читаємо лише коли шар увімкнено.
         fo = {}
         if on_old:
             fo = self._fuel_dir_legacy(sym) or {}
@@ -8749,8 +8749,8 @@ class FuelFilterDaemon:
 
         Кожен шар несе `dir` (=side, коли засвічений) → у колонці кольори за
         напрямком (усі зелені LONG / усі червоні SHORT). Шари:
-          1) Новий МММ  — _fuel_dir_smoothed: напрямок у бік + сила ≥ queue4_mm_new_min
-          2) МММ LiQ — _fuel_dir_legacy:  напрямок у бік + сила ≥ queue4_mm_old_min
+          1) Новий VSV  — _fuel_dir_smoothed: напрямок у бік + сила ≥ queue4_mm_new_min
+          2) VSV LiQ — _fuel_dir_legacy:  напрямок у бік + сила ≥ queue4_mm_old_min
           3) Готовність — grade_setup (кеш):  напрямок у бік + score ≥ queue4_setup_min
           4) Запас      — runway (TradingView-показник): напрямок у бік (якщо
              queue4_require_runway). Повертає {count, base(=4), layers[], + сирі поля}."""
@@ -8775,12 +8775,12 @@ class FuelFilterDaemon:
         req_rw = bool(s.get('queue4_require_runway', True))
         opp = 'SHORT' if side == 'LONG' else 'LONG'
 
-        # 1) Новий МММ (+ Запас — з тих самих даних `fn`) — зі ЗНІМКА.
+        # 1) Новий VSV (+ Запас — з тих самих даних `fn`) — зі ЗНІМКА.
         fn = snap.get('fn') or {}
         nd = fn.get('status')
         ns = int(round(abs(float(fn.get('dir') or 0)) * 100))
         if on_new:
-            # Поріг «рівновага» (0): зараховуємо, якщо МММ НЕ ПРОТИ (нейтраль АБО
+            # Поріг «рівновага» (0): зараховуємо, якщо VSV НЕ ПРОТИ (нейтраль АБО
             # в бік); блок лише коли явно ПРОТИ. Бо при силі ≤10% статусу напрямку
             # немає — і суворе `nd==side` ніколи не збиралося при «рівновага».
             # Інші пороги — як було: напрямок у бік + сила ≥ порогу.
@@ -8790,17 +8790,17 @@ class FuelFilterDaemon:
             else:
                 _new_ok = (nd == side and ns >= mmn_min)
                 _new_detail = f"{nd or '—'} {ns}%"
-            add('mm_new', 'Новий МММ', _new_ok, _new_detail, det=bool(fn))
+            add('mm_new', 'Новий VSV', _new_ok, _new_detail, det=bool(fn))
 
-        # 2) МММ LiQ — зі ЗНІМКА (legacy читається там лише коли шар увімкнено).
+        # 2) VSV LiQ — зі ЗНІМКА (legacy читається там лише коли шар увімкнено).
         od = None; os_ = 0
         if on_old:
             _old_mode = str(s.get('queue4_mm_old_mode', 'ignore') or 'ignore').lower()
             fo = snap.get('fo') or {}
             od = fo.get('status'); os_ = int(fo.get('strength') or 0)
             if _old_mode == 'require':
-                # Поріг «рівновага» (0) — ТА САМА логіка, що й у «Новий МММ»:
-                # зараховуємо, якщо МММ НЕ ПРОТИ (нейтраль АБО в бік); блок лише
+                # Поріг «рівновага» (0) — ТА САМА логіка, що й у «Новий VSV»:
+                # зараховуємо, якщо VSV НЕ ПРОТИ (нейтраль АБО в бік); блок лише
                 # коли явно ПРОТИ. Бо при слабкій силі статусу напрямку немає, і
                 # суворе `od == side` при «рівновага» не збиралося НІКОЛИ.
                 if mmo_min <= 0:
@@ -8817,7 +8817,7 @@ class FuelFilterDaemon:
             else:   # 'ignore'
                 _old_ok = True
                 _old_detail = f"{od or '—'} {os_}% (ігнор)"
-            add('mm_old', 'МММ LiQ', _old_ok, _old_detail,
+            add('mm_old', 'VSV LiQ', _old_ok, _old_detail,
                 det=(_old_mode == 'ignore') or bool(fo))
 
         # 3) Готовність (grade_setup кеш) — зі ЗНІМКА.
@@ -8830,7 +8830,7 @@ class FuelFilterDaemon:
                 f"{su.get('grade') or '—'} {ss}" + ('' if _setup_ready else ' (рахується…)'),
                 det=_setup_ready)
 
-        # 4) Запас (runway) — з даних Нового МММ (`fn`).
+        # 4) Запас (runway) — з даних Нового VSV (`fn`).
         rd = None; rr = None; rw = {}
         if on_runway:
             rw = (fn.get('runway') or {})
@@ -9444,10 +9444,10 @@ class FuelFilterDaemon:
                              'на цьому 1H-OB — чекаємо НОВИЙ 1H-OB (не відкрито)',
                              side=d, source='Q4')
                 continue
-            # ⚡ B1: ОДИН знімок даних на монету за такт. `fuel` (Новий МММ) уже
+            # ⚡ B1: ОДИН знімок даних на монету за такт. `fuel` (Новий VSV) уже
             # всередині нього — окремий `_fuel_dir_smoothed` тут був зайвим
             # читанням тих самих даних.
-            # ⚠️ Фолбек: коли ОБИДВА шари «Новий МММ» і «Запас» вимкнені, знімок
+            # ⚠️ Фолбек: коли ОБИДВА шари «Новий VSV» і «Запас» вимкнені, знімок
             # свідомо не тягне `fn` — але `mark` потрібен двигуну завжди, тож у
             # цьому (і лише в цьому) разі читаємо як раніше. Кеш `_liq_state`
             # робить це читання дешевим.
@@ -10157,7 +10157,7 @@ class FuelFilterDaemon:
             if d not in ('LONG', 'SHORT'):
                 continue
             # ⏳ TTL — не тримати монету в черзі нескінченно (без цього монети
-            # накопичувались на годинник, бо не проходили запобіжник МММ).
+            # накопичувались на годинник, бо не проходили запобіжник VSV).
             if ttl_h > 0:
                 _added = float(info.get('added_at') or 0)
                 if _added and (now - _added) > ttl_h * 3600:
@@ -10840,7 +10840,7 @@ class FuelFilterDaemon:
             if smart:
                 fd = fuel.get('status')
                 if fd not in ('LONG', 'SHORT'):
-                    trace.append(f"{sym}:МММ нейтральне — напрямок не визначено")
+                    trace.append(f"{sym}:VSV нейтральне — напрямок не визначено")
                     continue
                 d = fd   # override the queued signal side
                 # Button/banner gate for the DERIVED direction.
@@ -10851,9 +10851,9 @@ class FuelFilterDaemon:
             # mode d == fuel already, so this passes; in classic mode it enforces
             # the queued signal side.
             if fuel.get('status') != d:
-                trace.append(f"{sym}:МММ {fuel.get('status') or 'нейтр'} ≠ сигнал {d}")
+                trace.append(f"{sym}:VSV {fuel.get('status') or 'нейтр'} ≠ сигнал {d}")
                 continue
-            # GATE: minimum МММ (fuel) STRENGTH — |fuel dir|×100 ≥ setting.
+            # GATE: minimum VSV (fuel) STRENGTH — |fuel dir|×100 ≥ setting.
             # Separate threshold per direction (LONG / SHORT); legacy single
             # key is the fallback when a per-direction one isn't set.
             _min_mm = 0
@@ -10867,7 +10867,7 @@ class FuelFilterDaemon:
             if _min_mm > 0:
                 _strength = abs(float(fuel.get('dir') or 0.0)) * 100.0
                 if _strength < _min_mm:
-                    trace.append(f"{sym}:МММ{_strength:.0f}%<{_min_mm}%")
+                    trace.append(f"{sym}:VSV{_strength:.0f}%<{_min_mm}%")
                     continue
             # Exhaustion gate (same as _open) — surfaced HERE so it's visible and
             # does NOT silently waste a candle check. Too-exhausted coins are
@@ -10921,7 +10921,7 @@ class FuelFilterDaemon:
                 # in _fuel_managed so exhaustion-exit + control manage it.
                 # The "Opened by" field records which candle-confirm attempt the
                 # engine opened on (failed checks bump _engine_attempts; opening
-                # on the first check is attempt #1) AND the coin's МММ timer value
+                # on the first check is attempt #1) AND the coin's VSV timer value
                 # at the moment of opening.
                 # "Opened by" records the EXHAUSTION at the moment of entry.
                 # Оригінальний сигнал (kind) із черги-джерела (qnum) → двигун
@@ -10987,7 +10987,7 @@ class FuelFilterDaemon:
         self._engine_gate = ''
 
         print(f"[FF-Engine] {mode_lbl} · кнопки L={allow_long} S={allow_short} · "
-              f"{len(cand)} канд · МММ-гейт · "
+              f"{len(cand)} канд · VSV-гейт · "
               + ' '.join(trace))
 
     def _set_vol(self, a: Dict, vol, now: float):
@@ -11030,7 +11030,7 @@ class FuelFilterDaemon:
         an open FF position (hidden from the waiting list).
 
         smart=True (🧭 Smart direction): the DISPLAYED direction is the live fuel
-        (МММ) side, not the queued signal side — matching what will actually open.
+        (VSV) side, not the queued signal side — matching what will actually open.
         `smart_dir` flags rows whose fuel side differs from the entry signal."""
         if sym in self._fuel_managed:
             return None
@@ -11134,7 +11134,7 @@ class FuelFilterDaemon:
                 {'k': 'Режим відкриття', 'v': eng_mode},
                 {'k': 'Кнопки ЛОНГ/ШОРТ', 'v': buttons},
                 {'k': 'Підтвердж. свічками', 'v': f"{_on(s.get('engine_candle_confirm'))} ({s.get('engine_candle_tf','5m')})"},
-                {'k': 'Мін. сила МММ (L/S)', 'v': f"{s.get('engine_min_mm_strength_long',0)}% / {s.get('engine_min_mm_strength_short',0)}%"},
+                {'k': 'Мін. сила VSV (L/S)', 'v': f"{s.get('engine_min_mm_strength_long',0)}% / {s.get('engine_min_mm_strength_short',0)}%"},
                 {'k': 'Мін. Decision-вердикт', 'v': dec_map.get(s.get('engine_min_decision','any'), s.get('engine_min_decision'))},
                 {'k': 'Розумний напрямок', 'v': _on(s.get('engine_smart_direction'))},
                 {'k': 'Лише STRONG HOLD', 'v': _on(s.get('engine_require_strong_hold'))},
@@ -11191,7 +11191,7 @@ class FuelFilterDaemon:
                 {'k': 'Керування позиціями (FF)', 'v': _on(s.get('manage_open_positions', True))},
                 {'k': 'Вихід за виснаженням', 'v': (f"УВІМК (≥{s.get('potential_threshold_pct',95)}%)" if s.get('use_potential_exit') else 'вимк')},
                 {'k': 'Закриття за ₿-баром', 'v': s.get('close_on_btc_mode', 'off')},
-                {'k': 'Закриття за силою МММ <', 'v': (f"{s.get('manage_close_min_mm')}%" if s.get('manage_close_min_mm') else 'вимк')},
+                {'k': 'Закриття за силою VSV <', 'v': (f"{s.get('manage_close_min_mm')}%" if s.get('manage_close_min_mm') else 'вимк')},
                 {'k': '₿ START-сигнал (хв)', 'v': s.get('start_signal_minutes', 5)},
             ]},
         ]
@@ -11285,15 +11285,15 @@ class FuelFilterDaemon:
         NEW STRATEGY: shows only timers held >= duration_minutes (threshold).
         No auto-open. Position management (close) is optional via setting."""
         _want_q4 = (sections is None) or ('q4' in sections)
-        # 🧮 МММ-монітор: до 200+ рядків на кожен 10с-полл. Рахунку тут немає
+        # 🧮 VSV-монітор: до 200+ рядків на кожен 10с-полл. Рахунку тут немає
         # (лише читання знімка двигуна), але ганяти їх, коли гармошка згорнута,
         # немає сенсу — той самий принцип C2, що для Черги-4 і фандингу.
         _want_mm = (sections is None) or ('mm' in sections)
-        # 🆕 Блок «МММ-Trend» — той самий принцип, своя гармошка.
+        # 🆕 Блок «VSV-Trend» — той самий принцип, своя гармошка.
         _want_mmn = (sections is None) or ('mmn' in sections)
-        # ⚡ Блок «МММ-CTR» — та сама схема.
+        # ⚡ Блок «VSV-CTR» — та сама схема.
         _want_mmc = (sections is None) or ('mmc' in sections)
-        # 🔮 Блок «МММ-Local» — та сама схема.
+        # 🔮 Блок «VSV-Local» — та сама схема.
         _want_mmf = (sections is None) or ('mmf' in sections)
         _want_mmp = (sections is None) or ('mmp' in sections)
         _want_mmd = (sections is None) or ('mmd' in sections)
@@ -11402,7 +11402,7 @@ class FuelFilterDaemon:
                 'mode': 'session',
             }
             # ── ₿ БАНЕР: РЕЖИМ «LIVE» (повне дублювання без затримок) ──
-            # Банер миттєво повторює напрямок МММ-бабло BTCUSDT (як сигнал):
+            # Банер миттєво повторює напрямок VSV-бабло BTCUSDT (як сигнал):
             # START одразу за наявності напрямку, без сеансу/паузи/таймера.
             if (settings.get('btc_banner_mode', 'live') or 'live') == 'live':
                 # Дешеві кеш-значення (оновлені у _update_btc_verdict щотіку) —
@@ -11450,30 +11450,30 @@ class FuelFilterDaemon:
                        'mms': _want_mms},
             # ⏱ ГОДИННИК СЕРВЕРА (20.10). Усі таймери сторінки рахують
             # «зараз − момент старту», а моменти — серверні epoch. Годинник
-            # браузера може розходитись із серверним (кейс МММ-Pull: 32751/900с
+            # браузера може розходитись із серверним (кейс VSV-Pull: 32751/900с
             # на свіжому запуску), тож фронт бере поправку звідси.
             'server_now': time.time(),
-            # 🧮 МММ-монітор — готовий знімок двигуна (жодних розрахунків тут).
+            # 🧮 VSV-монітор — готовий знімок двигуна (жодних розрахунків тут).
             'mm_monitor': (self.mm_monitor_state(settings) if _want_mm else None),
-            # 🆕 Блок «МММ-Trend» — та сама форма, книга НОВОГО МММ.
+            # 🆕 Блок «VSV-Trend» — та сама форма, книга НОВОГО VSV.
             'mm_new': (self.mm_monitor_state(settings, book='new')
                        if _want_mmn else None),
-            # ⚡ Блок «МММ-CTR» — книга STC 1H+4H.
+            # ⚡ Блок «VSV-CTR» — книга STC 1H+4H.
             'mm_ctr': (self.mm_monitor_state(settings, book='ctr')
                        if _want_mmc else None),
-            # 🔮 Блок «МММ-Local» — книга Forecast 1H+4H.
+            # 🔮 Блок «VSV-Local» — книга Forecast 1H+4H.
             'mm_fc': (self.mm_monitor_state(settings, book='fc')
                       if _want_mmf else None),
-            # 🧭 Блок «МММ-Pull» (20.10) — книга скану ліквідності.
+            # 🧭 Блок «VSV-Pull» (20.10) — книга скану ліквідності.
             'mm_pull': (self.mm_monitor_state(settings, book='pull')
                         if _want_mmp else None),
-            # 🧠 Блок «МММ-Decision» (22.10) — книга вердиктів банера Decision.
+            # 🧠 Блок «VSV-Decision» (22.10) — книга вердиктів банера Decision.
             'mm_dec': (self.mm_monitor_state(settings, book='dec')
                        if _want_mmd else None),
-            # 🧩 Блок «МММ-Готовність» (25.10) — книга SMC-«Готовності».
+            # 🧩 Блок «VSV-Готовність» (25.10) — книга SMC-«Готовності».
             'mm_rdy': (self.mm_monitor_state(settings, book='rdy')
                        if _want_mmr else None),
-            # 🔔 МММ-SBR — сигнали Session Band Reversal 1H + 4H.
+            # 🔔 VSV-SBR — сигнали Session Band Reversal 1H + 4H.
             'mm_sbr': (self.mm_monitor_state(settings, book='sbr')
                        if _want_mms else None),
             # 🎚 Смуги грейда (ЄДИНЕ джерело — setup_grader). UI будує випадайку
@@ -11552,7 +11552,7 @@ class FuelFilterDaemon:
     def get_fuel_strength_map(self) -> Dict[str, Dict]:
         """Fuel STRENGTH (0..100) + previous-cycle value + direction, per symbol
         we track (read from the pre-computed score cache — CHEAP, no per-request
-        compute). For the open-position tables' 'МММ' column.
+        compute). For the open-position tables' 'VSV' column.
         Returns {symbol: {'now': int, 'prev': int|None, 'dir': 'LONG'|'SHORT'|None}}."""
         with self._lock:
             out = {}
@@ -11806,8 +11806,8 @@ def init_fuel_filter(db, get_trade_manager, get_watchlist) -> FuelFilterDaemon:
 
     ⚠️ **ЧОМУ ЗАВЖДИ (скарга 18.09).** Раніше при `enabled=False` потік навіть
     не створювався, тож `_tick` не виконувався ЖОДНОГО разу — і разом із
-    чергами мовчки вмирав знімок 🧮 МММ: порожній монітор, порожня колонка
-    «МММ LiQ» в угодах і НЕПРАЦЮЮЧЕ правило виходу `use_mm_flat_exit`.
+    чергами мовчки вмирав знімок 🧮 VSV: порожній монітор, порожня колонка
+    «VSV LiQ» в угодах і НЕПРАЦЮЮЧЕ правило виходу `use_mm_flat_exit`.
     Тумблер має зупиняти ЧЕРГИ І ВІДКРИТТЯ, а не супровід уже відкритих угод.
 
     ⚠️ **ТОРГІВЛЮ ЦЕ НЕ ВМИКАЄ.** При `enabled=False` `_tick` іде в
@@ -11820,7 +11820,7 @@ def init_fuel_filter(db, get_trade_manager, get_watchlist) -> FuelFilterDaemon:
         _instance = FuelFilterDaemon(db, get_trade_manager, get_watchlist)
         _instance.start()
         print("[FuelFilter] loop running · черги "
-              + ("ON" if _instance.is_enabled() else "OFF (лише знімок МММ)"))
+              + ("ON" if _instance.is_enabled() else "OFF (лише знімок VSV)"))
     return _instance
 
 

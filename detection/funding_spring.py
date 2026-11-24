@@ -1,5 +1,5 @@
 """💰🌀 «Funding — Пружина»: алгоритм «Пружина» для КОЖНОЇ монети 💰 Funding
-Rate Scanner (вимога 06.11, ЗАМІЩУЄ стару таблицю «💰 Funding — МММ по
+Rate Scanner (вимога 06.11, ЗАМІЩУЄ стару таблицю «💰 Funding — VSV по
 монетах» з її шарами, скальпом, VOB→Черга-4, авто-відкриттям і Telegram).
 
 Принципи:
@@ -29,7 +29,7 @@ WORKERS = 4
 MAX_BACKOFF = 600
 RESTORE_MAX_AGE = 6 * 3600
 RATE_SAMPLE_SEC = 30      # «попередня» ставка = значення ~30с тому (тренд кольору)
-VOL_BASE_SEC = 120        # база обсягу 24h для стрілки ↑/↓ (як було в «Funding — МММ»)
+VOL_BASE_SEC = 120        # база обсягу 24h для стрілки ↑/↓ (як було в «Funding — VSV»)
 DB_KEY = 'funding_spring_v1'
 DB_SETTINGS = 'funding_spring_settings'
 ROW_KEYS = ('state', 'label', 'charge', 'bias', 'dir', 'pot_long', 'pot_short',

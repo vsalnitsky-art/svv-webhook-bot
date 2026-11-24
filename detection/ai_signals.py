@@ -63,7 +63,7 @@ AI_DEFAULTS = {
     'sl_min_pct': 0.8,         # стоп не ближче N % від входу (шум 15m не вибиває)
     'sl_max_pct': 4.0,         # стоп не далі N % (0 = без стелі)
     'min_conf': 40,            # 🎯 впевненість мозку ≥ N, інакше вхід не беремо (0 = вимк)
-    # 🧩 Фільтр за блоком «МММ-Готовність» (23.11): off · banner (бік угоди =
+    # 🧩 Фільтр за блоком «VSV-Готовність» (23.11): off · banner (бік угоди =
     # банер) · coin (вкладка монети = бік) · both (обидва).
     'rdy_filter': 'off',
     # 💥 Підтвердження розряду (23.11): пробій коробки рахується лише ЗАКРИТОЮ
@@ -312,7 +312,7 @@ def ai_stop_for(side: str, price, plan: Optional[Dict], ob_stop=None, ob_label: 
 
 
 def rdy_block(side: str, view: Optional[Dict], mode: str) -> str:
-    """🧩 Фільтр ШІ за блоком «МММ-Готовність» (23.11). '' → можна. ЧИСТА.
+    """🧩 Фільтр ШІ за блоком «VSV-Готовність» (23.11). '' → можна. ЧИСТА.
     `view` = `ff.mm_gate_view(sym, book='rdy')` → {on, dir (банер), coin
     (вкладка монети LONG/SHORT/FLAT | None)}. Невідомо ≠ «за напрямком»:
     блок вимкнено / монети немає в таблиці → відмова з причиною."""
@@ -321,24 +321,24 @@ def rdy_block(side: str, view: Optional[Dict], mode: str) -> str:
     sd = str(side).upper()
     v = view or {}
     if not v.get('on'):
-        return '🧩 МММ-Готовність вимкнено — фільтр ШІ не може перевірити напрямок'
+        return '🧩 VSV-Готовність вимкнено — фільтр ШІ не може перевірити напрямок'
     if mode in ('banner', 'both'):
         d = v.get('dir')
         if d not in ('LONG', 'SHORT'):
-            return f'🧩 банер МММ-Готовність без напрямку (⚖), а вхід {sd}'
+            return f'🧩 банер VSV-Готовність без напрямку (⚖), а вхід {sd}'
         if d != sd:
-            return f'🧩 банер МММ-Готовність {d}, а вхід {sd}'
+            return f'🧩 банер VSV-Готовність {d}, а вхід {sd}'
     if mode in ('coin', 'both'):
         c = v.get('coin')
         if c is None:
-            return '🧩 монети немає в таблиці МММ-Готовність'
+            return '🧩 монети немає в таблиці VSV-Готовність'
         if c != sd:
-            return f"🧩 монета у вкладці {'⚖' if c == 'FLAT' else c} МММ-Готовність, а вхід {sd}"
+            return f"🧩 монета у вкладці {'⚖' if c == 'FLAT' else c} VSV-Готовність, а вхід {sd}"
     return ''
 
 
 def rdy_align(side: str, rdy: Optional[Dict]) -> str:
-    """Як угода стояла відносно банера «МММ-Готовність» на вході → 'with' /
+    """Як угода стояла відносно банера «VSV-Готовність» на вході → 'with' /
     'against' / 'flat' (банер без напрямку) / 'off' (блок вимкнено) /
     'unknown' (знімка немає). ЧИСТА — для статистики угод."""
     r = rdy or {}
@@ -357,7 +357,7 @@ RDY_ALIGN_UA = {'with': '✅ за банером', 'against': '⛔ проти б
 
 
 def rdy_trade_stats(trades: List[Dict]) -> Dict:
-    """📊 Закриті угоди за положенням відносно банера «МММ-Готовність» на
+    """📊 Закриті угоди за положенням відносно банера «VSV-Готовність» на
     вході (`rdy_open`). ЧИСТА. → {groups: {align: {n, win, win_pct, avg,
     sum}}, n, ai: та сама розбивка лише для угод ШІ}."""
     def _grp(rows):
@@ -2360,7 +2360,7 @@ def _spring_rows():
 # входу точка, яку бот уміє визначити, — ГОТОВИЙ сценарій входу ШІ (E1–E4:
 # комплекс реакцій обсягу склався, останній етап ≤ 2 свічки тому, без вето).
 # Той самий `entry_score`/`entry_decide`, що й 🤖 сигнал ШІ — другого правила
-# немає. Ворота бота (МММ, Пружини…) тут НЕ діють: це підказка людині.
+# немає. Ворота бота (VSV, Пружини…) тут НЕ діють: це підказка людині.
 ANOM_SUB_COOLDOWN = 3600       # одна монета й бік — не частіше раз на годину
 ANOM_SENT_KEEP = 48 * 3600
 # ⚠ позначки сигналів «Аномалії обсягу» на графіку кабінету (вимога 24.11)
@@ -2854,7 +2854,7 @@ class AiEngine:
         return false_start_hit(side, edge, self.closed_1h(symbol), opened_at)
 
     def rdy_view(self, symbol: str) -> Optional[Dict]:
-        """🧩 Що каже блок «МММ-Готовність» про монету (банер + вкладка)."""
+        """🧩 Що каже блок «VSV-Готовність» про монету (банер + вкладка)."""
         try:
             from detection.fuel_filter import get_fuel_filter
             ff = get_fuel_filter()
@@ -3331,7 +3331,7 @@ class AiEngine:
 
     def _try_signal(self, S, sc_res, rec, vw, ep, now, professional=None, brain=None,
                     feat=None, sim=None, anti_sim=None, eb=None, rdy=None, discharge=None):
-        """🤖 ВЛАСНИЙ СЦЕНАРІЙ ШІ (22.11): ворота бота (кнопки напрямку, МММ,
+        """🤖 ВЛАСНИЙ СЦЕНАРІЙ ШІ (22.11): ворота бота (кнопки напрямку, VSV,
         Пружини, OB/PD/…, черги) НЕ діють — ШІ відкриває СВОЮ угоду за своїми
         правилами (налаштування ШІ) і далі супроводжує лише її."""
         side = sc_res['side']

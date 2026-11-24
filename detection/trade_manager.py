@@ -665,7 +665,7 @@ DEFAULT_SETTINGS = {
     #          bias=BEARISH appears → close immediately.
     # Default OFF + 15m TF — opt-in for users who want the strict-bias-flip exit.
     'use_opposite_ob_exit': False,
-    # 🤖 Автоконтроль пер-угодного 🧱 OB сигналом 🚨 МММ-SBR (з 29.10; до того МММ-Trend/МММ-Decision, вимога 23.10,
+    # 🤖 Автоконтроль пер-угодного 🧱 OB сигналом 🚨 VSV-SBR (з 29.10; до того VSV-Trend/VSV-Decision, вимога 23.10,
     # деф. ВИМК): вимкнено → автомат тумблер угоди не чіпає взагалі.
     'opp_ob_auto_enabled': False,
     'opposite_ob_exit_timeframe': '15m',  # 5m / 15m / 30m / 1h / 4h
@@ -678,17 +678,17 @@ DEFAULT_SETTINGS = {
     'use_forecast_1h_exit': False,   # Forecast 1H проти позиції → вихід
     'use_forecast_4h_exit': False,   # Forecast 4H проти позиції → вихід
     'use_decision_exit': False,      # Decision Center проти позиції → вихід
-    # === 🧮 МММ LiQ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ===
+    # === 🧮 VSV LiQ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ===
     # ⚠️ ОКРЕМЕ правило, воно НЕ бере участі в комбінуванні `signal_exit_mode`
     # нижче. Ті три — про ПРОТИЛЕЖНИЙ вердикт; це — про ВІДСУТНІСТЬ напрямку:
-    # МММ, який тримав угоду, згас у ⚖ рівновагу. Змішати їх в один AND/OR
+    # VSV, який тримав угоду, згас у ⚖ рівновагу. Змішати їх в один AND/OR
     # означало б, що «нейтраль ламає збіг» (правило тих трьох) і «нейтраль
     # закриває» (це правило) працюють одночасно — пряме протиріччя.
     'use_mm_flat_exit': False,
-    # === 🔔 ПРОТИЛЕЖНИЙ СИГНАЛ МММ-SBR → ВИХІД (вимога 30.10, деф. OFF) ===
+    # === 🔔 ПРОТИЛЕЖНИЙ СИГНАЛ VSV-SBR → ВИХІД (вимога 30.10, деф. OFF) ===
     # Самостійне правило: після входу на обраному TF (1H / 4H) зʼявився сигнал
     # Session Band Reversal ПРОТИ угоди → закриваємо. Сигнали ДО входу — не
-    # подія. Джерело — той самий рушій `sbr_signals`, що малює блок 🔔 МММ-SBR.
+    # подія. Джерело — той самий рушій `sbr_signals`, що малює блок 🔔 VSV-SBR.
     'use_sbr_exit': False,
     # 💥 Вихід, коли 🌀 Пружина монети «вистрілила» після входу (вимога 10.11).
     # dir: any = будь-який вистріл · with = у бік угоди · against = проти.
@@ -720,14 +720,14 @@ DEFAULT_SETTINGS = {
     'sbr_trail_pct': 0.3,
     'sbr_trail_charge_min': 40,
     # 'flat'             — закривати ЛИШЕ на ⚖ рівновазі (дослівна вимога);
-    # 'flat_or_against'  — і коли МММ розвернувся ПРОТИ угоди.
+    # 'flat_or_against'  — і коли VSV розвернувся ПРОТИ угоди.
     'mm_flat_exit_mode': 'flat',
     # Скільки СЕКУНД стан має протриматись, перш ніж закривати. 0 = закривати на
     # першому ж такті (дослівна вимога). Поле існує, бо межа напрямку — це
     # |dir| ≤ 0.1, тобто сила ≈10%: біля неї показник може миготіти між
     # «рівновага» і «слабкий напрямок» і смикати угоду.
     'mm_flat_exit_confirm_sec': 0,
-    # Скільки СЕКУНД мусить протриматись РОЗВОРОТ МММ ПРОТИ угоди (режим
+    # Скільки СЕКУНД мусить протриматись РОЗВОРОТ VSV ПРОТИ угоди (режим
     # 'flat_or_against'), перш ніж закривати. Вимога 20.09 дослівно: «потрібно
     # трішки витримки, бо секундна зміна і вибиває з угоди».
     # ⚠️ ОКРЕМЕ поле, а не спільне з ⚖ рівновагою: це різні події (там «тиску
@@ -1145,14 +1145,14 @@ class TradeManager:
         # друга лишалась би без правил виходу (той самий клас помилки, що вже
         # ловили на `_pilot_at` у кейсі TRXUSDT).
         self._signal_exit_at: Dict[str, float] = {}
-        # 🧮 «МММ LiQ без напрямку» — З ЯКОГО МОМЕНТУ стан тримається,
-        # {SYMBOL: ts}. Ключ САМЕ символьний: МММ — показник монети, він
+        # 🧮 «VSV LiQ без напрямку» — З ЯКОГО МОМЕНТУ стан тримається,
+        # {SYMBOL: ts}. Ключ САМЕ символьний: VSV — показник монети, він
         # однаковий для обох книг. Потрібен для `mm_flat_exit_confirm_sec`.
         self._mm_flat_since: Dict[str, float] = {}
-        # 🔄 «МММ LiQ РОЗВЕРНУВСЯ ПРОТИ» — свій, ОКРЕМИЙ відлік (20.09).
+        # 🔄 «VSV LiQ РОЗВЕРНУВСЯ ПРОТИ» — свій, ОКРЕМИЙ відлік (20.09).
         # Спільний із ⚖ був би помилкою: перехід «рівновага → проти» скинув би
         # витримку одного стану в іншого, і закриття сталось би не тоді, коли
-        # його чекають. Ключ теж символьний — МММ однаковий для обох книг.
+        # його чекають. Ключ теж символьний — VSV однаковий для обох книг.
         self._mm_against_since: Dict[str, float] = {}
         # 🎯 Автопілот угоди: тротл перевірки + останнє рішення (для UI).
         self._pilot_at: Dict[str, float] = {}
@@ -1518,7 +1518,7 @@ class TradeManager:
             self._settings['signal_exit_mode'] = _sem if _sem in ('or', 'and') else 'or'
             _sfd = str(self._settings.get('spring_fired_exit_dir', 'any') or 'any').lower()
             self._settings['spring_fired_exit_dir'] = _sfd if _sfd in self.SPRING_FIRE_DIRS else 'any'
-            # 🧮 Вихід по «МММ LiQ»: некоректний режим → дефолт 'flat'
+            # 🧮 Вихід по «VSV LiQ»: некоректний режим → дефолт 'flat'
             # (дослівна вимога), а не збій; підтвердження — секунди ≥ 0.
             _mfm = str(self._settings.get('mm_flat_exit_mode', 'flat')
                        or 'flat').lower()
@@ -1759,7 +1759,7 @@ class TradeManager:
     def _sample_trade_logs(self, now: float):
         """Зріз {t, price, pnl, manual_sl, manual_tp} кожної відкритої угоди раз
         на trade_log_interval_sec (тумблер `trade_log_enabled`). 16.11: аналітику
-        (МММ, CTR, Decision, готовність виходу, ₿, режими) з хронології
+        (VSV, CTR, Decision, готовність виходу, ₿, режими) з хронології
         ПРИБРАНО на вимогу — модалка показує лише шапку і «Шлях монети»; ціна і
         PnL лишились для піку / просадки в шапці. Показники для калібровки
         виходів пише 🔬 `_research_tick` (див. detection/trade_research.py)."""
@@ -2167,7 +2167,7 @@ class TradeManager:
         # unless q2_auto_ob_sl is on) so the breach check below sees the latest.
         # 📌 Manual: автоматичні важелі (авто-SL, правила виходу за вердиктом,
         # автопілот) стоять ТУТ, ДО ручних рівнів — тож гейт мусить бути ТУТ,
-        # а не лише нижче (кейс 24.09: 📌 угоди закривало «МММ LiQ ⚖ / ПРОТИ»).
+        # а не лише нижче (кейс 24.09: 📌 угоди закривало «VSV LiQ ⚖ / ПРОТИ»).
         _manual = self._manual_locked(pos)
         # 🤖 Угода ШІ (22.11): її супроводжує ЛИШЕ сам ШІ — авто-SL, правила
         # виходу бота, автопілот, трейли й стратегічні SL/TP її не чіпають;
@@ -3511,7 +3511,7 @@ class TradeManager:
         
         Gate: the global `use_opposite_ob_exit` toggle (Off by default) OR the
         per-position `opp_ob_exit` flag (column «🧱 OB», manual or auto from
-        the 🔔 МММ-SBR alert). Each book (real / paper) is checked apart.
+        the 🔔 VSV-SBR alert). Each book (real / paper) is checked apart.
         """
         s = self._settings
         glob = bool(s.get('use_opposite_ob_exit'))
@@ -3523,7 +3523,7 @@ class TradeManager:
         # 🧱 Правило діє ПО КОЖНІЙ КНИЗІ окремо (вимога 22.10): глобальний
         # тумблер Exit Rules АБО пер-угодний `opp_ob_exit` (колонка «🧱 OB»
         # у таблицях угод — вмикається вручну або автоматично сигналом
-        # 🧠 МММ-Decision). Пер-угодний діє НЕЗАЛЕЖНО від глобального.
+        # 🧠 VSV-Decision). Пер-угодний діє НЕЗАЛЕЖНО від глобального.
         books = []
         for is_sh, pos in ((False, real), (True, shadow)):
             if pos and (glob or pos.get('opp_ob_exit')):
@@ -3618,9 +3618,9 @@ class TradeManager:
             self._close_position(symbol, current_price,
                                   reason='opposite_ob_exit')
 
-    # 🚨 Рівні сигнальної колонки 🔔 МММ-SBR, що означають «угода має
+    # 🚨 Рівні сигнальної колонки 🔔 VSV-SBR, що означають «угода має
     # тенденцію до закриття» → авто-вмикання 🧱 Opposite OB Exit по угоді.
-    # 🔔 З 29.10 🚨 живе на МММ-SBR: «тенденція до закриття» = ЛИШЕ протилежний
+    # 🔔 З 29.10 🚨 живе на VSV-SBR: «тенденція до закриття» = ЛИШЕ протилежний
     # сигнал SBR, що зʼявився під час угоди ('against'). 'pre' (протилежний, але
     # ще до входу) і 'none' (сигналу немає) — запамʼятовуються, нічого не вмикають.
     MMD_CLOSE_LEVELS = ('against',)
@@ -3690,7 +3690,7 @@ class TradeManager:
         _ua = {'ok': '✓ за угодою', 'against': '⚠ ПРОТИ угоди',
                'pre': '⚑ проти ще до входу', 'none': '— сигналу немає'}
         self.update_opp_ob_exit(symbol, act, is_shadow=is_shadow, origin='auto',
-                                reason=f'🚨 МММ-SBR: {_ua.get(lvl, lvl)}'
+                                reason=f'🚨 VSV-SBR: {_ua.get(lvl, lvl)}'
                                        + (f' · {alert.get("text")}' if alert.get('text') else ''))
         return act
 
@@ -3700,7 +3700,7 @@ class TradeManager:
         """🧱 Пер-угодний тумблер Opposite OB Exit (колонка «🧱 OB»).
 
         Діє НЕЗАЛЕЖНО від глобального `use_opposite_ob_exit`. `origin='auto'`
-        — перемкнув сигнал 🚨 МММ-SBR (FF), `'user'` — людина. Позначка
+        — перемкнув сигнал 🚨 VSV-SBR (FF), `'user'` — людина. Позначка
         `opp_ob_exit_by` показує, хто ввімкнув. Вимкнення знімає і базу блоку
         цієї книги (повторне ввімкнення зафіксує нову)."""
         store = self._shadow_positions if is_shadow else self._positions
@@ -3728,7 +3728,7 @@ class TradeManager:
         if was != bool(enabled):
             try:
                 from detection.activity_log import log_activity
-                who = '🤖 Бот (🔔 МММ-SBR)' if origin == 'auto' else '✏️ Користувач'
+                who = '🤖 Бот (🔔 VSV-SBR)' if origin == 'auto' else '✏️ Користувач'
                 log_activity(symbol, 'sltp',
                              f'{who}: 🧱 Opposite OB Exit по угоді '
                              f'{"УВІМКНЕНО" if enabled else "ВИМКНЕНО"}'
@@ -3751,7 +3751,7 @@ class TradeManager:
 
     def update_sbr_exit(self, symbol: str, enabled: bool, tf: str = 'any',
                         is_shadow: bool = False) -> Dict:
-        """🔔 Пер-угодний тумблер «МММ-SBR проти → вихід» (колонка «🔔 SBR»).
+        """🔔 Пер-угодний тумблер «VSV-SBR проти → вихід» (колонка «🔔 SBR»).
 
         Діє НЕЗАЛЕЖНО від глобального `use_sbr_exit`; TF сигналу — свій для
         угоди: '1h' / '4h' / 'any' (будь-який із двох). Алгоритм той самий
@@ -3784,7 +3784,7 @@ class TradeManager:
                 from detection.activity_log import log_activity
                 lab = {'1h': '1H', '4h': '4H'}.get(tf, '1H або 4H')
                 log_activity(symbol, 'sltp',
-                             f'✏️ Користувач: 🔔 МММ-SBR проти → вихід по угоді '
+                             f'✏️ Користувач: 🔔 VSV-SBR проти → вихід по угоді '
                              + (f'УВІМКНЕНО (сигнал {lab})' if enabled else 'ВИМКНЕНО')
                              + (' (paper)' if is_shadow else ''),
                              side=updated.get('side'), source='user',
@@ -3930,9 +3930,9 @@ class TradeManager:
         return f"{symbol}|{'S' if is_shadow else 'R'}"
 
     def _mm_flat_drop_if_idle(self, symbol: str):
-        """Зняти таймер «МММ без напрямку», якщо по монеті не лишилось позицій.
+        """Зняти таймер «VSV без напрямку», якщо по монеті не лишилось позицій.
 
-        ⚠️ Таймер СПІЛЬНИЙ для обох книг (МММ — показник монети), тож закриття
+        ⚠️ Таймер СПІЛЬНИЙ для обох книг (VSV — показник монети), тож закриття
         ОДНІЄЇ позиції його знімати не має: друга книга ще в угоді, і після
         скидання їй довелося б заново набирати підтвердження.
         """
@@ -3947,13 +3947,13 @@ class TradeManager:
             self._mm_against_since.pop(str(symbol).upper(), None)
 
     def _mm_flat_exit_reason(self, symbol: str, pos: Dict) -> Optional[tuple]:
-        """🧮 «МММ LiQ втратив напрямок» → (reason_code, опис) або None.
+        """🧮 «VSV LiQ втратив напрямок» → (reason_code, опис) або None.
 
         Вимога користувача (15.09) дослівно: «Додай вихід із угоди по показнику
-        "🧮 МММ LiQ" — якщо нейтраль, закриваємо угоду».
+        "🧮 VSV LiQ" — якщо нейтраль, закриваємо угоду».
 
-        ⚠️ **ДЖЕРЕЛО — ТОЙ САМИЙ ЗНІМОК**, що малює колонку «🧮 МММ LiQ» у
-        таблиці відкритих угод і рядок 🧮 МММ-монітора: `ff.mm_snapshot_for`.
+        ⚠️ **ДЖЕРЕЛО — ТОЙ САМИЙ ЗНІМОК**, що малює колонку «🧮 VSV LiQ» у
+        таблиці відкритих угод і рядок 🧮 VSV-монітора: `ff.mm_snapshot_for`.
         Свого розрахунку тут НЕМАЄ і бути не може — інакше бот закривав би
         угоду за числом, якого на екрані не видно (урок PD-зони).
 
@@ -3964,7 +3964,7 @@ class TradeManager:
         таймер підтвердження скидається — стан невідомий, а не «тримається»).
 
         ⚠️ Знімок будується для монет У ВІДКРИТІЙ УГОДІ навіть при вимкненому
-        🧮 МММ-моніторі, тож правило НЕ залежить від того тумблера.
+        🧮 VSV-моніторі, тож правило НЕ залежить від того тумблера.
 
         ⚠️ **ДВІ ВИТРИМКИ, КОЖНА СВОЯ** (вимога 20.09 — див. нижче): ⚖ рівновага
         тримає `mm_flat_exit_confirm_sec`, розворот ПРОТИ —
@@ -4024,7 +4024,7 @@ class TradeManager:
             a_held = now - float(a_since)
             if a_need > 0 and a_held < a_need:
                 # Тримаємо угоду й ЧЕКАЄМО: розворот мусить протриматись. Якщо
-                # МММ повернеться — таймер зніме гілка «напрямок тримає».
+                # VSV повернеться — таймер зніме гілка «напрямок тримає».
                 return None
             _ah = f' · тримається {int(a_held)}с' if a_need > 0 else ''
             # ⚠️ ОКРЕМИЙ КОД ПРИЧИНИ (скарга 18.09: «монета закрилась саме по
@@ -4033,7 +4033,7 @@ class TradeManager:
             # і бейдж у таблиці та рядок у 🧾 Лозі підписували РОЗВОРОТ як
             # «⚖ рівновага» — тобто показували не те, що сталось.
             return ('mm_against_exit',
-                    f'🧮 МММ LiQ розвернувся у {mm}{_st} — проти {side}{_ah}')
+                    f'🧮 VSV LiQ розвернувся у {mm}{_st} — проти {side}{_ah}')
         self._mm_against_since.pop(sym, None)
         since = self._mm_flat_since.setdefault(sym, now)
         need = float(s.get('mm_flat_exit_confirm_sec') or 0)
@@ -4042,7 +4042,7 @@ class TradeManager:
             return None
         _held = f' · тримається {int(held)}с' if need > 0 else ''
         return ('mm_flat_exit',
-                f'🧮 МММ LiQ втратив напрямок — ⚖ рівновага{_st}{_held}')
+                f'🧮 VSV LiQ втратив напрямок — ⚖ рівновага{_st}{_held}')
 
     @staticmethod
     def sbr_exit_tfs(s: Dict) -> tuple:
@@ -4087,7 +4087,7 @@ class TradeManager:
     def _sbr_exit_reason(self, symbol: str, pos: Dict,
                          current_price: Optional[float] = None,
                          is_shadow: bool = False) -> Optional[tuple]:
-        """🔔 Вихід по протилежному сигналу МММ-SBR 1H / 4H (вимога 30.10).
+        """🔔 Вихід по протилежному сигналу VSV-SBR 1H / 4H (вимога 30.10).
         Монети немає в рушії (поза WATCHLIST / ще не порахована) → правило
         мовчить: «немає даних» ≠ «сигнал проти»."""
         s = self._settings
@@ -4134,7 +4134,7 @@ class TradeManager:
             try:
                 from detection.activity_log import log_activity
                 log_activity(symbol, 'sltp',
-                             f"🔔⏳ МММ-SBR {lab}: протилежний сигнал {sig.get('side')}{when}{sc} "
+                             f"🔔⏳ VSV-SBR {lab}: протилежний сигнал {sig.get('side')}{when}{sc} "
                              f"— НЕ виходимо, запамʼятовано ціну {px:g}: далі проти угоди → "
                              f"закриття, за угодою → ведемо (стоп не гірший за {px:g})",
                              side=pos.get('side'), source='TM',
@@ -4144,7 +4144,7 @@ class TradeManager:
             self._persist_book(is_shadow)
             return None
         return ('sbr_exit',
-                f"🔔 МММ-SBR {lab}: протилежний сигнал {sig.get('side')}{when}{sc} "
+                f"🔔 VSV-SBR {lab}: протилежний сигнал {sig.get('side')}{when}{sc} "
                 f"після входу — проти {str(pos.get('side') or '').upper()}")
 
     SPRING_FIRE_TTL = 10       # с — як часто дивимось живий 1h-бар по угоді
@@ -4288,7 +4288,7 @@ class TradeManager:
                 f"({rel}){lvl} · {src} · стиснення {fire.get('pre_sq')} бар.")
 
     def _rdy_open_mark(self, symbol: str, pos: Dict) -> None:
-        """🧩 Знімок блоку «МММ-Готовність» на відкритті угоди (`rdy_open` =
+        """🧩 Знімок блоку «VSV-Готовність» на відкритті угоди (`rdy_open` =
         {on, dir банера, coin вкладка монети}) — для статистики «за / проти
         банера» (вимога 23.11). Лише читання готового знімка FF, без мережі."""
         if 'rdy_open' in pos:
@@ -4303,7 +4303,7 @@ class TradeManager:
             pos['rdy_open'] = {'on': bool(v.get('on')), 'dir': v.get('dir'), 'coin': v.get('coin')}
 
     def rdy_stats(self) -> Dict:
-        """📊 Закриті угоди (real + paper) за банером «МММ-Готовність» на вході."""
+        """📊 Закриті угоди (real + paper) за банером «VSV-Готовність» на вході."""
         from detection import ai_signals
         with self._lock:
             rows = [dict(c, book='real') for c in self._closed_trades] + \
@@ -4504,7 +4504,7 @@ class TradeManager:
         armed = st.get('armed_px')
         txt = ('ціна пішла далі ПРОТИ угоди за запамʼятовану' if why == 'floor'
                else 'почався відкат від найкращої ціни')
-        msg = (f"🔔⏳ МММ-SBR {st.get('tf') or ''}: {txt} (запамʼятовано {armed:g}, "
+        msg = (f"🔔⏳ VSV-SBR {st.get('tf') or ''}: {txt} (запамʼятовано {armed:g}, "
                f"стоп {float(st.get('stop_px') or armed):g}, зараз {float(current_price):g})")
         print(f"[TM] 🔻 sbr_trail_exit for {symbol}: {msg}")
         try:
@@ -4683,7 +4683,7 @@ class TradeManager:
             return False
         self._signal_exit_at[_k] = now
         try:
-            # 🧮 МММ — ОКРЕМЕ правило, ПОЗА комбінуванням `signal_exit_mode`
+            # 🧮 VSV — ОКРЕМЕ правило, ПОЗА комбінуванням `signal_exit_mode`
             # (там нейтраль ЛАМАЄ збіг, тут вона і є підставою для виходу).
             # Перевіряємо його ПЕРШИМ: це читання готового знімка, тоді як
             # прогноз/Decision можуть коштувати помітно більше.
@@ -4987,7 +4987,7 @@ class TradeManager:
         автопілота завжди можна звірити очима з тим, що видно на екрані:
           • swing high/low — `_swing_hl_for_tf` (той самий дилінг-діапазон, що
             дає PD-зону й лінії Strong/Weak на графіку);
-          • runway — пули ліквідації попереду руху з МММ-моделі (liq-map);
+          • runway — пули ліквідації попереду руху з VSV-моделі (liq-map);
           • POC — `compute_poc` з тими самими параметрами, що й бейдж чарту.
         """
         ctx = {'swing': None, 'runway': None, 'poc': None,
@@ -5007,14 +5007,14 @@ class TradeManager:
                 ctx['swing_tf'] = tf
         except Exception as e:
             print(f"[TM-Pilot] swing ctx warn {symbol}: {e}")
-        # 2) Пули ліквідності попереду руху — з тієї самої МММ-моделі.
+        # 2) Пули ліквідності попереду руху — з тієї самої VSV-моделі.
         try:
             from detection.fuel_filter import get_fuel_filter
             ff = get_fuel_filter()
             if ff:
                 fd = ff._fuel_dir_smoothed(symbol) or {}
                 rw = fd.get('runway') or {}
-                # `runway` рахується у бік МММ. Для автопілота потрібен бік
+                # `runway` рахується у бік VSV. Для автопілота потрібен бік
                 # НАШОЇ угоди — беремо його, лише якщо напрямки збігаються,
                 # інакше «ціль» вказувала б у протилежний бік.
                 ctx['runway'] = rw if rw.get('dir') == side else None
@@ -5210,8 +5210,8 @@ class TradeManager:
         s = self._settings
         if not s.get('pilot_enabled'):
             return False
-        # 🧮 ПРАВИЛО «МММ LiQ ⚖ → вихід» ВИМИКАЄ АВТОМАТИКУ АВТОПІЛОТА.
-        # Вимога користувача (17.09): «якщо увімкнено 🧮 МММ LiQ ⚖ → вихід,
+        # 🧮 ПРАВИЛО «VSV LiQ ⚖ → вихід» ВИМИКАЄ АВТОМАТИКУ АВТОПІЛОТА.
+        # Вимога користувача (17.09): «якщо увімкнено 🧮 VSV LiQ ⚖ → вихід,
         # потрібно автоматично вимкнути все, що стосується автоматичного
         # 🎯 Автопілота; якщо Manual TP-1 або TP-2 виставлені вручну, бот має
         # реагувати на ручні дані».
@@ -5643,7 +5643,7 @@ class TradeManager:
     def _manual_locked(pos) -> bool:
         """📌 Manual на угоді = ЖОДЕН автоматичний важіль її не чіпає (24.09).
 
-        ЄДИНЕ правило для всіх вузлів: правила виходу за вердиктом (🧮 МММ LiQ,
+        ЄДИНЕ правило для всіх вузлів: правила виходу за вердиктом (🧮 VSV LiQ,
         Forecast, Decision), 🎯 автопілот, авто-SL, Opposite OB, автоматичні
         закриття Fuel Filter і БУДЬ-ЯКА зміна рівнів ботом. Лишаються ЛИШЕ дії
         людини: ручні Manual SL / TP-1 / TP-2, озброєний вручну 🟰 беззбиток і
@@ -5787,7 +5787,7 @@ class TradeManager:
 
     @staticmethod
     def _pilot_auto_off(s: Dict) -> bool:
-        """Чи вимкнено АВТОМАТИКУ 🎯 Автопілота правилом 🧮 «МММ LiQ ⚖».
+        """Чи вимкнено АВТОМАТИКУ 🎯 Автопілота правилом 🧮 «VSV LiQ ⚖».
 
         ЄДИНЕ джерело умови — щоб «вимкнено» означало те саме і в логіці, і в
         інтерфейсі (сторінка гасить ті самі контроли тим самим правилом).
@@ -5805,7 +5805,7 @@ class TradeManager:
         TP-1, TP-2) перераховуй і перемальовуй Автопілот і всі дані.»
 
         1. **Ціль колонки = ваш рівень.** Звичайний режим → Manual TP-2, режим
-           🧮 «МММ LiQ ⚖ → вихід» → Manual TP-1 (там автопілот веде саме TP-1).
+           🧮 «VSV LiQ ⚖ → вихід» → Manual TP-1 (там автопілот веде саме TP-1).
            Рівень вписано → `pilot_objective` = цей рівень (`kind='manual'`),
            тож прогрес, залишок і R рахуються від нього. Рівень знято → ручна
            ціль прибирається, і автопілот обирає ціль знову сам (🧲 магніт
@@ -5898,9 +5898,9 @@ class TradeManager:
 
     def _pilot_magnet_tp1(self, symbol: str, pos: Dict, current_price: float,
                           is_shadow: bool) -> None:
-        """🧲 РЕДУКОВАНИЙ такт при увімкненому 🧮 «МММ LiQ ⚖ → вихід».
+        """🧲 РЕДУКОВАНИЙ такт при увімкненому 🧮 «VSV LiQ ⚖ → вихід».
 
-        **Вимога користувача (17.09), дослівно:** «при виборі 🧮 МММ LiQ ⚖ →
+        **Вимога користувача (17.09), дослівно:** «при виборі 🧮 VSV LiQ ⚖ →
         вихід із 🎯 Автопілота беремо "🧲 найбільший магніт" і ставимо в
         Manual TP-1. І таким чином щоб не було пустим поле 🎯 Автопілот у
         таблицях відкритих угод — підраховуй дані для Manual TP-1.»
@@ -5939,7 +5939,7 @@ class TradeManager:
         _prev = self._pilot_state.get(pkey) or {}
         snap = {
             'at': now, 'is_shadow': bool(is_shadow), 'action': 'hold',
-            'auto_off': '🧮 МММ LiQ ⚖ → вихід',
+            'auto_off': '🧮 VSV LiQ ⚖ → вихід',
             'objective': None, 'progress': None, 'next': None, 'targets': [],
             'r': None, 'r_stop': None, 'risk_free': False,
             'tp_off': not bool(s.get('pilot_autofill_tp')),
@@ -6035,7 +6035,7 @@ class TradeManager:
                         'label': obj.get('label') or '🧲 магніт ліквідності',
                         'from_entry_pct': float(_d), 'r': snap['r']},
                 'tp2': None,
-                'reasons': ['🧮 правило «МММ LiQ ⚖ → вихід»: автопілот '
+                'reasons': ['🧮 правило «VSV LiQ ⚖ → вихід»: автопілот '
                             'віддає лише 🧲 магніт у Manual TP-1'],
             }, is_shadow)
         snap['tp1'] = pos.get('manual_tp1')
@@ -6269,7 +6269,7 @@ class TradeManager:
         вердиктом «1.0R · ціль головний пул ліквідності +2.75%», а через 90
         секунд автопілот обрав ІНШУ ціль — Strong Low +1.25% — і та сама угода
         стала **0.43R**. Причина: ціль спирається на `runway`, який береться
-        лише коли напрямок МММ збігається з боком угоди; МММ фліпнув — пул
+        лише коли напрямок VSV збігається з боком угоди; VSV фліпнув — пул
         зник із контексту, і найдальшою стала інша ціль. Тобто число, ЗА ЯКИМ
         пропустили, не було числом, яке потім реально стоїть в угоді.
 
@@ -8091,12 +8091,12 @@ class TradeManager:
             'forecast_1h_exit': '🔮 Forecast 1H розвернувся проти позиції',
             'forecast_4h_exit': '🔮 Forecast 4H розвернувся проти позиції',
             'decision_exit': '🧠 Decision Center рекомендує протилежне',
-            'mm_flat_exit': '🧮 МММ LiQ втратив напрямок (⚖ рівновага)',
+            'mm_flat_exit': '🧮 VSV LiQ втратив напрямок (⚖ рівновага)',
             # ⚠️ РОЗВОРОТ — ОКРЕМА причина, а не «рівновага»: це різні події і
             # різні рішення (миготіння біля нуля проти зустрічного тиску).
-            'mm_against_exit': '🧮 МММ LiQ РОЗВЕРНУВСЯ ПРОТИ позиції',
-            'sbr_exit': '🔔 Протилежний сигнал МММ-SBR після входу',
-            'sbr_trail_exit': '🔔⏳ МММ-SBR проти: ціна не продовжила угоду (трейл від ціни сигналу)',
+            'mm_against_exit': '🧮 VSV LiQ РОЗВЕРНУВСЯ ПРОТИ позиції',
+            'sbr_exit': '🔔 Протилежний сигнал VSV-SBR після входу',
+            'sbr_trail_exit': '🔔⏳ VSV-SBR проти: ціна не продовжила угоду (трейл від ціни сигналу)',
             'spring_fired_exit': '💥 Пружина монети вистрілила після входу',
             'exh_exit': '🎯 Досягнення вершини: відкат від вершини після сплеску «Виснаження»',
             'ai_exit': '🤖 Вихід ШІ: почались зворотні процеси (кілька незалежних свідчень)',
@@ -8219,7 +8219,7 @@ class TradeManager:
         # ⚠️ Тротл правил виходу — ключ КНИГИ: паперова позиція по цій монеті
         # може лишатись відкритою, і її вікно перевірок стирати не можна.
         self._signal_exit_at.pop(self._exit_key(symbol, False), None)
-        # 🧮 Таймер «МММ без напрямку» — символьний і СПІЛЬНИЙ для обох книг,
+        # 🧮 Таймер «VSV без напрямку» — символьний і СПІЛЬНИЙ для обох книг,
         # тож знімаємо його лише коли по монеті не лишилось ЖОДНОЇ позиції.
         self._mm_flat_drop_if_idle(symbol)
         # ⚠️ Чистимо стан САМЕ СВОЄЇ книги: паперова позиція по цій монеті
@@ -11384,8 +11384,8 @@ class TradeManager:
             'forecast_1h_exit': '🔮 Forecast 1H Exit',
             'forecast_4h_exit': '🔮 Forecast 4H Exit',
             'decision_exit': '🧠 Decision Exit',
-            'mm_flat_exit': '🧮 МММ LiQ ⚖',
-            'mm_against_exit': '🧮 МММ LiQ ПРОТИ',
+            'mm_flat_exit': '🧮 VSV LiQ ⚖',
+            'mm_against_exit': '🧮 VSV LiQ ПРОТИ',
             'sbr_exit': '🔔 SBR проти',
             'sbr_trail_exit': '🔔⏳ SBR трейл',
             'spring_fired_exit': '💥 Пружина вистрілила',

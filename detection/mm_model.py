@@ -1,5 +1,5 @@
 """
-mm_model.py — професійна модель показника «МММ» (куди тягне ціну).
+mm_model.py — професійна модель показника «VSV» (куди тягне ціну).
 
 ОСНОВА — LIQMAP. Замість примітивної різниці «сума палива вище − сума нижче»
 рахуємо Liquidity Pull Vector (LPV): вектор до домінантного, НАЙБЛИЖЧОГО, свіжого
@@ -52,7 +52,7 @@ _SETTINGS_TTL = 60.0
 
 
 def invalidate_mm_settings() -> None:
-    """Скинути кеш ваг МММ — кликати після збереження налаштувань з UI, щоб
+    """Скинути кеш ваг VSV — кликати після збереження налаштувань з UI, щоб
     зміна діяла миттєво, а не до 60с."""
     global _settings_at
     _settings_at = 0.0
@@ -283,7 +283,7 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
                with_funding: bool = False,
                momentum: Optional[float] = None,
                live_price: Optional[float] = None) -> Optional[Dict]:
-    """ЧИСТА БАБЛО-МОДЕЛЬ напрямку МММ (без тренду). Напрямок визначає лише капітал:
+    """ЧИСТА БАБЛО-МОДЕЛЬ напрямку VSV (без тренду). Напрямок визначає лише капітал:
     кластери ліквідацій/стопів (сторона+проксіміті) + позиціювання (funding+L/S,
     контр/max-pain) + whale-потік + ліміти стакана. `liq_state` можна передати
     готовим. `with_confirmations=False` → лише магніт-ядро (для масового скану).
@@ -359,7 +359,7 @@ def compute_mm(db, symbol: str, liq_state: Optional[Dict] = None,
         strength = int(round(min(1.0, abs(score)) * 100 * dqf))
 
         # 🎯 «Запас ходу» — відстань до ліквідності попереду руху, СТРОГО в бік
-        # напрямку МММ. Якщо напрямку немає (⚪ рівновага) — запас невизначений (None),
+        # напрямку VSV. Якщо напрямку немає (⚪ рівновага) — запас невизначений (None),
         # бо «куди» немає сенсу.
         runway = _runway((lst or {}).get('levels') or [], mark, status,
                          st['mm_reach_pct']) if status in ('LONG', 'SHORT') else None

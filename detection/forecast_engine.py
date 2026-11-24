@@ -490,7 +490,7 @@ class ForecastEngine:
 
     def peek_ctr_tf(self, symbol: str, tf: str):
         """Кеш STC одного TF БЕЗ мережі → `(вік_с, {stc,last_dir,age,tf}, ttl)`
-        або None, якщо значення ще не рахувалось. Для ⚡ МММ-CTR: блок сам
+        або None, якщо значення ще не рахувалось. Для ⚡ VSV-CTR: блок сам
         вирішує, кого оновлювати в межах свого бюджету запитів за такт."""
         sym = (symbol or '').upper()
         tf = str(tf or '').lower()

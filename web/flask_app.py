@@ -144,7 +144,7 @@ def _db_vacuum_full():
     from sqlalchemy import create_engine, text
     # Biggest space consumers first: the service tables (+ the OB-state cache).
     # ⚠️ `sob_bot_settings`: рядків там мало, але стан FF (щотакту) і знімки
-    # МММ-книг (щохвилини) ПЕРЕЗАПИСУЮТЬ великі JSON-блоби — кожен UPDATE лишає
+    # VSV-книг (щохвилини) ПЕРЕЗАПИСУЮТЬ великі JSON-блоби — кожен UPDATE лишає
     # мертву версію рядка (TOAST), і без VACUUM таблиця роздувається.
     tables = (list(_SERVICE_TABLES_TIME.keys()) + ['sob_smc_ob_state', 'sob_bot_settings']
               # ⚠ аномалії: наслідки дописуються UPDATE-ами → мертві версії рядків
@@ -612,7 +612,7 @@ def create_app():
             _auto_started['liq_hunter'] = True
             try:
                 # 💧 Сканер ліквідності — власний рушій під банером
-                # 🧮 МММ-монітора. Дефолт OFF, тож піднімається лише коли
+                # 🧮 VSV-монітора. Дефолт OFF, тож піднімається лише коли
                 # користувач сам його увімкнув (стан читається з БД).
                 from detection.liq_hunter import init_liq_hunter
                 def _lh_watchlist():
@@ -2903,8 +2903,8 @@ def register_api_routes(app):
         if not fm:
             return jsonify({'running': False, 'coins': [], 'total_tracked': 0})
         data = fm.get_watchlist()
-        # Merge МММ (fuel) strength for coins FF currently tracks — CHEAP map
-        # from the score cache (no per-coin compute). Coins without МММ data
+        # Merge VSV (fuel) strength for coins FF currently tracks — CHEAP map
+        # from the score cache (no per-coin compute). Coins without VSV data
         # simply won't carry mm_* fields (UI shows «—»).
         try:
             from detection.fuel_filter import get_fuel_filter
@@ -2918,7 +2918,7 @@ def register_api_routes(app):
                         c['mm_str'] = fs.get('now')
                         c['mm_str_prev'] = fs.get('prev')
         except Exception as e:
-            print(f"[Flask] funding МММ merge error: {e}")
+            print(f"[Flask] funding VSV merge error: {e}")
         return jsonify(data)
     
     @app.route('/api/funding/remove/<symbol>', methods=['POST', 'DELETE'])
@@ -3149,7 +3149,7 @@ def register_api_routes(app):
             return jsonify({'ok': False, 'reason': str(e)})
 
     # ═══ 💰🌀 «Funding — Пружина» (06.11): алгоритм «Пружина» для монет
-    # 💰 Funding Rate Scanner. Стара таблиця «💰 Funding — МММ» (шари, скальп,
+    # 💰 Funding Rate Scanner. Стара таблиця «💰 Funding — VSV» (шари, скальп,
     # VOB→Черга-4, авто-відкриття, mute/архів, TG) видалена повністю.
     @app.route('/api/funding-spring/state')
     def api_funding_spring_state():
@@ -3420,7 +3420,7 @@ def register_api_routes(app):
         """Analytical export that LINKS the 🧾 activity log to the closed-trade
         tables (real + paper). Events are grouped into SESSIONS (one per «signal»
         run of a coin), and each session is joined to the trade it produced,
-        including that trade's full chronology (price/PnL/МММ/exhaustion series).
+        including that trade's full chronology (price/PnL/VSV/exhaustion series).
 
         format=json (default) → one self-contained object per session:
             {symbol, session_start/end, events[], trades[{is_shadow, …,
@@ -3964,9 +3964,9 @@ def register_api_routes(app):
 
     @app.route('/api/fuel-filter/mm-monitor/open', methods=['POST'])
     def api_fuel_filter_mm_group_open():
-        """✋ ГРУПОВЕ відкриття обраних монет 🧮 МММ-монітора.
+        """✋ ГРУПОВЕ відкриття обраних монет 🧮 VSV-монітора.
         Body: {"symbols": ["BTCUSDT", ...]}. Напрямок КОЖНОЇ монети — її власний
-        живий МММ (те саме, що показано в рядку). Ворота черг пропускаються —
+        живий VSV (те саме, що показано в рядку). Ворота черг пропускаються —
         рішення ухвалює людина; 🚦 головні кнопки напрямку і запобіжники `_open`
         лишаються. Відповідь несе результат ПО КОЖНІЙ монеті окремо."""
         try:
@@ -3978,12 +3978,12 @@ def register_api_routes(app):
             symbols = data.get('symbols') or []
             if not isinstance(symbols, list):
                 return jsonify({'ok': False, 'reason': 'symbols must be a list'})
-            # 🆕 `book='new'` — групове відкриття з блоку «МММ-Trend».
-            # ⚡ `book='ctr'` — з блоку «МММ-CTR» (STC 1H+4H).
-            # 🔮 `book='fc'` — з блоку «МММ-Local» (Forecast 1H+4H).
+            # 🆕 `book='new'` — групове відкриття з блоку «VSV-Trend».
+            # ⚡ `book='ctr'` — з блоку «VSV-CTR» (STC 1H+4H).
+            # 🔮 `book='fc'` — з блоку «VSV-Local» (Forecast 1H+4H).
             _b = str(data.get('book') or '')
-            # 🧠 `book='dec'` — з блоку «МММ-Decision» (вердикт банера Decision).
-            # 🧩 `book='rdy'` — з блоку «МММ-Готовність» (SMC-грейд обох боків).
+            # 🧠 `book='dec'` — з блоку «VSV-Decision» (вердикт банера Decision).
+            # 🧩 `book='rdy'` — з блоку «VSV-Готовність» (SMC-грейд обох боків).
             book = _b if _b in ('new', 'ctr', 'fc', 'pull', 'dec', 'rdy', 'sbr') else 'old'
             return jsonify(ff.group_open(symbols, book=book))
         except Exception as e:
@@ -4144,7 +4144,7 @@ def register_api_routes(app):
         except Exception as e:
             return jsonify({'ok': False, 'reason': str(e)})
 
-    # ═══════ 💧 СКАНЕР ЛІКВІДНОСТІ (власний рушій під 🧮 МММ-монітором) ═══
+    # ═══════ 💧 СКАНЕР ЛІКВІДНОСТІ (власний рушій під 🧮 VSV-монітором) ═══
     @app.route('/api/liq-hunter/state')
     def api_liq_hunter_state():
         """Стан 💧 Сканера: таблиця відібраних монет + розклад останнього скану.
@@ -6174,7 +6174,7 @@ def register_api_routes(app):
     
     @app.route('/api/tm/trade-history')
     def api_tm_trade_history():
-        """Per-trade recorded time-series (price/PnL/МММ/exhaustion) for charting.
+        """Per-trade recorded time-series (price/PnL/VSV/exhaustion) for charting.
         Query: symbol=BTCUSDT&closed_at=<float>&shadow=0|1. Matches a closed
         trade (or the live open position as fallback)."""
         from detection.trade_manager import get_trade_manager
@@ -6428,9 +6428,9 @@ def register_api_routes(app):
                 str_map = ff.get_fuel_strength_map()
                 _all_pos = ((state.get('positions') or [])
                             + (state.get('shadow_positions') or []))
-                # 🔔 Колонка «МММ-SBR» + 🚨 сигнальна колонка (з 29.10; до того —
-                # 🧮 МММ-Trend / 🧠 МММ-Decision). ЧИТАННЯ стану двигуна (той
-                # самий `sbr_mm_dir`, що таблиця блоку МММ-SBR) — ЖОДНИХ
+                # 🔔 Колонка «VSV-SBR» + 🚨 сигнальна колонка (з 29.10; до того —
+                # 🧮 VSV-Trend / 🧠 VSV-Decision). ЧИТАННЯ стану двигуна (той
+                # самий `sbr_mm_dir`, що таблиця блоку VSV-SBR) — ЖОДНИХ
                 # розрахунків на цьому гарячому ендпоінті. `pos['mmd']` — історична назва.
                 _dec_map = {}
                 try:
@@ -6490,7 +6490,7 @@ def register_api_routes(app):
                         pos['spring'] = {k: _sr.get(k) for k in (
                             'charge', 'state', 'label', 'phase', 'dir',
                             'pot_long', 'pot_short', 'restored')}
-                    # Колонку «МММ» прибрано з таблиць відкритих угод, тож
+                    # Колонку «VSV» прибрано з таблиць відкритих угод, тож
                     # ці поля більше не потрібні в кожному поллі (легший payload).
                     # Мапа лишається — її читають інші місця; щоб повернути
                     # колонку, розкоментуй три рядки нижче й поверни <th>/<td>.
@@ -6506,7 +6506,7 @@ def register_api_routes(app):
         # 🎯 Стан АВТОПІЛОТА по кожній позиції — для колонки «🎯 Автопілот».
         # Це ЧИТАННЯ готового знімка (`_pilot_state`), який пише монітор раз на
         # PILOT_TTL. Жодних розрахунків на цьому гарячому ендпоінті — інакше
-        # сторінка блокувала б бота (той самий урок, що з МММ-колонкою вище).
+        # сторінка блокувала б бота (той самий урок, що з VSV-колонкою вище).
         try:
             if tm.get_settings().get('pilot_enabled'):
                 # ⚠️ КОЖНА КНИГА — СВІЙ ЗНІМОК. Раніше обидва списки читали
@@ -6671,7 +6671,7 @@ def register_api_routes(app):
 
         Body: {symbol, enabled: bool, is_shadow?: bool}. Діє НЕЗАЛЕЖНО від
         глобального `use_opposite_ob_exit`; TF — з налаштувань Exit Rules.
-        Автомат (сигнал 🧠 МММ-Decision) перемикає той самий прапорець.
+        Автомат (сигнал 🧠 VSV-Decision) перемикає той самий прапорець.
         """
         from detection.trade_manager import get_trade_manager
         tm = get_trade_manager()
@@ -6687,7 +6687,7 @@ def register_api_routes(app):
 
     @app.route('/api/tm/positions/sbr-exit', methods=['POST'])
     def api_tm_sbr_exit():
-        """🔔 Пер-угодний «МММ-SBR проти → вихід» (колонка «🔔 SBR»).
+        """🔔 Пер-угодний «VSV-SBR проти → вихід» (колонка «🔔 SBR»).
         Body: {symbol, enabled: bool, tf: '1h'|'4h'|'any', is_shadow?: bool}."""
         from detection.trade_manager import get_trade_manager
         tm = get_trade_manager()
@@ -8037,12 +8037,12 @@ def compute_bias(db, symbol, wl=None):
             reasons.append(('wait', "Liq-палива немає даних"))
         elif fuel_dir > 0.1:
             fuel_side = 1
-            reasons.append(('ok', "МММ-бабло ↑ зверху → тягне в LONG", 'long'))
+            reasons.append(('ok', "VSV-бабло ↑ зверху → тягне в LONG", 'long'))
         elif fuel_dir < -0.1:
             fuel_side = -1
-            reasons.append(('ok', "МММ-бабло ↓ знизу → тягне в SHORT", 'short'))
+            reasons.append(('ok', "VSV-бабло ↓ знизу → тягне в SHORT", 'short'))
         else:
-            reasons.append(('wait', "МММ-бабло ⚖ рівновага — напрямку немає"))
+            reasons.append(('wait', "VSV-бабло ⚖ рівновага — напрямку немає"))
     except Exception:
         comp['fuel'] = None
         reasons.append(('wait', "Squeeze/fuel недоступний"))
@@ -8467,12 +8467,12 @@ def compute_bias_for_ff(db, symbol):
             reasons.append(('wait', "Liq-палива немає даних"))
         elif fuel_dir > 0.1:
             fuel_side = 1
-            reasons.append(('ok', "МММ-бабло ↑ зверху → тягне в LONG", 'long'))
+            reasons.append(('ok', "VSV-бабло ↑ зверху → тягне в LONG", 'long'))
         elif fuel_dir < -0.1:
             fuel_side = -1
-            reasons.append(('ok', "МММ-бабло ↓ знизу → тягне в SHORT", 'short'))
+            reasons.append(('ok', "VSV-бабло ↓ знизу → тягне в SHORT", 'short'))
         else:
-            reasons.append(('wait', "МММ-бабло ⚖ рівновага — напрямку немає"))
+            reasons.append(('wait', "VSV-бабло ⚖ рівновага — напрямку немає"))
     except Exception:
         comp['fuel'] = None
 

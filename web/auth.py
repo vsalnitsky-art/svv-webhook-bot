@@ -243,8 +243,9 @@ def approve_user(uid, days=DEFAULT_ACCESS_DAYS):
     if not u.is_admin and days and not getattr(u, 'access_until', None):
         fields['access_until'] = datetime.utcnow() + timedelta(days=int(days))
     _update_user(uid, **fields)
-    notify_user_approved(uid)
-    return True
+    # Стан доступу не відкочуємо через збій Telegram. Повертаємо саме результат
+    # доставки, щоб адмінська панель і callback не показували хибний успіх.
+    return notify_user_approved(uid)
 
 
 def sync_user_group(uid, force=False):
@@ -281,6 +282,7 @@ def tg_group_member_event(tg_id, ev):
     finally:
         s.close()
     from web.tg_bot import tg_send, notify_category
+    from web.i18n import user_tr
     out = None
     if ev == 'banned':
         if was_off:
@@ -289,7 +291,7 @@ def tg_group_member_event(tg_id, ev):
         _update_user(uid, disabled=True, session_token=None)
         set_user_pref(uid, 'tg_banned_at', datetime.utcnow().isoformat())
         try:
-            tg_send(tg_id, "⛔ Ваш акаунт вимкнено адміністратором.")
+            tg_send(tg_id, user_tr(uid, 'account_disabled'))
             notify_category('register', f"🚫 <b>{lbl}</b> — забанено в Telegram-групі "
                                         f"→ акаунт у боті ВИМКНЕНО.")
         except Exception:
@@ -317,7 +319,7 @@ def tg_group_member_event(tg_id, ev):
         elif was_off:
             out = 'enabled'
             try:
-                tg_send(tg_id, "✅ Ваш акаунт знову активний.")
+                tg_send(tg_id, user_tr(uid, 'account_enabled'))
                 notify_category('register', f"✅ <b>{lbl}</b> — бан у Telegram-групі знято "
                                             f"→ акаунт у боті УВІМКНЕНО.")
             except Exception:
@@ -327,34 +329,81 @@ def tg_group_member_event(tg_id, ev):
     return None
 
 
+def _access_delivery(uid, decision, text, buttons=None):
+    """Надіслати рішення про доступ особисто й залишити перевіряемий аудит.
+
+    Повертає False, якщо Telegram не прив'язано або Bot API відхилив повідомлення.
+    Адміністратор отримує окреме попередження — схвалення/відхилення більше не
+    виглядає як успішно доставлене, коли користувач його не побачив.
+    """
+    u = get_user_by_id(uid)
+    if not u:
+        return False
+    sent, error = False, ''
+    if not u.telegram_chat_id:
+        error = 'Telegram не привʼязано'
+    else:
+        try:
+            from web.tg_bot import tg_send, last_send_error
+            sent = bool(tg_send(u.telegram_chat_id, text, buttons=buttons))
+            if not sent:
+                error = last_send_error() or 'Telegram API не підтвердив відправку'
+        except Exception as exc:
+            error = str(exc)
+    set_user_pref(uid, 'access_notice', {
+        'decision': decision, 'sent': sent, 'at': int(time.time()),
+        'error': error[:500],
+    })
+    if not sent:
+        print(f"[AUTH][TG] access {decision} delivery failed for user {uid}: {error}")
+        try:
+            from web.tg_bot import notify_category
+            notify_category(
+                'register',
+                f"⚠️ <b>{u.email}</b> — рішення «{decision}» збережено, "
+                f"але повідомлення користувачу НЕ доставлено: {error}")
+        except Exception as exc:
+            print(f"[AUTH][TG] admin delivery warning error: {exc}")
+    return sent
+
+
+def notify_user_rejected(uid):
+    """Повідомити про відхилення мовою, обраною під час реєстрації."""
+    from web.i18n import user_tr
+    return _access_delivery(uid, 'rejected', user_tr(uid, 'access_rejected'))
+
+
 def notify_user_approved(uid, silent=False):
     """Tell the user (via their linked Telegram) that access is granted.
 
     `silent=True` — без повідомлення користувачу (зміна ТЕРМІНУ доступу,
     вимога 09.11: «повідомлень про продовження на 10/30 днів не потрібно»);
     позначка `ever_approved` і повернення в групу — як і раніше."""
+    delivered = None
     try:
         u = get_user_by_id(uid)
         if not u:
-            return
+            return False
         # «було схвалено» — щоб знятий доступ відрізнявся від «очікує схвалення»
         set_user_pref(uid, 'ever_approved', True)
-        if not u.telegram_chat_id:
-            return
-        from web.tg_bot import tg_send, base_url
-        b = base_url()
         if not silent:
-            tg_send(u.telegram_chat_id,
-                    "✅ <b>Ваш акаунт активовано!</b>\nТепер увійдіть на сайті "
-                    "своїм <b>логіном</b> і паролем.",
-                    buttons=[[{'text': '🔐 Увійти', 'url': f"{b}/login"}]] if b else None)
+            from web.tg_bot import base_url
+            from web.i18n import user_tr, language_for_user
+            b = base_url()
+            lang = language_for_user(uid)
+            delivered = _access_delivery(
+                uid, 'approved', user_tr(uid, 'access_approved'),
+                buttons=[[{'text': user_tr(uid, 'login_short_button'),
+                           'url': f"{b}/login?lang={lang}"}]] if b else None)
+        if not u.telegram_chat_id:
+            return delivered
         # 🎉 Auto-onboard the approved user into the community group (personal
         # one-time invite link — Bot API can't add a member directly).
         _st = (_load_prefs(u) or {}).get('grp_state')
         try:
             from web.tg_bot import invite_user_to_group
-            # сам знімає бан у КОЖНОМУ чаті бота
-            invite_user_to_group(u.telegram_chat_id, back=(_st == 'banned'))
+            # Функція приймає лише chat_id; зайвий `back` раніше переривав запрошення.
+            invite_user_to_group(u.telegram_chat_id)
             set_user_pref(uid, 'grp_banned', None)
         except Exception as _e:
             print(f"[AUTH][TG] group invite error: {_e}")
@@ -369,6 +418,8 @@ def notify_user_approved(uid, silent=False):
             print(f"[AUTH][TG] group invite error: {_e}")
     except Exception as e:
         print(f"[AUTH][TG] notify user error: {e}")
+        delivered = False
+    return delivered
 
 
 def create_user(email, password, is_admin=False, email_confirmed=False,
@@ -1226,7 +1277,7 @@ _PUBLIC_EXACT = {'/login', '/register', '/forgot', '/logout', '/pending',
                  '/api/health', '/favicon.ico'}
 # '/info' is public so GUESTS can open the info-site shell (login/registration
 # live ON it). The DATA APIs stay gated — a guest sees the auth hero, not state.
-_PUBLIC_PREFIX = ('/static/', '/confirm/', '/reset/', '/auth/', '/info')
+_PUBLIC_PREFIX = ('/static/', '/confirm/', '/reset/', '/auth/', '/info', '/api/i18n/')
 _USER_MUTABLE_PREFIX = ('/api/me', '/logout', '/auth/')   # non-admin may POST here
 # Info-site-only users (no bot_access) may reach ONLY these in THIS (bot) app:
 # their cabinet, the bot-served info-site (/info) and the READ-ONLY APIs the
@@ -1236,7 +1287,7 @@ _USER_NO_BOT_ALLOWED = ('/cabinet', '/logout', '/api/me', '/pending',
                         '/api/health', '/info',
                         '/api/fuel-filter/state', '/api/stats',
                         '/api/sm/bias', '/api/sm/auto-gate', '/api/tm/state',
-                        '/api/info/')
+                        '/api/info/', '/api/i18n/')
 
 
 _ADMIN_PREFIX = ('/admin/', '/api/admin/')
@@ -1415,7 +1466,7 @@ def install_auth_gate(app):
 # ==================================================================
 # Page shell (inline templates — no extra files)
 # ==================================================================
-_SHELL = """<!doctype html><html lang="uk"><head><meta charset="utf-8">
+_SHELL = """<!doctype html><html lang="{{lang}}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{title}} · VSV Bot</title>
 <link rel="icon" type="image/png" href="/favicon.ico">
@@ -1435,9 +1486,13 @@ body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:c
 h1{font-size:1.3rem;font-weight:900;letter-spacing:-.02em;margin:0 0 4px}
 .sub{color:#aab6c8;font-size:.82rem;margin:0 0 18px}
 label{display:block;font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:#8695ac;margin:14px 0 5px}
-input{width:100%;padding:11px 13px;border-radius:9px;border:1px solid #26324a;background:#1a2333;
+input,select{width:100%;padding:11px 13px;border-radius:9px;border:1px solid #26324a;background:#1a2333;
  color:#e8eef7;font-size:.92rem}
-input:focus{outline:none;border-color:#f5a623;box-shadow:0 0 0 3px rgba(245,166,35,.2)}
+input:focus,select:focus{outline:none;border-color:#f5a623;box-shadow:0 0 0 3px rgba(245,166,35,.2)}
+.language-row{display:flex;align-items:center;gap:10px;margin:0 0 16px;padding:10px 12px;
+ border:1px solid #2b3850;border-radius:10px;background:#171f2e}
+.language-row label{margin:0;white-space:nowrap;color:#c4cfdf}.language-row select{padding:7px 9px}
+.language-row .lang-icon{color:#f5c85f;font-size:1.15rem}
 button{width:100%;margin-top:18px;padding:12px;border:0;border-radius:10px;font-weight:800;
  font-size:.92rem;cursor:pointer;background:linear-gradient(180deg,#ffc960,#f5a623);color:#1a1204;
  box-shadow:0 6px 18px -8px rgba(245,166,35,.6)}
@@ -1483,9 +1538,51 @@ body.full{align-items:flex-start;justify-content:flex-start}
 <script>{{script|safe}}</script></body></html>"""
 
 
-def _page(title, body, script='', width=400, full=False):
-    return render_template_string(_SHELL, title=title, body=body, script=script,
-                                  width=width, full=full)
+_AUTH_LANG_SCRIPT = r"""
+(function(){
+  var select=document.getElementById('profile-language');
+  function apply(lang){
+    if(!window.VSV_AUTH_STRINGS[lang]) lang='uk';
+    document.documentElement.lang=lang;
+    if(select) select.value=lang;
+    document.querySelectorAll('[data-i18n]').forEach(function(el){
+      var value=window.VSV_AUTH_STRINGS[lang][el.getAttribute('data-i18n')];
+      if(value!=null) el.innerHTML=value;
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el){
+      var value=window.VSV_AUTH_STRINGS[lang][el.getAttribute('data-i18n-placeholder')];
+      if(value!=null) el.setAttribute('placeholder',value);
+    });
+    document.querySelectorAll('[data-lang-link]').forEach(function(a){
+      try{var url=new URL(a.href,location.href);url.searchParams.set('lang',lang);a.href=url.href;}catch(e){}
+    });
+  }
+  if(select){
+    var explicit='';
+    try{explicit=new URLSearchParams(location.search).get('lang')||'';}catch(e){}
+    if(!explicit){try{var saved=localStorage.getItem('vsv-info-language');
+      if(saved&&window.VSV_AUTH_STRINGS[saved]) apply(saved);}catch(e){}}
+    select.addEventListener('change',function(){
+      try{localStorage.setItem('vsv-info-language',select.value);}catch(e){}
+      apply(select.value);
+    });
+  }
+  window.VSV_AUTH_LANGUAGE={apply:apply};
+})();
+"""
+
+
+def _page(title, body, script='', width=400, full=False, lang=None):
+    from web.i18n import normalize_language, client_dictionaries
+    try:
+        requested = request.values.get('lang') or request.form.get('language')
+    except Exception:
+        requested = None
+    lang = normalize_language(lang or requested)
+    lang_script = ('window.VSV_AUTH_STRINGS=' + client_dictionaries() + ';'
+                   + _AUTH_LANG_SCRIPT + script)
+    return render_template_string(_SHELL, title=title, body=body, script=lang_script,
+                                  width=width, full=full, lang=lang)
 
 
 def _throttled(email):
@@ -1544,9 +1641,15 @@ def register_auth_routes(app):
 
     @app.route('/login', methods=['GET', 'POST'])
     def auth_login():
+        from web.i18n import normalize_language, tr
+        nxt = request.args.get('next') or request.form.get('next') or '/smart-money'
+        # The bot always starts at Smart Money. A protected deep link must not
+        # become the post-login destination; the only exception is the separate
+        # info-site's signed-token handoff, which is not a bot-page navigation.
+        destination = '/info-login' if nxt == '/info-login' else '/smart-money'
         if current_user() and _is_active(current_user()):
-            return redirect('/')
-        nxt = request.args.get('next') or request.form.get('next') or '/'
+            return redirect(destination)
+        lang = normalize_language(request.values.get('lang') or request.form.get('language'))
         if request.method == 'POST':
             email = _norm_email(request.form.get('email'))
             pw = request.form.get('password') or ''
@@ -1555,25 +1658,29 @@ def register_auth_routes(app):
             # Admins are EXEMPT from login throttling / IP-blocking — so an
             # admin account can never lock itself out.
             if not _is_adm and _throttled(email):
-                return _page('Вхід', _login_form(nxt,
-                             err='Забагато спроб. Спробуйте за кілька хвилин.'))
+                return _page(tr(lang, 'login_title'), _login_form(
+                    nxt, err=tr(lang, 'error_throttled'), lang=lang), lang=lang)
             if not u or not check_password_hash(u.password_hash, pw):
                 if not _is_adm:
                     _record_fail(email)
-                return _page('Вхід', _login_form(nxt, err='Невірний email або пароль.'))
+                return _page(tr(lang, 'login_title'), _login_form(
+                    nxt, err=tr(lang, 'error_credentials'), lang=lang), lang=lang)
             if u.disabled:
-                return _page('Вхід', _login_form(nxt, err='Акаунт вимкнено адміністратором.'))
+                return _page(tr(lang, 'login_title'), _login_form(
+                    nxt, err=tr(lang, 'error_disabled'), lang=lang), lang=lang)
+            # Explicit auth-page choice becomes the durable profile preference.
+            if request.form.get('language'):
+                set_user_pref(u.id, 'language', lang)
             login_user(u)
             if not _is_active(u):
                 return redirect(url_for('auth_pending'))
-            return redirect(nxt if nxt.startswith('/') else '/')
-        _info = ''
-        if request.args.get('superseded'):
-            _info = 'Сесію завершено: у цей акаунт увійшли з іншого пристрою.'
-        return _page('Вхід', _login_form(nxt, err=_info))
+            return redirect(destination)
+        _info = tr(lang, 'session_superseded') if request.args.get('superseded') else ''
+        return _page(tr(lang, 'login_title'), _login_form(nxt, err=_info, lang=lang), lang=lang)
 
     @app.route('/register', methods=['GET', 'POST'])
     def auth_register():
+        from web.i18n import normalize_language, tr
         # A `tg` token (from the Telegram bot's /start link) ties this signup to
         # a Telegram chat → email is auto-confirmed (Telegram verified the user),
         # and the admin is notified in Telegram with Approve/Reject buttons.
@@ -1584,62 +1691,55 @@ def register_auth_routes(app):
         tg_name = _tg.get('n') if _tg else None
         tg_lang = _tg.get('l') if _tg else None
         tg_premium = _tg.get('p') if _tg else None
-        # Registration is TELEGRAM-ONLY (no email anywhere). Without a valid tg
-        # token this page just points the user at the bot — never an email form.
+        lang = normalize_language(request.values.get('lang') or
+                                  request.form.get('language') or tg_lang)
         if not tg_chat:
-            return _page('Реєстрація', _tg_register_prompt())
+            return _page(tr(lang, 'register_title'), _tg_register_prompt(lang), lang=lang)
         if request.method == 'POST':
-            # The user picks a LOGIN (a display name for signing in) — NOT an
-            # email. It is stored in the account's login column.
             login = _norm_email(request.form.get('login') or request.form.get('email'))
             pw = request.form.get('password') or ''
             pw2 = request.form.get('password2') or ''
             if not login or len(login) < 3:
-                return _page('Реєстрація', _register_form(
-                    err='Логін — мінімум 3 символи.', tg=tg_raw))
-            email = login   # stored in the login/email column
+                return _page(tr(lang, 'register_title'), _register_form(
+                    err=tr(lang, 'error_login_min'), tg=tg_raw, lang=lang), lang=lang)
+            email = login
             if len(pw) < MIN_PASSWORD_LEN:
-                return _page('Реєстрація', _register_form(
-                    err=f'Пароль мінімум {MIN_PASSWORD_LEN} символів.', tg=tg_raw))
+                return _page(tr(lang, 'register_title'), _register_form(
+                    err=tr(lang, 'error_password_min'), tg=tg_raw, lang=lang), lang=lang)
             if pw != pw2:
-                return _page('Реєстрація', _register_form(err='Паролі не збігаються.', tg=tg_raw))
+                return _page(tr(lang, 'register_title'), _register_form(
+                    err=tr(lang, 'error_password_match'), tg=tg_raw, lang=lang), lang=lang)
             if get_user_by_email(email):
-                return _page('Реєстрація', _register_form(
-                    err='Такий логін уже зайнятий — виберіть інший.', tg=tg_raw))
-            if tg_chat:
-                # Telegram-verified signup: login+password; admin approval only.
-                uid = create_user(email, pw, is_admin=False, email_confirmed=True,
-                                  approved=False, telegram_chat_id=tg_chat,
-                                  telegram_username=tg_user, telegram_name=tg_name)
-                # Save the richer Telegram profile (language, Premium, @handle,
-                # name, chat_id, when linked) into prefs so the admin can see it.
-                try:
-                    if uid:
-                        import time as _t
-                        _u = get_user_by_id(uid)
-                        _p = _load_prefs(_u) if _u else {}
-                        _p['tg'] = {'username': tg_user, 'name': tg_name,
-                                    'chat_id': str(tg_chat),
-                                    'lang': tg_lang, 'premium': bool(tg_premium),
-                                    'linked_at': _t.time()}
-                        _update_user(uid, prefs=json.dumps(_p)[:20000])
-                except Exception as _e:
-                    print(f"[AUTH] save tg profile error: {_e}")
-                notify_new_user_to_admin(uid)
-                try:
-                    from web.tg_bot import tg_send
-                    tg_send(tg_chat, f"✅ Акаунт <b>{email}</b> створено. "
-                                     "Очікуйте схвалення адміністратора — "
-                                     "я повідомлю тут.")
-                except Exception:
-                    pass
-                return _page('Реєстрація', _msg_box(
-                    'Готово ✓', 'ok',
-                    'Акаунт створено й прив’язано до вашого Telegram. '
-                    'Після схвалення адміністратором ви отримаєте сповіщення в '
-                    'Telegram і зможете увійти.',
-                    extra='<div class="links"><a href="/login">← До входу</a></div>'))
-        return _page('Реєстрація', _register_form(tg=tg_raw))
+                return _page(tr(lang, 'register_title'), _register_form(
+                    err=tr(lang, 'error_login_taken'), tg=tg_raw, lang=lang), lang=lang)
+            uid = create_user(email, pw, is_admin=False, email_confirmed=True,
+                              approved=False, telegram_chat_id=tg_chat,
+                              telegram_username=tg_user, telegram_name=tg_name)
+            try:
+                if uid:
+                    import time as _t
+                    _u = get_user_by_id(uid)
+                    _p = _load_prefs(_u) if _u else {}
+                    # The explicit form choice — not Telegram's device locale — is
+                    # authoritative for the website and all personal notifications.
+                    _p['language'] = lang
+                    _p['tg'] = {'username': tg_user, 'name': tg_name,
+                                'chat_id': str(tg_chat), 'lang': tg_lang,
+                                'premium': bool(tg_premium), 'linked_at': _t.time()}
+                    _update_user(uid, prefs=json.dumps(_p)[:20000])
+            except Exception as _e:
+                print(f"[AUTH] save tg profile error: {_e}")
+            notify_new_user_to_admin(uid)
+            try:
+                from web.tg_bot import tg_send
+                tg_send(tg_chat, tr(lang, 'access_pending', login=email))
+            except Exception:
+                pass
+            return _page(tr(lang, 'register_title'), _msg_box(
+                tr(lang, 'ready'), 'ok', tr(lang, 'registration_saved'),
+                extra=f'<div class="links"><a href="/login?lang={lang}" data-i18n="to_login">{tr(lang, "to_login")}</a></div>'),
+                lang=lang)
+        return _page(tr(lang, 'register_title'), _register_form(tg=tg_raw, lang=lang), lang=lang)
 
     @app.route('/confirm/<token>')
     def auth_confirm(token):
@@ -1741,7 +1841,7 @@ def register_auth_routes(app):
         return ('', 404)
 
     # ---- info-site served by the bot itself (same domain → auth + API work) ----
-    _INFOSITE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'infosite')
+    _INFOSITE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'info')
 
     @app.route('/info')
     def info_site_root():
@@ -1976,22 +2076,41 @@ def register_auth_routes(app):
         _tgc = getattr(target, 'telegram_chat_id', None)
         _lbl = target.email
 
+        notification_sent = None
+
         def _notify_change(user_text=None, admin_text=None):
-            from web.tg_bot import tg_send, notify_category
-            if user_text and _tgc:
-                try:
-                    tg_send(_tgc, user_text)
-                except Exception:
-                    pass
+            nonlocal notification_sent
+            from web.tg_bot import notify_category
+            from web.i18n import user_tr
+            if user_text:
+                # Existing call sites stay readable; personal delivery is always
+                # translated from the recipient's saved registration preference.
+                keys = {
+                    "⚠️ Ваш доступ призупинено адміністратором.": 'access_suspended',
+                    "🤖 Вам надано доступ до бота.": 'bot_granted',
+                    "🤖 Доступ до бота вимкнено.": 'bot_revoked',
+                    "⛔ Ваш акаунт вимкнено адміністратором.": 'account_disabled',
+                    "✅ Ваш акаунт знову активний.": 'account_enabled',
+                    "🛡 Вам надано права адміністратора.": 'admin_granted',
+                    "🛡 Права адміністратора знято.": 'admin_revoked',
+                    "🔑 Адміністратор змінив ваш пароль. Використовуйте новий пароль для входу.": 'password_changed',
+                    "🔒 Ваші сесії завершено — увійдіть знову.": 'sessions_closed',
+                    "🗑 Ваш акаунт видалено адміністратором.": 'account_deleted',
+                }
+                key = keys.get(user_text)
+                text = user_tr(uid, key) if key else user_text
+                notification_sent = _access_delivery(uid, 'account_update', text)
             if admin_text:
                 try:
                     notify_category('register', admin_text)
                 except Exception:
                     pass
+            return notification_sent
 
         if action == 'approve':
-            approve_user(uid)            # approve + 30-day access + notifies user
-            _notify_change(admin_text=f"✅ <b>{_lbl}</b> — схвалено (30 днів).")
+            notification_sent = approve_user(uid)
+            status = "користувача повідомлено" if notification_sent else "повідомлення НЕ доставлено"
+            _notify_change(admin_text=f"✅ <b>{_lbl}</b> — схвалено (30 днів); {status}.")
         elif action == 'revoke':
             _update_user(uid, approved=False)
             _notify_change("⚠️ Ваш доступ призупинено адміністратором.",
@@ -2102,7 +2221,7 @@ def register_auth_routes(app):
             _delete_user(uid)
         else:
             return jsonify({'ok': False, 'error': 'unknown action'})
-        return jsonify({'ok': True})
+        return jsonify({'ok': True, 'notification_sent': notification_sent})
 
     @app.route('/api/admin/users/create', methods=['POST'])
     def api_admin_user_create():
@@ -2183,52 +2302,69 @@ def _bot_link():
     return os.getenv('TELEGRAM_BOT_LINK') or ''
 
 
-def _tg_register_prompt():
+def _language_field(lang='uk'):
+    from web.i18n import language_options, tr, normalize_language
+    lang = normalize_language(lang)
+    return ('<div class="language-row"><span class="lang-icon" aria-hidden="true">◎</span>'
+            f'<label for="profile-language" data-i18n="language">{tr(lang, "language")}</label>'
+            f'<select id="profile-language" name="language" aria-label="Language">'
+            f'{language_options(lang)}</select></div>')
+
+
+def _tg_register_prompt(lang='uk'):
     """Registration is Telegram-only — no email form. Point the user at the bot."""
+    from web.i18n import tr
     bl = _bot_link()
-    btn = (f'<a class="tgbtn" href="{bl}">📨 Відкрити Telegram-бота</a>' if bl else
-           '<div class="msg ok">Знайдіть нашого бота в Telegram і натисніть <b>/start</b>.</div>')
-    return (f'<h1>📝 Реєстрація</h1>'
-            f'<p class="sub">Реєстрація — лише через Telegram, без email.</p>'
+    btn = (f'<a class="tgbtn" href="{bl}" data-i18n="open_telegram">{tr(lang, "open_telegram")}</a>' if bl else
+           f'<div class="msg ok" data-i18n="find_bot">{tr(lang, "find_bot")}</div>')
+    return (f'<h1>📝 <span data-i18n="register_title">{tr(lang, "register_title")}</span></h1>'
+            f'{_language_field(lang)}'
+            f'<p class="sub" data-i18n="registration_only_telegram">{tr(lang, "registration_only_telegram")}</p>'
             f'<div style="text-align:center;margin:8px 0 4px">{btn}</div>'
-            f'<p class="sub" style="text-align:center;margin-top:14px">'
-            f'Натисніть <b>/start</b> у боті — він надішле персональне посилання '
-            f'для завершення реєстрації.</p>'
-            f'<div class="links"><a href="/login">← Вже маю акаунт</a></div>')
+            f'<p class="sub" style="text-align:center;margin-top:14px" data-i18n="start_bot_hint">'
+            f'{tr(lang, "start_bot_hint")}</p>'
+            f'<div class="links"><a href="/login" data-lang-link data-i18n="have_account">{tr(lang, "have_account")}</a></div>')
 
 
-def _login_form(nxt='/', err=''):
-    e = f'<div class="msg err">{err}</div>' if err else ''
+def _login_form(nxt='/', err='', lang='uk'):
+    from markupsafe import escape
+    from web.i18n import tr
+    e = f'<div class="msg err">{escape(err)}</div>' if err else ''
     bl = _bot_link()
-    reg = (f'<a href="{bl}">Реєстрація через Telegram</a>' if bl
-           else '<a href="/register">Реєстрація</a>')
-    return (f'<h1>🔐 Вхід</h1><p class="sub">Ваш логін та пароль, створені при реєстрації в Telegram</p>{e}'
-            f'<form method="post">'
-            f'<input type="hidden" name="next" value="{nxt}">'
-            f'<label>Логін (ваше ім’я для входу)</label>'
+    reg = (f'<a href="{bl}" data-i18n="register_telegram">{tr(lang, "register_telegram")}</a>' if bl
+           else f'<a href="/register" data-lang-link data-i18n="register_title">{tr(lang, "register_title")}</a>')
+    return (f'<h1>🔐 <span data-i18n="login_title">{tr(lang, "login_title")}</span></h1>'
+            f'<p class="sub" data-i18n="login_subtitle">{tr(lang, "login_subtitle")}</p>{e}'
+            f'<form method="post">{_language_field(lang)}'
+            f'<input type="hidden" name="next" value="{escape(nxt)}">'
+            f'<label data-i18n="login_name">{tr(lang, "login_name")}</label>'
             f'<input name="email" type="text" required autofocus autocomplete="username" '
-            f'placeholder="ім’я, яке ви задали при реєстрації">'
-            f'<label>Пароль</label><input name="password" type="password" required '
-            f'autocomplete="current-password">'
-            f'<button type="submit">Увійти</button></form>'
+            f'data-i18n-placeholder="login_placeholder" placeholder="{tr(lang, "login_placeholder")}">'
+            f'<label data-i18n="password">{tr(lang, "password")}</label>'
+            f'<input name="password" type="password" required autocomplete="current-password">'
+            f'<button type="submit" data-i18n="login">{tr(lang, "login")}</button></form>'
             f'<div class="links">{reg}</div>')
 
 
-def _register_form(err='', tg=''):
-    # Only reached WITH a valid Telegram token → password-only, no email field.
-    e = f'<div class="msg err">{err}</div>' if err else ''
-    tg_hidden = f'<input type="hidden" name="tg" value="{tg}">' if tg else ''
-    tg_note = ('<div class="msg ok" style="font-size:.78rem">🔗 Telegram підтверджено. '
-               'Придумайте <b>логін</b> (ім’я для входу) і пароль — далі схвалення адміністратора.</div>')
-    return (f'<h1>📝 Реєстрація</h1><p class="sub">Через Telegram — логін і пароль</p>{e}{tg_note}'
-            f'<form method="post">{tg_hidden}'
-            f'<label>Логін (ім’я для входу)</label>'
-            f'<input name="login" type="text" required autofocus placeholder="напр. myname" '
-            f'autocomplete="username">'
-            f'<label>Пароль (мін. 8)</label><input name="password" type="password" required>'
-            f'<label>Повторіть пароль</label><input name="password2" type="password" required>'
-            f'<button type="submit">Зареєструватися</button></form>'
-            f'<div class="links"><a href="/login">← Вже маю акаунт</a></div>')
+def _register_form(err='', tg='', lang='uk'):
+    from markupsafe import escape
+    from web.i18n import tr
+    e = f'<div class="msg err">{escape(err)}</div>' if err else ''
+    tg_hidden = f'<input type="hidden" name="tg" value="{escape(tg)}">' if tg else ''
+    tg_note = (f'<div class="msg ok" style="font-size:.78rem" data-i18n="telegram_confirmed">'
+               f'{tr(lang, "telegram_confirmed")}</div>')
+    return (f'<h1>📝 <span data-i18n="register_title">{tr(lang, "register_title")}</span></h1>'
+            f'<p class="sub" data-i18n="register_subtitle">{tr(lang, "register_subtitle")}</p>{e}{tg_note}'
+            f'<form method="post">{tg_hidden}{_language_field(lang)}'
+            f'<label data-i18n="register_name">{tr(lang, "register_name")}</label>'
+            f'<input name="login" type="text" required autofocus autocomplete="username" '
+            f'data-i18n-placeholder="register_placeholder" placeholder="{tr(lang, "register_placeholder")}">'
+            f'<label data-i18n="password_min">{tr(lang, "password_min")}</label>'
+            f'<input name="password" type="password" required autocomplete="new-password">'
+            f'<label data-i18n="password_repeat">{tr(lang, "password_repeat")}</label>'
+            f'<input name="password2" type="password" required autocomplete="new-password">'
+            f'<button type="submit" data-i18n="register">{tr(lang, "register")}</button></form>'
+            f'<div class="links"><a href="/login" data-lang-link data-i18n="have_account">{tr(lang, "have_account")}</a></div>')
 
 
 def _forgot_form(err=''):

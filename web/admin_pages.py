@@ -554,7 +554,7 @@ def render_cabinet(c, info_url):
         '<div id="pwm" class="cab-msg"></div></section>')
     if adm:
         ntf = ('<section class="card"><div class="card-h">📢 Групові теми Telegram<span class="r">для всіх учасників</span></div>'
-               '<div class="cab-row"><div class="t"><b>🧮 МММ-монітор — банер · ₿ сеанс</b>'
+               '<div class="cab-row"><div class="t"><b>🧮 VSV-монітор — банер · ₿ сеанс</b>'
                '<small>Майстер-вимикач теми в групі.</small></div>'
                f'<label class="sw"><input type="checkbox" id="nbtc" {"checked" if c.get("ntf_btc") else ""} onchange="saventf()"><span class="tr"></span></label></div>'
                '<div class="cab-row"><div class="t"><b>💰 Funding — поява монети з ММ</b>'

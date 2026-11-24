@@ -745,7 +745,7 @@ def scan_liquidity(exchange: str = 'binance', top_n: int = 40,
         for r in pool.map(_one, cands):
             rows.append(r)
     rows = sort_rows(rows, sort_by)
-    # `keep_flat` (🧭 МММ-Pull, 20.10): монітору ⚖ рівновага ПОТРІБНА — це
+    # `keep_flat` (🧭 VSV-Pull, 20.10): монітору ⚖ рівновага ПОТРІБНА — це
     # окрема вкладка і маса в знаменнику банера; звіт на 📡 Tickr її й далі ріже.
     rows, drop_flat_n = (rows, 0) if keep_flat else drop_flat(rows)
     ok_rows = [r for r in rows if r.get('ok')]

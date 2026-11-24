@@ -547,7 +547,7 @@ class FundingMonitor:
 
     def get_price_dirs(self) -> Dict[str, Dict]:
         """{symbol: {'dir','chg','dir_overall','chg_overall'}} — свіжий (15 хв) +
-        загальний (≈2 год) напрямок ЦІНИ. Кросмодульно (💰 Funding — МММ, 5-й шар
+        загальний (≈2 год) напрямок ЦІНИ. Кросмодульно (💰 Funding — VSV, 5-й шар
         «Ціна» + ворота «проти загального тренду» у VOB-відкритті)."""
         with self._lock:
             out = {}

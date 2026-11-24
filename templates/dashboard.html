@@ -11,6 +11,8 @@
         </div>
     </div>
 
+    {% include "vsv_terminal.html" %}
+
     <!-- ═══ API Health strip — live status of every external dependency.
          Backed by detection/api_health.py (sweep every 2 min); the strip
          itself refreshes from cache every 60 s. ═══ -->
@@ -4047,7 +4049,7 @@ function liqmapDrawChart(data) {
     // ===========================
     g.append('rect')
         .attr('width', innerW).attr('height', innerH)
-        .attr('fill', '#0a0d12')
+        .attr('fill', '#000000')
         .attr('stroke', 'rgba(255,255,255,0.05)').attr('stroke-width', 1);
 
     // Horizontal gridlines at 4 equal Y-divisions
@@ -4170,7 +4172,7 @@ function liqmapDrawChart(data) {
                 .attr('x', 0).attr('y', -8)
                 .attr('width', tw).attr('height', 15)
                 .attr('rx', 3).attr('ry', 3)
-                .attr('fill', '#0a0d12')
+                .attr('fill', '#000000')
                 .attr('stroke', color).attr('stroke-width', 0.9)
                 .attr('opacity', 0.95);
             lg.append('text')
@@ -4197,7 +4199,7 @@ function liqmapDrawChart(data) {
             const yH = yScale(c.h);
             const yL = yScale(c.l);
             const bull = c.c >= c.o;
-            const color = bull ? '#22c55e' : '#ef4444';
+            const color = bull ? '#00bb7f' : '#fb2c36';
             // Wick
             candleG.append('line')
                 .attr('x1', x).attr('x2', x)
@@ -4320,7 +4322,7 @@ function liqmapDrawChart(data) {
             .attr('x', 0).attr('y', -8)
             .attr('width', txtLen).attr('height', LABEL_H)
             .attr('rx', 2).attr('ry', 2)
-            .attr('fill', '#0a0d12')
+            .attr('fill', '#000000')
             .attr('stroke', e.color).attr('stroke-width', 1)
             .attr('opacity', 0.92);
         labelG.append('text')
@@ -4416,7 +4418,7 @@ function liqmapDrawChart(data) {
             .attr('x', 0).attr('y', -7)
             .attr('width', tw).attr('height', RAIL_H - 1)
             .attr('rx', 2).attr('ry', 2)
-            .attr('fill', '#0a0d12')
+            .attr('fill', '#000000')
             .attr('stroke', e.color).attr('stroke-width', 0.8)
             .attr('opacity', 0.95);
         rg.append('text')
@@ -5330,6 +5332,7 @@ async function liqmapInit() {
         const pd = await pr.json();
         if (pd.ok && pd.enabled === false) {
             liqmapApplyPower(false);
+            if (window.VSV_BOOT) window.VSV_BOOT.ready('liqmap');
             return;
         }
     } catch {}
@@ -5337,7 +5340,12 @@ async function liqmapInit() {
     // UI to match server's authoritative state. The toggle checkbox + status
     // icon + overlay are all set based on actual daemon state, not on
     // assumptions baked into init.
-    await loadLiqmap();
+    try {
+        await loadLiqmap();
+    } finally {
+        // First data attempt (success or visible error state) is complete.
+        if (window.VSV_BOOT) window.VSV_BOOT.ready('liqmap');
+    }
     liqmapStartRefresh();
     // Re-render on resize without refetching
     let resizeTimer;
@@ -5355,4 +5363,13 @@ if (document.readyState === 'loading') {
     liqmapInit();
 }
 </script>
+{% endblock %}
+
+{% block scripts %}
+<!-- Load after config, dictionaries and i18n; DOMContentLoaded panels start afterwards. -->
+<script src="/static/info/js/vendor/lightweight-charts.js"></script>
+<script src="/static/info/js/app.js?v=260"></script>
+<script src="/static/info/js/chart-pro.js?v=214"></script>
+<script src="/static/info/js/chart-tools.js?v=214"></script>
+<script src="/static/info/js/ui.js?v=202"></script>
 {% endblock %}
