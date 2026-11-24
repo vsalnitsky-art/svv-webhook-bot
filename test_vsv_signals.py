@@ -1,4 +1,5 @@
-"""🛰 VSV SIGNALS (вимога 24.11): радар волатильності ОБОХ Пружин БЕЗ напрямку.
+"""🛰 VSV SIGNALS (вимога 24.11): радар волатильності ОБОХ Пружин.
+25.11: + ЙМОВІРНИЙ напрямок (`hint`, vsv_direction) з фактичною точністю.
 
 — монета береться, коли вона «🌀 заряджена» (≥65), уже почала імпульс або VSV·AI
   бачить сетап; дубль — один раз, WATCHLIST сильніший;
@@ -79,13 +80,18 @@ def test_infosite_info_button_and_no_direction():
     head = IDX[IDX.index('id="rec-card"'):IDX.index('id="rec-tbl"')]
     assert 'id="rec-info-btn"' in head and 'aria-controls="rec-info"' in head
     info = IDX[IDX.index('id="rec-info"'):IDX.index('</div>', IDX.index('id="rec-info"'))]
-    for w in ('squeeze', 'volatility expansion', 'range breakout', 'Напрямок свідомо не вказується'):
+    for w in ('squeeze', 'volatility expansion', 'range breakout'):
         assert w in info, w
+    full = IDX[IDX.index('id="rec-info"'):IDX.index('id="rec-tbl"')]
+    for w in ('Чому напрямок не є 100% вірним і кінцевим', 'liquidity sweep', 'може змінитися',
+              '50% — це рівень випадкового вгадування', 'не торгова рекомендація'):
+        assert w in full, w
     tbl = IDX[IDX.index('id="rec-tbl"'):IDX.index('</table>', IDX.index('id="rec-tbl"'))]
     for gone in ('LONG', 'SHORT', '1H · OB 1H', 'OB 15m', 'SL', 'ЦІЛЬ'):
         assert gone not in tbl, gone
     blk = APP[APP.index('var REC = '):APP.index('function recRender()')]
-    assert 'r.side' not in blk and 'pp-long' not in blk and 'pp-short' not in blk
+    assert 'r.side' not in blk and 'pp-long' not in blk and 'pp-short' not in blk, \
+        'бік — лише зведенням r.hint (25.11), а не сирими полями Пружини'
     assert 'rec-info' in APP and 'aria-expanded' in APP
     for c in ('.rec-info-btn', '.rec-info[hidden]', '.rec-warn', '.rec-score', '.rec-grade.g-A', '.rec-phase.imp'):
         assert c in CSS, c
@@ -157,6 +163,94 @@ def test_menu_cabinet_and_anom_telegram_label():
     assert 'nc.href = botUrl("/cabinet?from=info")' in APP
     assert '.main-nav a[hidden]{display:none}' in CSS
     assert '⚠ Аномалії обсягу у Telegram' in APP
+
+
+VD = IP._vd()
+
+
+def test_direction_combines_evidence_and_never_100():
+    rec = _rec(80, prob_long=75, move24_pct=2.0)
+    adir = {'state': 'dir', 'up': 0.9, 'dn': 0.1}
+    h = VD.direction(rec, adir, {'ready': True, 'side': 'LONG', 'confidence': 70})
+    assert h['side'] == 'LONG' and 50 < h['prob'] <= VD.P_MAX and h['agree'] == 4 and h['against'] == 0
+    # джерела суперечать → ⚖
+    h2 = VD.direction(_rec(80, prob_long=85), {'state': 'dir', 'up': 0.0, 'dn': 0.56})
+    assert h2['side'] is None and '⚖' in h2['why']
+    # без натягу і без order flow — не вгадуємо
+    h3 = VD.direction({'state': 'flat', 'move24_pct': 4.0})
+    assert h3['side'] is None and 'недостатньо' in h3['why']
+    # імпульс уже пішов — його бік
+    h4 = VD.direction(_rec(30, state='fired', fired={'side': 'SHORT'}, prob_long=80))
+    assert h4['side'] == 'SHORT'
+    # mixed order flow ослаблює, а не голосує
+    hm = VD.direction(_rec(80, prob_long=75), {'state': 'mixed', 'up': 0.9, 'dn': 0.8})
+    assert hm['prob'] < VD.direction(_rec(80, prob_long=75), {'state': 'dir', 'up': 0.9, 'dn': 0.1})['prob']
+
+
+def test_journal_verifies_direction_by_market():
+    rows = [{'symbol': 'AAAUSDT', 'price': 100, 'amp_pct': 4.0, 'hint': {'side': 'LONG', 'prob': 72}},
+            {'symbol': 'BBBUSDT', 'price': 50, 'amp_pct': 1.0, 'hint': {'side': 'SHORT', 'prob': 64}},
+            {'symbol': 'CCCUSDT', 'price': 10, 'hint': {'side': None}}]
+    j = VD.journal_open([], rows, 1000, {'AAAUSDT': 100.0, 'BBBUSDT': 50.0, 'CCCUSDT': 10.0})
+    assert [e['S'] for e in j] == ['AAAUSDT', 'BBBUSDT'] and j[0]['th'] == 2.0 and j[1]['th'] == 1.0
+    assert VD.journal_open([], rows, 1000, {}) == [], 'без живої ціни запис не відкривається'
+    j = VD.journal_open(j, rows, 1100, {'AAAUSDT': 100.0, 'BBBUSDT': 50.0})
+    assert len(j) == 2, 'той самий бік монети — один відкритий запис'
+    j = VD.journal_update(j, {'AAAUSDT': 102.1, 'BBBUSDT': 50.6}, 2000)
+    assert j[0]['st'] == 'win' and j[1]['st'] == 'loss', 'LONG +2.1% ✅, SHORT проти −1.2% ❌'
+    j2 = VD.journal_open([], rows[:1], 0, {'AAAUSDT': 100.0})
+    j2 = VD.journal_update(j2, {'AAAUSDT': 100.5}, VD.EVAL_SEC + 1)
+    assert j2[0]['st'] == 'flat'
+    acc = VD.accuracy(j + j2)
+    assert acc['n'] == 2 and acc['acc'] == 50.0 and acc['flat'] == 1
+    assert acc['buckets']['70-80']['win'] == 1 and acc['buckets']['60-70']['loss'] == 1
+
+
+def test_row_accuracy_honest_until_enough_data():
+    few = [{'st': 'win', 'prob': 72}] * 5
+    assert VD.row_accuracy(VD.accuracy(few), 72) == {'acc': None, 'n': 5, 'scope': None, 'need': VD.MIN_N}
+    j = [{'st': 'win', 'prob': 72}] * 8 + [{'st': 'loss', 'prob': 72}] * 4 + [{'st': 'loss', 'prob': 55}] * 10
+    a = VD.accuracy(j)
+    assert VD.row_accuracy(a, 75)['scope'] == 'bucket' and VD.row_accuracy(a, 75)['acc'] == 66.7
+    r = VD.row_accuracy(a, 66)
+    assert r['scope'] == 'all' and r['n'] == 22 and r['acc'] == round(800 / 22, 1)
+
+
+def test_direction_can_flip_and_is_marked():
+    st = {}
+    st['X'] = VD.track_flip(st, 'X', 'LONG', 100)
+    assert st['X']['prev'] is None
+    st['X'] = VD.track_flip(st, 'X', 'LONG', 200)
+    assert st['X']['since'] == 100
+    st['X'] = VD.track_flip(st, 'X', None, 300)          # ⚖
+    assert st['X']['prev'] is None
+    st['X'] = VD.track_flip(st, 'X', 'SHORT', 400)       # LONG → ⚖ → SHORT = розворот
+    assert st['X']['prev'] == 'LONG' and st['X']['flip_t'] == 400
+    v = VD.flip_view(st['X'], 400 + 1800)
+    assert v == {'prev': 'LONG', 't': 400, 'ago_min': 30}
+    assert VD.flip_view(st['X'], 400 + VD.FLIP_SHOW_SEC + 1) is None
+
+
+def test_rows_and_page_show_probable_direction():
+    rows, _ = IP.vsv_signal_rows({'AAAUSDT': _rec(92, sq=20, rank=8, vr=0.6)}, [], {}, 'binance',
+                                 adir_map={'AAAUSDT': {'state': 'dir', 'up': 0.9, 'dn': 0.0}})
+    h = rows[0]['hint']
+    assert h['side'] == 'LONG' and h['parts'] and 'prob_long' not in rows[0]
+    old = (IP._vsv_dir['j'], IP._vsv_dir['flip'], IP._vsv_dir['acc'])
+    try:
+        IP._vsv_dir.update(j=[{'st': 'win', 'prob': 72}] * 15 + [{'st': 'loss', 'prob': 72}] * 5,
+                           flip={}, acc=None)
+        IP._vsv_dir['acc'] = VD.accuracy(IP._vsv_dir['j'])
+        da = IP.vsv_dir_attach(rows, 5000)
+        assert da['acc'] == 75.0 and rows[0]['hint']['acc']['acc'] == 75.0
+    finally:
+        IP._vsv_dir['j'], IP._vsv_dir['flip'], IP._vsv_dir['acc'] = old
+    assert 'function recDirCell(' in APP and 'recDirCell(r)' in APP and 'rec-flip' in APP
+    assert '>Ймовірний напрямок</th>' in IDX and 'colspan="9" class="muted">Завантаження' in IDX
+    assert '.rec-dir-s.l' in CSS
+    src = open(os.path.join(ROOT, 'web', 'info_portal.py'), encoding='utf-8').read()
+    loop = src[src.index('def _vsv_tg_loop'):src.index('def vsv_tg_start')]
+    assert 'vsv_dir_tick()' in loop, 'журнал веде потік VSV незалежно від тумблера Telegram'
 
 
 if __name__ == '__main__':

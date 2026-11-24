@@ -2205,6 +2205,10 @@ def rec_prob(row):
 # 🌀 Пружини WATCHLIST і рядки 🔭 скану біржі (лише памʼять); оцінка — ЧИСТА
 # `vsv_signal_view`, відбір — ЧИСТА `vsv_signal_rows`. Сторона (LONG/SHORT,
 # ймовірність боку, цілі, стопи) у відповідь НЕ потрапляє взагалі.
+# 🧭 25.11: окремим полем `hint` — ЙМОВІРНИЙ напрямок (зведення 🌀 натягу ·
+# ⚠ order flow · 🤖 сетапу · руху 24 год) з власною впевненістю моделі і
+# ФАКТИЧНОЮ точністю з журналу перевірки (`vsv_direction`). Сирі поля Пружини
+# (prob_long, tgt_*, …) у рядок і далі не потрапляють; SL / цілі — теж.
 VSV_SHOW = 20                 # скільки монет показуємо (найвищий VSV Score)
 VSV_MIN_CHARGE = 65.0         # «🌀 заряджена» — та сама межа, що в Пружині
 VSV_SQUEEZE_FULL = 24         # годин стиснення, що дають повний бал
@@ -2279,13 +2283,16 @@ def vsv_signal_view(rec, ai=None):
             'notes': notes}
 
 
-def vsv_signal_rows(wl_recs, scan_rows, ai_map=None, scan_ex=None, limit=VSV_SHOW):
+def vsv_signal_rows(wl_recs, scan_rows, ai_map=None, scan_ex=None, limit=VSV_SHOW,
+                    adir_map=None):
     """ЧИСТА: монети ОБОХ Пружин → відбір «VSV SIGNALS» (найвищий VSV Score).
 
     Береться монета, яка «🌀 заряджена» (заряд ≥ `VSV_MIN_CHARGE`) або вже
     почала імпульс, або в якій VSV·AI бачить сетап. Дубль (є в обох) —
-    один раз, WATCHLIST сильніший. Напрямку в рядку НЕМАЄ."""
+    один раз, WATCHLIST сильніший. Сирих полів напрямку Пружини в рядку НЕМАЄ;
+    🧭 ЙМОВІРНИЙ напрямок (25.11) — окремим зведенням `hint` (vsv_direction)."""
     ai_map = ai_map or {}
+    adir_map = adir_map or {}
     sx = str(scan_ex or 'binance').lower()
     out, seen = [], set()
 
@@ -2302,6 +2309,10 @@ def vsv_signal_rows(wl_recs, scan_rows, ai_map=None, scan_ex=None, limit=VSV_SHO
         row.update(v)
         row.update({'symbol': S, 'src': src, 'ex': 'bybit' if src == 'wl' else sx})
         row.update(extra or {})
+        try:
+            row['hint'] = _vd().direction(rec, adir_map.get(S), ai_map.get(S))
+        except Exception:
+            row['hint'] = None
         out.append(row)
         seen.add(S)
 
@@ -2454,6 +2465,23 @@ def rec_levels(row, sl=None):
 
 # ⚖ БАНЕР «SMC Forecast» — рахує й веде БОТ (`detection/spring_banner.py`,
 # вимога 11.11); тут лише делегування (інфосайт транслює показники бота).
+def _vd():
+    """🧭 detection/vsv_direction.py — один екземпляр на процес (без пакета)."""
+    import sys
+    m = sys.modules.get('detection.vsv_direction')
+    if m is not None:
+        return m
+    import importlib.util
+    import os
+    p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     'detection', 'vsv_direction.py')
+    spec = importlib.util.spec_from_file_location('detection.vsv_direction', p)
+    m = importlib.util.module_from_spec(spec)
+    sys.modules['detection.vsv_direction'] = m
+    spec.loader.exec_module(m)
+    return m
+
+
 def _sb():
     import importlib
     import sys
@@ -2518,7 +2546,7 @@ def recommended_payload(now=None):
         pass
     # 🛰 VSV SIGNALS (24.11): обидві Пружини, відбір за VSV Score, БЕЗ напрямку.
     # 🤖 ВИБІР ШІ лише підсилює оцінку (бік сетапу на сторінку не йде).
-    amap = {}
+    amap, _ai = {}, None
     try:
         from detection.ai_signals import get_ai_engine
         _ai = get_ai_engine()
@@ -2531,16 +2559,143 @@ def recommended_payload(now=None):
                      for S, rec in (wl_recs or {}).items()}
     except Exception:
         wl_shaped = dict(wl_recs or {})
-    rows, counts = vsv_signal_rows(wl_shaped, scan_rows, amap, scan_meta.get('exchange'))
+    adir = {}
+    try:
+        if _ai is not None and hasattr(_ai, 'anomaly_dir'):
+            for S in list(wl_shaped) + [str((r or {}).get('symbol') or '').upper() for r in scan_rows]:
+                if S and S not in adir:
+                    adir[S] = _ai.anomaly_dir(S)
+    except Exception:
+        pass
+    rows, counts = vsv_signal_rows(wl_shaped, scan_rows, amap, scan_meta.get('exchange'),
+                                   adir_map=adir)
+    dir_acc = vsv_dir_attach(rows, now)
     ai_n = counts.get('ai', 0)
     try:
         banners = spring_banners(sc, eng, now)
     except Exception:
         banners = []
-    p = {'ok': True, 'rows': rows, 'banners': banners, 'counts': counts,
+    p = {'ok': True, 'rows': rows, 'banners': banners, 'counts': counts, 'dir_acc': dir_acc,
          'scan': scan_meta, 'wl_n': len(wl_recs), 'ai_ready': ai_n, 'ts': now}
     _rec_cache['p'] = (now, p)
     return p
+
+
+# ─── 🧭 VSV SIGNALS: ЖУРНАЛ ТОЧНОСТІ НАПРЯМКУ + РОЗВОРОТИ (вимога 25.11) ────
+# Кожен напрямок, що зʼявився в таблиці, перевіряє ринок (vsv_direction.journal_*):
+# +поріг у бік прогнозу раніше за −поріг проти → ✅, навпаки → ❌. Журнал веде
+# фоновий потік VSV раз на хвилину (живі ціни: стрічка Bybit / кеш сканера),
+# незалежно від тумблера Telegram. Стан — БД `VSV_DIR_KEY` (переживає рестарт).
+VSV_DIR_KEY = 'vsv_direction_journal_v1'
+_vsv_dir = {'j': None, 'acc': None, 'flip': {}, 'saved': 0.0, 'dirty': False}
+_vsv_dir_lock = threading.Lock()
+
+
+def _vsv_dir_load():
+    if _vsv_dir['j'] is not None:
+        return
+    j, fl = [], {}
+    try:
+        db = _vsv_db()
+        raw = db.get_setting(VSV_DIR_KEY, None) if db is not None else None
+        if isinstance(raw, dict):
+            j = [e for e in (raw.get('j') or []) if isinstance(e, dict)]
+            fl = {k: v for k, v in (raw.get('flip') or {}).items() if isinstance(v, dict)}
+    except Exception:
+        pass
+    _vsv_dir['j'], _vsv_dir['flip'] = j, fl
+    _vsv_dir['acc'] = _vd().accuracy(j)
+
+
+def vsv_dir_attach(rows, now):
+    """Рядкам — точність (кошик / загальна) і свіжий розворот напрямку.
+    Повертає загальну точність для шапки."""
+    try:
+        vd = _vd()
+        with _vsv_dir_lock:
+            _vsv_dir_load()
+            acc = _vsv_dir['acc'] or vd.accuracy([])
+            fl = _vsv_dir['flip']
+            for r in rows or []:
+                h = r.get('hint')
+                if not isinstance(h, dict):
+                    continue
+                S = r.get('symbol')
+                rec = vd.track_flip(fl, S, h.get('side'), now)
+                if rec != fl.get(S):
+                    fl[S] = rec
+                    _vsv_dir['dirty'] = True
+                h['since'] = rec.get('since')
+                h['flip'] = vd.flip_view(rec, now)
+                h['acc'] = vd.row_accuracy(acc, h.get('prob')) if h.get('side') else None
+        return {k: acc.get(k) for k in ('n', 'win', 'loss', 'flat', 'open', 'acc', 'min_n', 'buckets')}
+    except Exception:
+        return None
+
+
+def _vsv_prices(syms):
+    """Живі ціни монет журналу: стрічка Bybit (≤60с) → кеш сканера."""
+    out = {}
+    feed = None
+    try:
+        from detection.price_feed import get_price_feed
+        feed = get_price_feed()
+    except Exception:
+        feed = None
+    sc = _scanner()
+    for S in syms:
+        px = None
+        if feed is not None:
+            try:
+                v = feed.price(S, max_age=60)
+                px = v[0] if v else None
+            except Exception:
+                px = None
+        if px is None and sc is not None and hasattr(sc, '_get_live_price'):
+            try:
+                px = sc._get_live_price(S)
+            except Exception:
+                px = None
+        if px:
+            out[S] = float(px)
+    return out
+
+
+def vsv_dir_tick(now=None, rows=None, prices=None):
+    """Раз на хвилину: перевіряє відкриті прогнози і відкриває нові."""
+    now = time.time() if now is None else now
+    vd = _vd()
+    if rows is None:
+        try:
+            rows = (recommended_payload(now) or {}).get('rows') or []
+        except Exception:
+            rows = []
+    with _vsv_dir_lock:
+        _vsv_dir_load()
+        j = _vsv_dir['j']
+    syms = sorted({e.get('S') for e in j if e.get('st') == 'open'}
+                  | {str(r.get('symbol') or '').upper() for r in rows})
+    px = prices if prices is not None else _vsv_prices([s for s in syms if s])
+    with _vsv_dir_lock:
+        j = vd.journal_update(_vsv_dir['j'], px, now)
+        j = vd.journal_open(j, rows, now, px)
+        changed = j != _vsv_dir['j']
+        _vsv_dir['j'] = j
+        _vsv_dir['acc'] = vd.accuracy(j)
+        if changed:
+            _vsv_dir['dirty'] = True
+        save = _vsv_dir['dirty'] and now - _vsv_dir['saved'] >= 60
+        blob = {'j': j, 'flip': dict(_vsv_dir['flip'])} if save else None
+        if save:
+            _vsv_dir['saved'], _vsv_dir['dirty'] = now, False
+    if blob is not None:
+        try:
+            db = _vsv_db()
+            if db is not None:
+                db.set_setting(VSV_DIR_KEY, blob)
+        except Exception:
+            pass
+    return _vsv_dir['acc']
 
 
 # ─── 📨 VSV SIGNALS → Telegram «🔔 Сигнали» (вимога 25.11) ─────────────────
@@ -2697,6 +2852,10 @@ def vsv_tg_tick(now=None, send=None):
 
 def _vsv_tg_loop():
     while True:
+        try:
+            vsv_dir_tick()
+        except Exception as e:
+            print(f"[VSV-DIR] {type(e).__name__}: {e}")
         try:
             vsv_tg_tick()
         except Exception as e:

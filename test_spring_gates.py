@@ -328,7 +328,7 @@ def test_rec_table_layout():
     """24.11: VSV SIGNALS — радар волатильності без напрямку, SL/ЦІЛЬ прибрано."""
     i = IDX.index('id="rec-tbl"'); head = IDX[i:IDX.index('</thead>', i)]
     cols = re.findall(r'<th[^>]*>([^<]*)</th>', head)
-    assert cols == ['Монета', 'VSV Score', 'Заряд', 'Стиснення', 'Волатильність', 'Обсяг',
+    assert cols == ['Монета', 'Ймовірний напрямок', 'VSV Score', 'Заряд', 'Стиснення', 'Волатильність', 'Обсяг',
                     'Амплітуда', 'Фаза · коментар'], cols
     for gone in ('SL', 'ЦІЛЬ', 'LONG', 'SHORT', 'OB 1H'):
         assert gone not in head, gone

@@ -556,3 +556,11 @@ body.perm-no-sec_terminal .pm-sec_terminal,body.perm-no-sec_signals .pm-sec_sign
 .main-nav a[hidden]{display:none}
 .iw-peek{margin-left:8px;font:600 10px var(--font);color:var(--accent-2);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:999px;padding:1px 8px;white-space:nowrap}
 #rec-tbl tr.rec-row{cursor:zoom-in}
+
+.rec-dir{display:flex;flex-direction:column;align-items:flex-start;gap:1px;line-height:1.25;white-space:nowrap}
+#rec-tbl td:nth-child(2),#rec-tbl th:nth-child(2){text-align:left}
+.rec-dir-s{font-weight:700;font-size:12px}.rec-dir-s.l{color:#00e676}.rec-dir-s.s{color:#ff4d5e}
+.rec-dir-s small{font-weight:500;color:var(--muted,#94a3b8);margin-left:2px}
+.rec-dir-n{color:var(--muted,#94a3b8);font-size:12px}
+.rec-acc{font-size:10.5px;color:var(--muted,#94a3b8)}.rec-acc b{font-weight:700}
+.rec-flip{font-size:10.5px;color:#facc15}

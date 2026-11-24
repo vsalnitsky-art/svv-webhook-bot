@@ -2938,7 +2938,7 @@
   setInterval(function () { document.querySelectorAll(".pp-timer[data-since]").forEach(function (el) { var t = Number(el.getAttribute("data-since")); if (t > 0) el.textContent = ppTimer(t); }); }, 1000);
 
   // 🛰 VSV SIGNALS (вимога 24.11): монети ОБОХ Пружин з найвищим VSV Score —
-  // інформаційний radar волатильності БЕЗ напрямку (пробій можливий в обидва боки).
+  // radar волатильності; 25.11 — ЙМОВІРНИЙ напрямок з фактичною точністю.
   var REC = { f: "all", rows: [], meta: {} };
   var REC_F = ["all", "charged", "impulse", "ai"];
   try { var _rf = localStorage.getItem("vsv_rec_f"); if (REC_F.indexOf(_rf) >= 0) REC.f = _rf; } catch (e) {}
@@ -2985,12 +2985,37 @@
     var txt = notes.join(" · ");
     return '<span class="rec-ph"><span class="rec-phase ' + ph[0] + '">' + ph[1] + '</span><span class="rec-note" title="' + esc(txt) + '">' + esc(txt) + "</span></span>";
   }
+  // 🧭 Ймовірний напрямок (25.11): зведення доказів бота + впевненість моделі +
+  // фактична точність журналу перевірки; 🔄 — напрямок нещодавно розвернувся.
+  function recAccCol(a) { return a >= 60 ? "#00e676" : a >= 50 ? "#facc15" : "#ff4d5e"; }
+  function recDirCell(r) {
+    var h = r.hint;
+    if (!h) return '<span class="muted" title="Напрямок ще не порахований">—</span>';
+    var tip = [], parts = h.parts || [];
+    parts.forEach(function (e) {
+      var s = Number(e.s) || 0;
+      tip.push(e.label + ": " + e.txt + " (" + (s > 0 ? "▲ " : s < 0 ? "▼ " : "· ") + Math.abs(s * 100).toFixed(0) + "%, вага " + Math.round((Number(e.w) || 0) * 100) + "%)");
+    });
+    if (h.why) tip.push("→ " + h.why);
+    tip.push("Напрямок перераховується постійно і може змінитися: хибний пробій, збір ліквідності, новий учасник чи рух BTC розвертають картину. Не 100% і не остаточний — див. «ⓘ Що це?».");
+    var fl = h.flip ? '<small class="rec-flip" title="Напрямок розвернувся ' + esc(locHM(h.flip.t)) + '">🔄 був ' + esc(h.flip.prev) + " · " + (h.flip.ago_min < 60 ? h.flip.ago_min + " хв" : Math.floor(h.flip.ago_min / 60) + " год") + "</small>" : "";
+    if (!h.side) return '<span class="rec-dir" title="' + esc(tip.join("\n")) + '"><span class="rec-dir-n">⚖ не визначено</span>' + fl + "</span>";
+    var L = h.side === "LONG", a = h.acc || {}, acc;
+    if (a.acc != null) {
+      tip.push("Точність: " + a.acc + "% із " + a.n + " перевірених" + (a.scope === "bucket" ? " (впевненість " + a.range + "%)" : " (усі рядки)") + " · 50% = випадкове вгадування");
+      acc = '<small class="rec-acc">точність <b style="color:' + recAccCol(Number(a.acc)) + '">' + Number(a.acc).toFixed(0) + "%</b> · " + a.n + "</small>";
+    } else {
+      tip.push("Точність: збираємо статистику — перевірено " + (a.n || 0) + " з " + (a.need || 20) + " потрібних");
+      acc = '<small class="rec-acc muted">точність: збираємо ' + (a.n || 0) + "/" + (a.need || 20) + "</small>";
+    }
+    return '<span class="rec-dir" title="' + esc(tip.join("\n")) + '"><span class="rec-dir-s ' + (L ? "l" : "s") + '">' + (L ? "▲ LONG" : "▼ SHORT") + ' <small title="Впевненість моделі">~' + Number(h.prob).toFixed(0) + "%</small></span>" + acc + fl + "</span>";
+  }
   function recRow(r) {
     var ex = String(r.ex || (r.src === "scan" ? "binance" : "bybit")).toLowerCase();
     var icon = '<span class="rec-ic" title="' + (ex === "binance" ? "Binance" : "Bybit") + " · " + (r.src === "scan" ? "скан біржі" : "WATCHLIST бота") + '">' + (SPB_ICON[ex] || "") + "</span>";
     var nb = r.bybit === false ? ' <span class="rec-nb" title="Інструмент не торгується на Bybit">⚠</span>' : "";
     var aiCell = '<span class="rec-ai-slot">' + (r.ai_ready ? '<span class="rec-ai on" title="' + esc("VSV·AI бачить сформований сетап" + (r.ai_scenario ? " · " + r.ai_scenario : "")) + '">' + AI_BRAND + "<b>СЕТАП</b></span>" : "") + "</span>";
-    return '<tr class="rec-row' + (r.impulse ? " imp" : "") + (r.ai_ready ? " ai-pick" : "") + '" data-sym="' + esc(r.symbol) + '" title="Подвійний клік — відкрити на графіку на весь екран"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td>" +
+    return '<tr class="rec-row' + (r.impulse ? " imp" : "") + (r.ai_ready ? " ai-pick" : "") + '" data-sym="' + esc(r.symbol) + '" title="Подвійний клік — відкрити на графіку на весь екран"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td><td>" + recDirCell(r) + "</td>" +
       '<td class="r">' + recScoreCell(r) + '</td><td class="r">' + recChargeCell(r) + '</td><td class="r">' + recSqCell(r) + '</td><td class="r">' + recVolatCell(r) +
       '</td><td class="r">' + recVolCell(r) + '</td><td class="r">' + recAmpCell(r) + "</td><td>" + recPhaseCell(r) + "</td></tr>";
   }
@@ -3000,9 +3025,11 @@
     var lbl = { all: "Усі", charged: "🌀 Стиснення", impulse: "💥 Імпульс", ai: "VSV·AI" };
     document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) { var d = b.getAttribute("data-d"); b.textContent = lbl[d] + " (" + (n[d] || 0) + ")"; b.classList.toggle("on", d === REC.f); });
     var vis = rows.filter(function (r) { return recPass(r, REC.f); }), tb = $("#rec-tbl tbody");
-    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="8" class="muted">' + (rows.length ? "У цій вкладці зараз немає монет" : "Зараз немає монет у фазі стиснення — список оновиться, щойно «Пружина» зарядиться") + "</td></tr>";
+    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="9" class="muted">' + (rows.length ? "У цій вкладці зараз немає монет" : "Зараз немає монет у фазі стиснення — список оновиться, щойно «Пружина» зарядиться") + "</td></tr>";
     var c = (REC.meta || {}).counts || {}, rn = $("#rec-note");
-    if (rn) rn.textContent = (c.total > rows.length ? "топ " + rows.length + " з " + c.total + " · " : "") + new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
+    var da = (REC.meta || {}).dir_acc || {};
+    if (rn) rn.title = da.acc != null ? "Фактична точність напрямку: " + da.acc + "% (✅ " + da.win + " · ❌ " + da.loss + " · без руху " + (da.flat || 0) + " · перевіряється " + (da.open || 0) + ")" : "Точність напрямку: збираємо статистику (" + (da.n || 0) + "/" + (da.min_n || 20) + ")";
+    if (rn) rn.textContent = (c.total > rows.length ? "топ " + rows.length + " з " + c.total + " · " : "") + (da.acc != null ? "🧭 точність " + Number(da.acc).toFixed(0) + "% · " : "") + new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
   }
   // ⚖ Банер «SMC Forecast» (вимога 11.11): куди накручено пружину — 🔭 скан біржі
   // і 🌀 WATCHLIST, у відсотках і з таймером «відколи тримається напрямок».

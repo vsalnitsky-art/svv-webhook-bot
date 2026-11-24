@@ -311,7 +311,7 @@ def test_vsv_signals_only_ai_with_exchange():
     idx = open(os.path.join(_ROOT, 'infosite', 'index.html'), encoding='utf-8').read()
     _check('VSV SIGNALS' in idx and 'Рекомендовані ботом</span>' not in idx, 'у шапці лише VSV SIGNALS')
     head = idx[idx.index('id="rec-tbl"'):idx.index('</table>', idx.index('id="rec-tbl"'))]
-    _check('colspan="8"' in head, '8 колонок')
+    _check('colspan="9"' in head, '9 колонок (25.11: + Ймовірний напрямок)')
     rr = _JS[_JS.index('function recRow(r)'):_JS.index('function recRender()')]
     _check('SPB_ICON[ex]' in rr and 'rec-ai-slot' in rr, 'біржа замість ШІ🌀, слот «ВХІД»')
     css = open(os.path.join(_ROOT, 'infosite', 'css', 'style.css'), encoding='utf-8').read().replace(' ', '')
