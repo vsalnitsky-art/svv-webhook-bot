@@ -163,10 +163,23 @@
     if(T.ind.ema50)T.series.ema50=iw.chart.addLineSeries(Object.assign({color:"#2962ff",title:"EMA 50"},opts));
     if(T.ind.ema200)T.series.ema200=iw.chart.addLineSeries(Object.assign({color:"#ec4899",title:"EMA 200"},opts));
     /* 📊 Обсяг (покупці / продавці) малює app.js — тут лише перемикач. */
-    if(window.VSV_HOOK&&window.VSV_HOOK.volume)window.VSV_HOOK.volume(!!T.ind.volume,T.ind.volanom!==false);
+    if(window.VSV_HOOK&&window.VSV_HOOK.volume)window.VSV_HOOK.volume(!!T.ind.volume,!!(T.ind.volume&&T.ind.volanom));
   }
   function updateIndicators(iw,c){if(!iw||!c)return;var data=c.ohlc||[];[20,50,200].forEach(function(n){var s=T.series["ema"+n];if(s)s.setData(ema(data,n))})}
-  function syncIndUI(){document.querySelectorAll("[data-indicator]").forEach(function(c){c.checked=!!T.ind[c.getAttribute("data-indicator")]});var sc=document.getElementById("tv-standard-candles");if(sc)sc.checked=localStorage.getItem("vsv_candle_standard")==="1"}
+  function syncIndUI(){
+    if(!T.ind.volume)T.ind.volanom=false;
+    document.querySelectorAll("[data-indicator]").forEach(function(c){c.checked=!!T.ind[c.getAttribute("data-indicator")]});
+    var an=document.querySelector('[data-indicator="volanom"]');
+    if(an){
+      var label=an.closest("label");an.disabled=!T.ind.volume;
+      if(label){
+        if(!label.hasAttribute("data-default-title"))label.setAttribute("data-default-title",label.getAttribute("title")||"");
+        label.classList.toggle("is-disabled",an.disabled);
+        label.title=an.disabled?'Спочатку увімкніть «Обсяг»':label.getAttribute("data-default-title");
+      }
+    }
+    var sc=document.getElementById("tv-standard-candles");if(sc)sc.checked=localStorage.getItem("vsv_candle_standard")==="1"
+  }
   function zoom(k){var iw=currentIW();if(!iw||!iw.chart)return;var ts=iw.chart.timeScale(),r=ts.getVisibleLogicalRange();if(!r)return;var mid=(r.from+r.to)/2,w=(r.to-r.from)*k;ts.setVisibleLogicalRange({from:mid-w/2,to:mid+w/2})}
   function closeMenu(){var m=document.getElementById("tv-indicators-menu"),b=document.getElementById("tv-indicators");if(m)m.hidden=true;if(b)b.setAttribute("aria-expanded","false")}
   function bindUI(){
@@ -176,7 +189,12 @@
     var clear=document.getElementById("tv-clear-draw");if(clear)clear.addEventListener("click",function(){var iw=currentIW();T.drawings=iw?T.drawings.filter(function(d){return d.symbol!==iw.sel}):[];T.selected=null;save();activate("cursor")});
     var zi=document.getElementById("tv-zoom-in"),zo=document.getElementById("tv-zoom-out"),rs=document.getElementById("tv-reset");if(zi)zi.addEventListener("click",function(){zoom(.8)});if(zo)zo.addEventListener("click",function(){zoom(1.25)});if(rs)rs.addEventListener("click",function(){var iw=currentIW();if(iw&&iw.chart)iw.chart.timeScale().fitContent()});
     var ib=document.getElementById("tv-indicators");if(ib)ib.addEventListener("click",function(e){e.stopPropagation();var m=document.getElementById("tv-indicators-menu"),open=m.hidden;m.hidden=!open;ib.setAttribute("aria-expanded",open?"true":"false")});
-    document.querySelectorAll("[data-indicator]").forEach(function(c){c.addEventListener("change",function(){T.ind[c.getAttribute("data-indicator")]=c.checked;saveInd();var iw=currentIW();if(iw&&iw.chart){ensureIndicatorSeries(iw);updateIndicators(iw,iw.coin)}})});
+    document.querySelectorAll("[data-indicator]").forEach(function(c){c.addEventListener("change",function(){
+      var key=c.getAttribute("data-indicator");
+      if(key==="volanom"&&!T.ind.volume){c.checked=false;T.ind.volanom=false;syncIndUI();return}
+      T.ind[key]=c.checked;if(key==="volume"&&!c.checked)T.ind.volanom=false;
+      syncIndUI();saveInd();var iw=currentIW();if(iw&&iw.chart){ensureIndicatorSeries(iw);updateIndicators(iw,iw.coin)}
+    })});
     var sc=document.getElementById("tv-standard-candles");if(sc)sc.addEventListener("change",function(){try{localStorage.setItem("vsv_candle_standard",sc.checked?"1":"0")}catch(e){}if(window.VSV_HOOK&&window.VSV_HOOK.applyCandles)window.VSV_HOOK.applyCandles()});
     document.addEventListener("click",function(e){if(!e.target.closest(".tv-ind-wrap"))closeMenu()});
     document.addEventListener("keydown",function(e){var tag=e.target&&e.target.tagName;if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT")return;if((e.key==="Delete"||e.key==="Backspace")&&T.selected){e.preventDefault();removeSelected();return}if(e.key==="Escape"){closeMenu();if(T.edit){var d=T.drawings.find(function(x){return x.id===T.edit.id});if(d)Object.assign(d,T.edit.original);T.edit=null;save()}if(T.draft)T.draft=null;if(T.tool!=="cursor")activate("cursor");else select(null)}});

@@ -3228,7 +3228,8 @@
     if (!it.on) return '<span class="mm4-chip off" title="' + esc(tip + "блок вимкнено в боті — у зведенні не бере участі") + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + '</span><span class="mm4-v flat">вимк</span></span>';
     if (!it.data) return '<span class="mm4-chip off" title="' + esc(tip + "даних ще немає") + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + '</span><span class="mm4-v flat">—</span></span>';
     var cls = it.dir === "LONG" ? "up" : it.dir === "SHORT" ? "dn" : "flat", pct = Math.max(0, Math.min(100, Number(it.pct) || 0));
-    var split = it.dir === "LONG" ? 100 - pct : pct;
+    /* Напрямок завжди домінує: LONG — зелений, SHORT — червоний; відсоток посилює перевагу. */
+    var split = it.dir === "LONG" ? 50 - pct / 2 : 50 + pct / 2;
     tip += (it.dir === "LONG" ? "LONG" : it.dir === "SHORT" ? "SHORT" : "⚖ рівновага") + " · важіль " + (it.pct != null ? Number(it.pct).toFixed(0) + "%" : "—");
     return '<span class="mm4-chip ' + cls + '" style="--split:' + split.toFixed(1) + '%" title="' + esc(tip) + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + "</span>" + mm4DirTxt(it.dir, it.pct) + "</span>";
   }
@@ -3237,26 +3238,9 @@
     var items = (m && m.items) || [];
     if (!items.length) { box.hidden = true; box.innerHTML = ""; if (card) card.classList.remove("mm4-up", "mm4-dn"); return; }
     box.hidden = false;
-    var t = m.total;
-    var nLong = t ? Number(t.n_long) || 0 : items.filter(function (it) { return it.data && it.dir === "LONG"; }).length;
-    var nShort = t ? Number(t.n_short) || 0 : items.filter(function (it) { return it.data && it.dir === "SHORT"; }).length;
-    var ag = m.agree, dir = ag || (nLong === nShort ? null : nLong > nShort ? "LONG" : "SHORT");
-    var matched = dir ? items.filter(function (it) { return it.data && it.dir === dir; }) : [];
-    var count = ag ? 4 : matched.length, ac = dir === "LONG" ? "up" : dir === "SHORT" ? "dn" : "flat";
-    var since = count ? Math.max.apply(null, matched.map(function (it) { return Number(it.since || 0); }).concat([0])) : 0;
-    if (ag && m.agree_since) since = Number(m.agree_since);
-    var dots = "";
-    for (var i = 0; i < 4; i++) dots += '<i class="' + (i < count ? "on" : "") + '" style="--i:' + i + '"></i>';
-    var agreeTip = dir ? "Збіг " + count + "/4 · " + dir + ". Таймер — відколи сформовано поточну кількість банерів цього напрямку." : "Напрямки не збігаються або даних ще немає · 0/4. Таймер очікує сформованого напрямку.";
-    var html = '<div class="mm4-row mm4-summary"><div class="mm4-total" title="VSV · СИНХРОН">' + mm4Icon("total") + '<span class="mm4-lbl">VSV · СИНХРОН</span></div></div>' +
-      '<div class="mm4-row mm4-chips">' + items.map(mm4Chip).join("") + '</div>' +
-      '<div class="mm4-agree ' + ac + (ag ? " full" : " partial") + '" title="' + esc(agreeTip) + '">' +
-      '<span class="mm4-match" role="img" aria-label="Збіг ' + count + ' з 4"><span class="mm4-dots" aria-hidden="true">' + dots + '</span><b>' + count + '/4</b></span>' +
-      '<span class="mm4-agree-dir">' + (dir ? (dir === "LONG" ? "▲ LONG" : "▼ SHORT") : "⚖") + '</span>' +
-      '<span class="mm4-tm spb-tm ' + ac + '" data-since="' + since + '">' + spbFlipHTML(since) + "</span></div>";
-    box.innerHTML = html;
-    box.querySelectorAll(".mm4-tm[data-since]").forEach(spbFlipTick);
-    if (card) { card.classList.toggle("mm4-up", ag === "LONG"); card.classList.toggle("mm4-dn", ag === "SHORT"); }
+    box.innerHTML = '<div class="mm4-row mm4-summary"><div class="mm4-total" title="VSV · СИНХРОН">' + mm4Icon("total") + '<span class="mm4-lbl">VSV · СИНХРОН</span></div></div>' +
+      '<div class="mm4-row mm4-chips">' + items.map(mm4Chip).join("") + '</div>';
+    if (card) { card.classList.toggle("mm4-up", m.agree === "LONG"); card.classList.toggle("mm4-dn", m.agree === "SHORT"); }
   }
   setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(spbFlipTick); }, 1000);
   var recBusy = false;
