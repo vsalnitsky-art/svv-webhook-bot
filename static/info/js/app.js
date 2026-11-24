@@ -650,7 +650,7 @@
   var POC_TFS = ["15m", "1h", "4h"];
   var IW = { wl: [], sel: "", rows: {}, max: 20, sig: "", coin: null, chart: null, series: null,
              prim: null, pocLine: null, chartKey: "", universe: [],
-             tf: "15m", ob_tf: "1h", vob_tf: "5m", hl_tf: "off", sbr_tf: "chart", poc_days: 7, poc_tf: "1h", show_imb: true, show_sbr: true, show_shl: true, shl_tf: "1h", show_anom: false,
+             tf: "15m", ob_tf: "1h", vob_tf: "15m", hl_tf: "off", sbr_tf: "chart", poc_days: 7, poc_tf: "1h", show_imb: true, show_sbr: false, show_shl: true, shl_tf: "1h", show_anom: false,
              sbr: {}, anom: [], tg_linked: true, bellOpen: "" };
   var SBR_TFS = ["15m", "30m", "45m", "1h", "4h", "1d"];   // TF особистих 🔔 підписок (17.11: усі TF рушія; сервер шле sbr_tfs)
   var SBR_MARK_PX = 14;                 // розмір позначки S/B на графіку (css px)
@@ -906,7 +906,7 @@
 
   var TF_LAST_KEY = "vsv_tf_last";
   function tfLast(k) {
-    var d = k === "vob_tf" ? "5m" : "1h", L = k === "ob_tf" ? OB_TFS : (k === "hl_tf" ? HL_TFS : VOB_TFS);
+    var d = k === "vob_tf" ? "15m" : "1h", L = k === "ob_tf" ? OB_TFS : (k === "hl_tf" ? HL_TFS : VOB_TFS);
     try { var v = (JSON.parse(localStorage.getItem(TF_LAST_KEY) || "{}") || {})[k]; if (L.indexOf(v) >= 0) return v; } catch (e) {}
     return d;
   }
@@ -3140,11 +3140,6 @@
     agree: '<path d="m12 2 2.4 5.2L20 8l-4 4 .9 5.8L12 15.2l-4.9 2.6L8 12 4 8l5.6-.8L12 2Z"/><path class="mm4-signal" d="m9 11 2 2 4-4"/>'
   };
   function mm4Icon(key) { return '<svg class="mm4-ic" viewBox="0 0 24 24" aria-hidden="true">' + (MM4_ICONS[key] || MM4_ICONS.total) + "</svg>"; }
-  function mm4Dur(sec) {
-    sec = Math.max(0, Math.floor(sec)); var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
-    return (d ? d + "д " : "") + p2(h) + ":" + p2(m) + ":" + p2(s);
-  }
-  function mm4Tick(el) { var t = Number(el.getAttribute("data-since")); if (t) el.textContent = mm4Dur(Date.now() / 1000 - SPB.skew - t); }
   function mm4DirTxt(dir, pct) {
     var p = pct != null && isFinite(Number(pct)) ? " " + Number(pct).toFixed(0) + "%" : "";
     return dir === "LONG" ? '<span class="mm4-v up">▲ LONG' + p + "</span>" : dir === "SHORT" ? '<span class="mm4-v dn">▼ SHORT' + p + "</span>" : '<span class="mm4-v flat">⚖' + p + "</span>";
@@ -3154,31 +3149,30 @@
     if (!it.on) return '<span class="mm4-chip off" title="' + esc(tip + "блок вимкнено в боті — у зведенні не бере участі") + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + '</span><span class="mm4-v flat">вимк</span></span>';
     if (!it.data) return '<span class="mm4-chip off" title="' + esc(tip + "даних ще немає") + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + '</span><span class="mm4-v flat">—</span></span>';
     var cls = it.dir === "LONG" ? "up" : it.dir === "SHORT" ? "dn" : "flat", pct = Math.max(0, Math.min(100, Number(it.pct) || 0));
+    var split = it.dir === "LONG" ? 100 - pct : pct;
     tip += (it.dir === "LONG" ? "LONG" : it.dir === "SHORT" ? "SHORT" : "⚖ рівновага") + " · важіль " + (it.pct != null ? Number(it.pct).toFixed(0) + "%" : "—") + (it.coins ? " · монет " + it.coins : "");
-    return '<span class="mm4-chip ' + cls + '" title="' + esc(tip) + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + "</span>" + mm4DirTxt(it.dir, it.pct) +
-      '<span class="mm4-chip-meter" aria-hidden="true"><i style="--p:' + pct.toFixed(0) + '"></i></span></span>';
+    return '<span class="mm4-chip ' + cls + '" style="--split:' + split.toFixed(1) + '%" title="' + esc(tip) + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + "</span>" + mm4DirTxt(it.dir, it.pct) + "</span>";
   }
   function mm4Render(m) {
     var box = $("#spb-mm4"), card = $("#spb-card"); if (!box) return;
     var items = (m && m.items) || [];
     if (!items.length) { box.hidden = true; box.innerHTML = ""; if (card) card.classList.remove("mm4-up", "mm4-dn"); return; }
     box.hidden = false;
-    var t = m.total, lp = t ? Math.max(0, Math.min(100, Number(t.long_pct) || 0)) : 50, tc = t && t.dir === "LONG" ? "up" : t && t.dir === "SHORT" ? "dn" : "flat";
+    var t = m.total, lp = t ? Math.max(0, Math.min(100, Number(t.long_pct) || 0)) : 50, sp = 100 - lp;
     var tTip = t ? "Загальний відсоток чотирьох банерів = середній важіль (Σ сила LONG − Σ сила SHORT) / Σ сила кожного банера; ⚖ — коли перевага менша за 10%. Банерів з даними: " + t.n + " з " + m.n + " · ▲ " + t.n_long + " · ▼ " + t.n_short + " · ⚖ " + t.n_flat : "Немає даних жодного банера";
     var html = '<div class="mm4-row mm4-summary"><div class="mm4-total" title="' + esc(tTip) + '">' + mm4Icon("total") + '<span class="mm4-lbl">VSV · ЗАГАЛОМ</span>' +
-      '<span class="mm4-bar" role="img" aria-label="LONG ' + lp.toFixed(0) + '%, SHORT ' + (100 - lp).toFixed(0) + '%"><i class="l" style="width:' + lp.toFixed(1) + '%"></i><i class="s" style="width:' + (100 - lp).toFixed(1) + '%"></i><b></b></span>' +
-      '<span class="mm4-tot ' + tc + '">' + (t ? mm4DirTxt(t.dir, t.pct) : '<span class="mm4-v flat">—</span>') + "</span></div>";
+      '<span class="mm4-bar" role="img" aria-label="LONG ' + lp.toFixed(0) + '%, SHORT ' + sp.toFixed(0) + '%" style="--split:' + sp.toFixed(1) + '%"><em class="s">▼ ' + sp.toFixed(0) + '%</em><em class="l">' + lp.toFixed(0) + '% ▲</em></span></div>';
     var ag = m.agree;
     if (ag) {
-      var ac = ag === "LONG" ? "up" : "dn";
-      html += '<div class="mm4-agree ' + ac + '" title="Усі чотири банери бота підтверджують один напрямок — найсильніший збіг. Таймер — відколи зійшовся останній.">' + mm4Icon("agree") + '<span>ЗБІГ 4/4</span> · ' + (ag === "LONG" ? "▲ LONG" : "▼ SHORT") + ' <span class="mm4-tm" data-since="' + Number(m.agree_since || 0) + '"></span></div>';
+      var ac = ag === "LONG" ? "up" : "dn", since = Number(m.agree_since || 0);
+      html += '<div class="mm4-agree ' + ac + '" title="Усі чотири банери бота підтверджують один напрямок — найсильніший збіг. Таймер — відколи зійшовся останній.">' + mm4Icon("agree") + '<span>ЗБІГ 4/4</span> · ' + (ag === "LONG" ? "▲ LONG" : "▼ SHORT") + ' <span class="mm4-tm spb-tm ' + ac + '" data-since="' + since + '">' + spbFlipHTML(since) + "</span></div>";
     }
     html += '</div><div class="mm4-row mm4-chips">' + items.map(mm4Chip).join("") + "</div>";
     box.innerHTML = html;
-    box.querySelectorAll(".mm4-tm[data-since]").forEach(mm4Tick);
+    box.querySelectorAll(".mm4-tm[data-since]").forEach(spbFlipTick);
     if (card) { card.classList.toggle("mm4-up", ag === "LONG"); card.classList.toggle("mm4-dn", ag === "SHORT"); }
   }
-  setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(spbFlipTick); document.querySelectorAll(".mm4-tm[data-since]").forEach(mm4Tick); }, 1000);
+  setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(spbFlipTick); }, 1000);
   function loadRec() {
     var card = $("#rec-card"); if (!card || !pOk("sec_signals")) return Promise.resolve(null);
     return api("/api/info/recommended").then(function (d) {

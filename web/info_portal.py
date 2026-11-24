@@ -1409,7 +1409,7 @@ def anom_norm(raw, wl=None):
 
 
 def user_info(prefs, uni, dfl=None):
-    dfl = dfl or {'tf': '15m', 'ob_tf': '1h', 'vob_tf': '5m'}
+    dfl = dfl or {'tf': '15m', 'ob_tf': '1h'}
     info = (prefs or {}).get('info') or {}
     wl = info.get('wl')
     if wl is None:                       # перший вхід — стартовий набір
@@ -1421,12 +1421,13 @@ def user_info(prefs, uni, dfl=None):
     return {'wl': wl, 'sel': sel,
             'tf': norm_tf(info.get('tf'), CHART_TFS, dfl['tf']),
             'ob_tf': norm_tf(info.get('ob_tf'), OB_TFS, dfl['ob_tf'], allow_off=True),
-            'vob_tf': norm_tf(info.get('vob_tf'), VOB_TFS, dfl['vob_tf'], allow_off=True),
+            # Персональний дефолт InfoSite не залежить від TF VOB головного бота.
+            'vob_tf': norm_tf(info.get('vob_tf'), VOB_TFS, '15m', allow_off=True),
             'hl_tf': norm_tf(info.get('hl_tf'), HL_TFS, OFF, allow_off=True),
             'sbr_tf': sbr_tf_norm(info.get('sbr_tf')),
             # що малювати на графіку (лише показ, рахується завжди)
             'show_imb': bool(info.get('show_imb', True)),
-            'show_sbr': bool(info.get('show_sbr', True)),
+            'show_sbr': bool(info.get('show_sbr', False)),
             'show_shl': bool(info.get('show_shl', True)),
             'shl_tf': norm_tf(info.get('shl_tf'), HL_TFS, '1h'),
             # ⚠ сигнали «Аномалії обсягу» на графіку (24.11, деф. вимк.)
@@ -1483,7 +1484,7 @@ def apply_change(cur, body, uni):
     if 'ob_tf' in body:
         out['ob_tf'] = norm_tf(body.get('ob_tf'), OB_TFS, cur.get('ob_tf') or '1h', allow_off=True)
     if 'vob_tf' in body:
-        out['vob_tf'] = norm_tf(body.get('vob_tf'), VOB_TFS, cur.get('vob_tf') or '5m', allow_off=True)
+        out['vob_tf'] = norm_tf(body.get('vob_tf'), VOB_TFS, cur.get('vob_tf') or '15m', allow_off=True)
     if 'hl_tf' in body:
         out['hl_tf'] = norm_tf(body.get('hl_tf'), HL_TFS, cur.get('hl_tf') or OFF, allow_off=True)
     if 'sbr_tf' in body:
@@ -1828,7 +1829,7 @@ def _paper_snapshot(tm):
         'stats_all': st.get('shadow_stats') or {},
         'positions': [paper_pos_view(p, spr.get(str(p.get('symbol') or '').upper())) for p in pos],
         'closed': [paper_closed_view(c) for c in (st.get('shadow_closed') or [])[-PAPER_CLOSED_SHOW:]][::-1],
-        'test_mode': bool((st.get('settings') or {}).get('test_mode', True)),
+        'test_mode': bool((st.get('settings') or {}).get('test_mode', False)),
     }
     with _lock:
         _paper_cache.update(at=now, data=data, sig=sig)

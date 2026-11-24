@@ -276,7 +276,7 @@ def _tm_view(tm):
         s = {}
     has_key = bool(getattr(getattr(tm, 'bybit', None), 'api_key', None))
     return {'available': True, 'enabled': bool(tm.is_enabled()),
-            'test_mode': bool((s or {}).get('test_mode', True)), 'has_key': has_key,
+            'test_mode': bool((s or {}).get('test_mode', False)), 'has_key': has_key,
             'max_open': (s or {}).get('max_open_positions')}
 
 
@@ -306,7 +306,7 @@ def user_tm_view(t, light=False):
         st = {'error': str(e)[:200]}
     s = st.get('settings') or t.get_settings()
     v = {'ok': True, 'owner': 'user', 'enabled': bool(s.get('enabled')),
-         'test_mode': bool(s.get('test_mode', True)), 'running': bool(st.get('running')),
+         'test_mode': bool(s.get('test_mode', False)), 'running': bool(st.get('running')),
          'has_key': t.bybit is not None, 'books': list(t.books()),
          'mirror_allowed': t.mirror_allowed(), 'meta': t.meta(),
          'settings': _u.personal_only(s),

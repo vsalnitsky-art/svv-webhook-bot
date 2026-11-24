@@ -185,7 +185,7 @@ class UserTradeManager(TradeManager):
                 cfg = mirror_merge(cfg, bt.get_settings())
             except Exception:
                 pass
-        cfg.update({'enabled': False, 'test_mode': True})
+        cfg.update({'enabled': False, 'test_mode': False})
         return cfg
 
     # ── лог / Telegram власника ────────────────────────────────────────────

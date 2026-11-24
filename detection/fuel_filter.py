@@ -7415,7 +7415,7 @@ class FuelFilterDaemon:
         # Check which mode is active (TM real or Test Mode paper)
         tm_settings = tm.get_settings() if hasattr(tm, 'get_settings') and callable(tm.get_settings) else {}
         tm_enabled = tm_settings.get('enabled', False)
-        test_mode = tm_settings.get('test_mode', True)
+        test_mode = tm_settings.get('test_mode', False)
 
         print(f"[FuelFilter] {symbol}: TM settings: enabled={tm_enabled}, test_mode={test_mode}")
 

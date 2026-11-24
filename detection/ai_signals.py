@@ -4023,7 +4023,7 @@ class AiEngine:
         except Exception:
             tm_on = False
         try:
-            test_mode = bool(tm and (getattr(tm, '_settings', {}) or {}).get('test_mode', True))
+            test_mode = bool(tm and (getattr(tm, '_settings', {}) or {}).get('test_mode', False))
         except Exception:
             test_mode = False
         try:
