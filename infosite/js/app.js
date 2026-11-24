@@ -106,7 +106,7 @@
   }
 
   var SIGNAL_BADGES_JS = { "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS", "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB", "mm_vob": "🧮 VOB з МММ-монітора", "liq_vob": "💧 VOB + Сканер ліквідності", "ob_alert": "🆕 Новий OB", "ai": "🤖 Сигнал ШІ", "anom": "⚠ Аномалії обсягу", "poc": "🎯 POC-сетап", "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний", "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний" };
-  var ENGINE_BADGES_JS = { "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4", "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап", "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-Trend", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision", "MMR": "🧩 МММ-Готовність", "MMS": "🔔 МММ-SBR", "XSPR": "🔭 Пружина-скан", "SPR": "🌀 Пружина", "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий" };
+  var ENGINE_BADGES_JS = { "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4", "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап", "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-Trend", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision", "MMR": "🧩 МММ-Готовність", "MMS": "🔔 МММ-SBR", "XSPR": "🔭 Пружина-скан", "SPR": "🌀 Пружина", "MIR": "🪞 Дзеркало бота", "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий" };
   var SIGNAL_ICON_JS = { "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰", "mm_vob": "🧮", "liq_vob": "💧", "ob_alert": "🆕", "ai": "🤖", "anom": "⚠", "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋", "manual_ui": "✋", "manual_ui_overflow": "✋", "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥", "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
   var ENGINE_ICON_OVERRIDE_JS = { "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
   
@@ -227,7 +227,7 @@
      Поки права ще не прийшли — нічого не ховаємо (PERMS = null). */
   var PERMS = null;
   var PERM_KEYS = ["sec_terminal", "sec_signals", "sec_paper", "ly_struct", "ly_ob", "ly_vob", "ly_imb", "ly_sbr", "ly_anom", "ly_hl",
-                   "ly_poc", "ly_shl", "ly_pd", "ly_vol", "ly_liq", "ntf_sbr", "ntf_anom", "trade_paper", "trade_real"];
+                   "ly_poc", "ly_shl", "ly_pd", "ly_vol", "ly_liq", "ntf_sbr", "ntf_anom", "trade_paper", "trade_real", "trade_mirror"];
   function pOk(k) { return !PERMS || PERMS[k] !== false; }
   function permSig(p) { return PERM_KEYS.map(function (k) { return p && p[k] === false ? "0" : "1"; }).join(""); }
   function applyPerms(p) {
@@ -243,7 +243,9 @@
     renderTfBar(); renderList(); IW.sig = ""; loadCoin(true); loadRec(); loadPaper(); loadRows();
   }
 
-  var TR = { allowed: null, enabled: false, coins: {}, tm: {}, log: [], keys: null, reason: "", books: ["paper", "real"], keys_allowed: false };
+  var TR = { allowed: null, enabled: false, coins: {}, tm: {}, log: [], keys: null, reason: "", books: ["paper", "real"], keys_allowed: false, keys_owner: "", is_admin: false };
+  // 👤 Мій Trade Manager (дзеркало бота, ВЛАСНІ ключі) — стан з /api/me/tm
+  var UT = { d: null, at: 0 };
   var TR_KEY = "vsv_trade_open";
   var TR_BOOK = { paper: "🧪 paper", real: "🏦 реальна" };
   function trOpen() { try { return localStorage.getItem(TR_KEY) === "1"; } catch (e) { return false; } }
@@ -268,7 +270,8 @@
   function trApply(d) {
     if (!d) return;
     TR.allowed = !!d.allowed; TR.reason = d.reason || "";
-    TR.keys_allowed = !!d.keys_allowed;
+    TR.keys_allowed = !!d.keys_allowed; TR.keys_owner = d.keys_owner || (d.keys_allowed ? "bot" : "");
+    TR.is_admin = !!d.is_admin;
     if (Array.isArray(d.books) && d.books.length) TR.books = d.books.slice();
     if (d.allowed) {
       TR.enabled = !!d.enabled; TR.coins = d.coins || {}; TR.tm = d.tm || {}; TR.log = d.log || [];
@@ -284,7 +287,9 @@
   // ✋ підтвердження для реальних грошей — і при виборі книги, і при вмиканні
   function trConfirmReal(sym) {
     return window.confirm("🏦 РЕАЛЬНА угода по " + sym + " за сигналом ⚠ «сценарій входу»?\n\n" +
-      "Бот відкриватиме реальні угоди на Bybit (ключі бота): протилежний сигнал закриє поточну угоду і відкриє нову.");
+      (TR.is_admin ? "Trade Manager бота відкриватиме реальні угоди на Bybit (ключі бота)"
+                   : "ВАШ Trade Manager відкриватиме реальні угоди на ВАШОМУ рахунку Bybit (ваші ключі)") +
+      ": протилежний сигнал закриє поточну угоду і відкриє нову.");
   }
   function trSave(body) {
     return apiPostJ("/api/me/trading", body).then(function (d) {
@@ -302,8 +307,25 @@
     var m = $("#tr-msg"); if (!m) return;
     m.style.display = t ? "" : "none"; m.className = "tr-msg" + (bad ? " bad" : ""); m.textContent = t || "";
   }
+  function trUserKeysHTML(k) {
+    var has = !!k.has_keys, noMaster = !k.encryption_key_set;
+    return '<div class="tr-keys">' +
+      '<div class="tr-kv"><span>Біржа</span><b>Bybit (USDT-перпетуали) · ваш рахунок</b></div>' +
+      '<div class="tr-kv"><span>Ваші ключі</span><b class="' + (has ? "pp-long" : "pp-short") + '">' + (has ? "🟢 підключено" : "🔴 не підключено") + "</b></div>" +
+      (has ? '<div class="tr-kv"><span>API Key</span><code>' + esc(k.key_preview || "") + "</code></div>" : "") +
+      (noMaster ? '<p class="ntf-warn">⚠️ На сервері не задано <code>ENCRYPTION_KEY</code> — зберегти ключі неможливо. Зверніться до адміністратора.</p>' : "") +
+      '<form class="tr-kform" id="tr-kform" autocomplete="off">' +
+        '<label>API Key<input type="password" id="tr-k" autocomplete="off" spellcheck="false" placeholder="ключ з вашого Bybit"></label>' +
+        '<label>API Secret<input type="password" id="tr-s" autocomplete="off" spellcheck="false" placeholder="секрет з вашого Bybit"></label>' +
+        '<div class="tr-kbtns"><button type="submit" class="tglink-btn"' + (noMaster ? " disabled" : "") + ">🔐 " + (has ? "Замінити" : "Підключити") + " ключі</button>" +
+        (has ? '<button type="button" class="tglink-btn" data-trk="test">🧪 Перевірити</button><button type="button" class="tglink-btn tr-del" data-trk="clear">🗑 Видалити мої ключі</button>' : "") + "</div>" +
+      "</form>" +
+      '<p class="muted tr-note">🔐 Ваші ключі — лише для ВАШОГО Trade Manager: ними торгує тільки він і тільки на вашому рахунку. Ключі бота тут не використовуються ніколи. Шифруються на сервері (Fernet), відкритий текст не повертається. Потрібні дозволи <b>Read + Trade</b> (Unified Trading), без виводу коштів.</p>' +
+      '<div id="tr-kmsg" class="tr-msg" style="display:none"></div></div>';
+  }
   function trKeysHTML(k) {
     if (!k) return '<div class="muted">Завантаження стану ключів…</div>';
+    if (k.owner === "user") return trUserKeysHTML(k);
     var SRC = { db_encrypted: "🟢 збережено в боті (зашифровано)", env_plain: "🟡 змінна середовища (без шифрування)",
                 env_encrypted: "🟢 змінна середовища (зашифровано)", none: "🔴 не задано" };
     var noMaster = !k.encryption_key_set;
@@ -334,6 +356,143 @@
           '</td><td class="muted">' + esc(r.reason || "") + "</td></tr>";
       }).join("") + "</tbody></table>";
   }
+  var UT_SET = [["fixed_usd_amount", "Сума на угоду, $", "real"], ["leverage", "Плече (реальні)", "real"],
+                ["max_open_positions", "Макс. угод", "real"], ["paper_deposit", "Paper-депозит, $", "paper"],
+                ["paper_margin_pct", "Paper: % на угоду", "paper"], ["paper_leverage", "Paper: плече", "paper"]];
+  function utPx(v) { return v == null || v === "" ? "—" : (typeof fmtPrice === "function" ? fmtPrice(+v) : String(v)); }
+  function utPosRows(rows, book) {
+    return (rows || []).map(function (p) {
+      var sym = String(p.symbol || ""), pnl = +p.pnl_pct || 0;
+      return '<tr><td class="sym">' + esc(sym.replace(/USDT$/, "")) + (p.mirror_bot ? ' <span title="🪞 повтор угоди бота">🪞</span>' : "") +
+        (p.cab_avg_n ? ' <span class="pp-avg" title="додавань">➕' + (+p.cab_avg_n) + "</span>" : "") +
+        "</td><td>" + esc(TR_BOOK[book]) + '</td><td class="' + (p.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(p.side || "") +
+        '</td><td class="r">' + utPx(p.entry_price) + '</td><td class="r">' + utPx(p.current_price) +
+        '</td><td class="r ' + (pnl >= 0 ? "pp-long" : "pp-short") + '">' + (pnl >= 0 ? "+" : "") + pnl.toFixed(2) + "%</td>" +
+        '<td class="r"><button class="tglink-btn ut-act" data-utadd="' + esc(sym) + '" data-utbook="' + book + '" title="Додати до угоди (розмір — як у нової)">➕</button> ' +
+        '<button class="tglink-btn tr-del ut-act" data-utclose="' + esc(sym) + '" data-utbook="' + book + '" title="Закрити угоду">✕</button></td></tr>';
+    }).join("");
+  }
+  function utHTML(d) {
+    if (!d) return '<div class="muted">Завантаження вашого Trade Manager…</div>';
+    var s = d.settings || {}, m = d.meta || {}, bk = d.books || [];
+    var hasReal = bk.indexOf("real") >= 0, hasPaper = bk.indexOf("paper") >= 0;
+    var w = d.wallet || {};
+    var eq = w.ok ? (w.equity != null ? w.equity : w.wallet) : null;
+    var tg = function (id, on, lbl, dis, tip) {
+      return '<label class="tr-chk" title="' + esc(tip || "") + '"><input type="checkbox" id="' + id + '"' + (on ? " checked" : "") + (dis ? " disabled" : "") + "> " + lbl + "</label>";
+    };
+    var fields = UT_SET.filter(function (f) { return bk.indexOf(f[2]) >= 0; }).map(function (f) {
+      return '<label>' + esc(f[1]) + '<input type="text" inputmode="decimal" data-utset="' + f[0] + '" value="' + esc(s[f[0]] == null ? "" : String(s[f[0]])) + '"></label>';
+    }).join("");
+    var pos = utPosRows(d.positions, "real") + utPosRows(d.shadow_positions, "paper");
+    var cl = (d.closed || []).map(function (c) { c._b = "real"; return c; }).concat((d.shadow_closed || []).map(function (c) { c._b = "paper"; return c; }))
+      .sort(function (a, b) { return (b.closed_at || 0) - (a.closed_at || 0); }).slice(0, 12);
+    var lg = (d.log || []).slice(0, 15);
+    return '<div class="ut-box">' +
+      '<div class="tr-status">' +
+        (hasReal ? tg("ut-real", d.enabled, "<b>🏦 Реальна торгівля</b>", !d.has_key, "Угоди на вашому рахунку Bybit, вашими ключами") : "") +
+        (hasPaper ? tg("ut-paper", d.test_mode, "<b>🧪 Paper (Test Mode)</b>", false, "Тестова книга з вашим віртуальним депозитом") : "") +
+        "<span>Ключі: <b class=\"" + (d.has_key ? "pp-long\">ваші ✓" : "pp-short\">немає") + "</b></span>" +
+        (eq != null ? "<span>Баланс: <b>$" + (+eq).toFixed(2) + "</b></span>" : "") +
+        '<span class="muted">' + (d.running ? "● працює" : "○ зупинено") + "</span></div>" +
+      '<div class="tr-status">' +
+        tg("ut-mset", m.mirror_settings, "🪞 Алгоритм бота (дзеркало налаштувань)", false,
+           "Правила виходу, SL/TP, автопілот, трейли — як у бота. Ваші: увімкнення, розмір, плече, ліміт, paper-депозит.") +
+        tg("ut-msig", m.mirror_signals && d.mirror_allowed, "🪞 Дублювати угоди бота", !d.mirror_allowed,
+           d.mirror_allowed ? "Бот відкрив / закрив угоду → ваш Trade Manager повторює її на вашому рахунку" : "Не дозволено адміністратором") +
+        (d.mirror_allowed ? '<select id="ut-mbook" class="tr-book">' + bk.map(function (b) { return '<option value="' + b + '"' + (b === m.mirror_book ? " selected" : "") + ">" + TR_BOOK[b] + "</option>"; }).join("") + "</select>" : "") +
+      "</div>" +
+      (fields ? '<form class="tr-kform ut-form" id="ut-form">' + fields + '<div class="tr-kbtns"><button type="submit" class="tglink-btn">💾 Зберегти</button></div></form>' : "") +
+      '<h3 class="pp-h">✋ Відкрити угоду</h3>' +
+      '<div class="ut-open"><input type="text" id="ut-sym" list="ut-syms" placeholder="BTC" spellcheck="false">' +
+        '<datalist id="ut-syms">' + (IW.wl || []).map(function (x) { return '<option value="' + esc(x.replace(/USDT$/, "")) + '">'; }).join("") + "</datalist>" +
+        '<select id="ut-book" class="tr-book">' + bk.map(function (b) { return '<option value="' + b + '">' + TR_BOOK[b] + "</option>"; }).join("") + "</select>" +
+        '<button class="tglink-btn ut-long" data-utopen="LONG">▲ LONG</button><button class="tglink-btn ut-short" data-utopen="SHORT">▼ SHORT</button></div>' +
+      '<div id="ut-msg" class="tr-msg" style="display:none"></div>' +
+      '<h3 class="pp-h">Відкриті угоди</h3><div class="pp-wrap tr-wrap"><table class="pp-tbl"><thead><tr><th>Монета</th><th>Книга</th><th>Бік</th><th class="r">Вхід</th><th class="r">Зараз</th><th class="r">PnL</th><th class="r">Дія</th></tr></thead><tbody>' +
+        (pos || '<tr><td colspan="7" class="muted">Відкритих угод немає</td></tr>') + "</tbody></table></div>" +
+      '<h3 class="pp-h">Закриті угоди</h3><div class="pp-wrap tr-wrap"><table class="pp-tbl"><thead><tr><th>Закрито</th><th>Монета</th><th>Книга</th><th>Бік</th><th class="r">PnL</th><th>Причина</th></tr></thead><tbody>' +
+        (cl.map(function (c) {
+          var v = +c.pnl_pct || 0;
+          return "<tr><td>" + esc(c.closed_at ? locDM(c.closed_at) : "—") + '</td><td class="sym">' + esc(String(c.symbol || "").replace(/USDT$/, "")) +
+            "</td><td>" + esc(TR_BOOK[c._b]) + '</td><td class="' + (c.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(c.side || "") +
+            '</td><td class="r ' + (v >= 0 ? "pp-long" : "pp-short") + '">' + (v >= 0 ? "+" : "") + v.toFixed(2) + "%</td><td>" + esc((typeof PP_REASON !== "undefined" && PP_REASON[c.reason]) || c.reason || "") + "</td></tr>";
+        }).join("") || '<tr><td colspan="6" class="muted">Ще немає</td></tr>') + "</tbody></table></div>" +
+      '<h3 class="pp-h">Лог мого Trade Manager</h3><div class="pp-wrap tr-wrap"><table class="pp-tbl"><tbody>' +
+        (lg.map(function (e) {
+          return "<tr><td>" + esc(locDM(e.t || 0)) + '</td><td class="sym">' + esc(String(e.symbol || "").replace(/USDT$/, "")) + '</td><td class="muted">' + esc(e.detail || e.event || "") + "</td></tr>";
+        }).join("") || '<tr><td class="muted">Подій ще немає</td></tr>') + "</tbody></table></div></div>";
+  }
+  function utMsg(t, bad) {
+    var m = $("#ut-msg"); if (!m) return;
+    m.style.display = t ? "" : "none"; m.className = "tr-msg" + (bad ? " bad" : ""); m.textContent = t || "";
+  }
+  function utPaint() { var h = $("#ut-host"); if (h) h.innerHTML = utHTML(UT.d); }
+  function refreshUt() {
+    if (TR.is_admin || !TR.allowed || (TR.tm || {}).need_keys) return;
+    api("/api/me/tm").then(function (d) {
+      if (d && d.need_keys) { TR.tm = TR.tm || {}; TR.tm.need_keys = true; renderTrade(); return; }
+      UT.d = d; UT.at = Date.now(); utPaint();
+    }).catch(function () {});
+  }
+  function utPost(path, body, okMsg) {
+    return apiPostJ(path, body).then(function (d) {
+      if (d && d.ok !== false) { if (d.settings || d.meta) UT.d = Object.assign(UT.d || {}, d); utPaint();
+        utMsg(d.note ? "⚠️ " + d.note : (okMsg || ""), !!d.note); refreshUt(); }
+      else utMsg("⚠️ " + ((d && (d.reason || d.error)) || "не вдалося"), true);
+      return d;
+    }, function () { utMsg("⚠️ Немає звʼязку з ботом", true); });
+  }
+  setInterval(function () { if (!document.hidden && trOpen() && UT.d) refreshUt(); }, 10000);
+  document.addEventListener("submit", function (e) {
+    if (!e.target || e.target.id !== "ut-form") return;
+    e.preventDefault();
+    var st = {};
+    e.target.querySelectorAll("[data-utset]").forEach(function (i) {
+      var v = parseFloat(String(i.value || "").replace(",", ".").trim());
+      if (isFinite(v)) st[i.getAttribute("data-utset")] = v;
+    });
+    utPost("/api/me/tm/settings", { settings: st }, "✅ Збережено");
+  });
+  document.addEventListener("click", function (e) {
+    var t = e.target.closest ? e.target : null; if (!t) return;
+    var o = t.closest("[data-utopen]");
+    if (o) {
+      var sym = String(($("#ut-sym") || {}).value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (!sym) { utMsg("Вкажіть монету", true); return; }
+      if (!/USDT$/.test(sym)) sym += "USDT";
+      var sd = o.getAttribute("data-utopen"), bk = ($("#ut-book") || {}).value || "paper";
+      if (!window.confirm((bk === "real" ? "🏦 РЕАЛЬНА" : "🧪 Paper") + " угода " + sd + " " + sym + "?" + (bk === "real" ? "\n\nНа ВАШОМУ рахунку Bybit, вашими ключами." : ""))) return;
+      utPost("/api/me/tm/open", { symbol: sym, side: sd, book: bk }, "✅ " + sym + " " + sd + " відкрито"); return;
+    }
+    var a = t.closest("[data-utadd]");
+    if (a) {
+      var s1 = a.getAttribute("data-utadd"), b1 = a.getAttribute("data-utbook");
+      if (!window.confirm("➕ Додати до угоди " + s1 + " (" + TR_BOOK[b1] + ")?\nРозмір — як у нової угоди.")) return;
+      utPost("/api/me/tm/add", { symbol: s1, book: b1 }, "✅ Додано до " + s1); return;
+    }
+    var c = t.closest("[data-utclose]");
+    if (c) {
+      var s2 = c.getAttribute("data-utclose"), b2 = c.getAttribute("data-utbook");
+      if (!window.confirm("✕ Закрити угоду " + s2 + " (" + TR_BOOK[b2] + ")?")) return;
+      utPost("/api/me/tm/close", { symbol: s2, book: b2 }, "✅ " + s2 + " закрито");
+    }
+  });
+  document.addEventListener("change", function (e) {
+    var t = e.target; if (!t || !t.id) return;
+    if (t.id === "ut-real") {
+      if (t.checked && !window.confirm("Увімкнути РЕАЛЬНУ торгівлю вашого Trade Manager?\n\nУгоди — на вашому рахунку Bybit, вашими ключами.")) { t.checked = false; return; }
+      utPost("/api/me/tm/settings", { settings: { enabled: t.checked } }); return;
+    }
+    if (t.id === "ut-paper") { utPost("/api/me/tm/settings", { settings: { test_mode: t.checked } }); return; }
+    if (t.id === "ut-mset") { utPost("/api/me/tm/settings", { meta: { mirror_settings: t.checked } }); return; }
+    if (t.id === "ut-msig") {
+      if (t.checked && ($("#ut-mbook") || {}).value === "real" && !window.confirm("Дублювати угоди бота на вашому РЕАЛЬНОМУ рахунку?")) { t.checked = false; return; }
+      utPost("/api/me/tm/settings", { meta: { mirror_signals: t.checked, mirror_book: ($("#ut-mbook") || {}).value } }); return;
+    }
+    if (t.id === "ut-mbook") utPost("/api/me/tm/settings", { meta: { mirror_book: t.value } });
+  });
+
   function renderTrade() {
     var card = $("#trade-card"), body = $("#trade-body");
     if (!card || !body || TR.allowed === null) return;
@@ -342,13 +501,23 @@
     if (!TR.allowed) { card.style.display = "none"; return; }
     card.style.display = ""; trApplyAcc();
     var st = $("#trade-state");
+    var ttl = $("#trade-title"); if (ttl) ttl.textContent = TR.is_admin ? "🤖 Торгівля з кабінету" : "👤 Мій Trade Manager";
+    // 🔐 TM користувача зʼявляється ЛИШЕ після підключення ВЛАСНИХ ключів API
+    if (!TR.is_admin && (TR.tm || {}).need_keys) {
+      if (st) { st.textContent = "🔐 ключі"; st.className = "tr-state"; }
+      body.innerHTML = '<p class="tr-note">🔐 Підключіть <b>свої</b> ключі API Bybit — після цього зʼявиться <b>ваш особистий Trade Manager</b> (дзеркало бота, що торгує лише на вашому рахунку).</p>' +
+        '<div id="tr-keys-host">' + trKeysHTML(TR.keys) + "</div>";
+      if (!TR.keys) refreshKeys();
+      return;
+    }
     var n = Object.keys(TR.coins).length, nReal = Object.keys(TR.coins).filter(function (s) { return TR.coins[s] === "real"; }).length;
     if (st) st.textContent = TR.enabled ? (n ? "● " + n : "● 0") : "○ вимк.";
     if (st) st.className = "tr-state" + (TR.enabled ? " on" : "");
     var tm = TR.tm || {};
     var warn = [];
-    if (TR.enabled && nReal && !tm.enabled) warn.push("Trade Manager вимкнено — 🏦 реальні угоди не відкриються");
-    if (TR.enabled && nReal && !tm.has_key) warn.push("ключі Bybit не задано — 🏦 реальні угоди не відкриються");
+    var tmN = TR.is_admin ? "Trade Manager бота" : "ваш Trade Manager";
+    if (TR.enabled && nReal && !tm.enabled) warn.push(tmN + " — реальна торгівля вимкнена: 🏦 реальні угоди не відкриються");
+    if (TR.enabled && nReal && !tm.has_key) warn.push((TR.is_admin ? "ключі бота" : "ваші ключі") + " не задано — 🏦 реальні угоди не відкриються");
     if (TR.enabled && n - nReal && !tm.test_mode) warn.push("Test Mode вимкнено — 🧪 paper-угоди не відкриються");
     var rows = (IW.wl || []).map(function (sym) {
       var on = !!TR.coins[sym];
@@ -356,25 +525,28 @@
         (on ? trBookSel(sym, "data-trbook") : '<span class="muted">—</span>') + "</td></tr>";
     }).join("");
     body.innerHTML =
+      (TR.is_admin ? "" : '<div id="ut-host">' + utHTML(UT.d) + "</div>" +
+        '<h3 class="pp-h">⚠ Сигнали «Аномалії обсягу» → ваш Trade Manager</h3>') +
       '<div class="tr-top"><label class="tr-master"><input type="checkbox" id="tr-master"' + (TR.enabled ? " checked" : "") +
         '> <b>Торгівля за сигналами</b></label><span class="muted">сигнал — ⚠ Аномалії обсягу · сценарій входу (LONG / SHORT)</span></div>' +
       '<div class="tr-rules"><span>🟢 немає угоди → <b>відкрити</b></span><span>⏸ угода в той самий бік → <b>нічого не робимо</b></span><span>🔄 протилежний сигнал → <b>закрити поточну і відкрити нову</b></span></div>' +
-      '<div class="tr-status"><span>Trade Manager: <b class="' + (tm.enabled ? "pp-long" : "pp-short") + '">' + (tm.enabled ? "увімкнено" : "вимкнено") + "</b></span>" +
+      (TR.is_admin ? '<div class="tr-status"><span>Trade Manager бота: <b class="' + (tm.enabled ? "pp-long" : "pp-short") + '">' + (tm.enabled ? "увімкнено" : "вимкнено") + "</b></span>" +
         '<span>Test Mode: <b class="' + (tm.test_mode ? "pp-long" : "pp-short") + '">' + (tm.test_mode ? "увімкнено" : "вимкнено") + "</b></span>" +
-        '<span>Ключі Bybit: <b class="' + (tm.has_key ? "pp-long" : "pp-short") + '">' + (tm.has_key ? "є" : "немає") + "</b></span></div>" +
+        '<span>Ключі бота: <b class="' + (tm.has_key ? "pp-long" : "pp-short") + '">' + (tm.has_key ? "є" : "немає") + "</b></span></div>" : "") +
       (warn.length ? '<p class="ntf-warn">⚠️ ' + esc(warn.join(" · ")) + "</p>" : "") +
       '<div id="tr-msg" class="tr-msg" style="display:none"></div>' +
       '<h3 class="pp-h">Монети WATCHLIST · куди йдуть сигнали</h3>' +
       '<div class="pp-wrap tr-wrap"><table class="pp-tbl"><thead><tr><th>Монета</th><th>Торгівля</th><th>Книга</th></tr></thead><tbody>' +
         (rows || '<tr><td colspan="3" class="muted">Додайте монети у WATCHLIST</td></tr>') + "</tbody></table></div>" +
-      (TR.keys_allowed ? '<h3 class="pp-h">🔐 API-ключі біржі</h3><div id="tr-keys-host">' + trKeysHTML(TR.keys) + "</div>"
-        : '<p class="muted tr-note">Угоди відкриває Trade Manager бота. Дозволені книги: ' + esc(TR.books.map(function (b) { return TR_BOOK[b] || b; }).join(", ")) + ".</p>") +
+      (TR.keys_allowed ? '<h3 class="pp-h">🔐 ' + (TR.is_admin ? "API-ключі БОТА" : "Ваші API-ключі") + '</h3><div id="tr-keys-host">' + trKeysHTML(TR.keys) + "</div>"
+        : '<p class="muted tr-note">Дозволені книги: ' + esc(TR.books.map(function (b) { return TR_BOOK[b] || b; }).join(", ")) + ".</p>") +
       '<h3 class="pp-h">Останні дії</h3><div class="pp-wrap tr-wrap">' + trLogHTML() + "</div>";
   }
   function refreshTrade() {
     api("/api/me/trading").then(function (d) {
       trApply(d); renderTrade(); renderList();
       if (TR.allowed && TR.keys_allowed && !TR.keys) refreshKeys();
+      if (TR.allowed && !TR.is_admin && !(TR.tm || {}).need_keys) refreshUt();
     }).catch(function () {});
   }
   function refreshKeys() {
@@ -399,7 +571,8 @@
     var b = e.target.closest ? e.target.closest("[data-trk]") : null;
     if (!b) return;
     var a = b.getAttribute("data-trk");
-    if (a === "clear" && !window.confirm("Видалити ключі Bybit з бота?\n\nБот візьме ключі зі змінних середовища (якщо задані), інакше реальна торгівля зупиниться.")) return;
+    if (a === "clear" && !window.confirm(TR.is_admin ? "Видалити ключі Bybit з бота?\n\nБот візьме ключі зі змінних середовища (якщо задані), інакше реальна торгівля зупиниться."
+        : "Видалити ВАШІ ключі Bybit?\n\nРеальна торгівля вашого Trade Manager зупиниться.")) return;
     b.disabled = true;
     apiPostJ(a === "test" ? "/api/me/keys/test" : "/api/me/keys/clear", {}).then(function (d) {
       b.disabled = false;
@@ -2659,7 +2832,7 @@
         '<td class="r pp-timer" data-since="' + Math.floor(p.opened_at || 0) + '">' + (p.opened_at ? ppTimer(p.opened_at) : "—") + "</td></tr>";
     }).join("");
   }
-  var PP_REASON = { manual: "✋ Закрито вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit", manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 Автопілот: ціль досягнута", breakeven: "🟰 Беззбиток", breakeven_close: "⚖️ Беззбиток", sbr_exit: "🔔 Протилежний сигнал SBR", sbr_trail_exit: "🔔⏳ Трейл після SBR", opposite_ob_exit: "🧱 Новий протилежний OB", mm_flat_exit: "🧮 МММ LiQ ⚖ рівновага", mm_against_exit: "🧮 МММ LiQ проти", reverse_signal: "🔄 Протилежний сигнал (реверс)", reverse_smc: "🔄 Розворот структури", exh_exit: "🎯 Досягнення вершини", spring_fired_exit: "💥 Пружина вистрілила", ai_exit: "🤖 Вихід ШІ", ai_pro_exit: "🧠 Проф. вихід ШІ", forecast_1h_exit: "🔮 Прогноз 1H проти", forecast_4h_exit: "🔮 Прогноз 4H проти", forecast_1h_confluence: "🔮 Прогноз 1H + розворот", decision_exit: "🧠 Decision проти", signal_exit_and: "🔗 Усі вердикти проти", htf_flip: "📡 Розворот старшого TF", time_stop: "⏱ Вихід за часом", trailing_stop: "📈 Трейлінг-стоп", external_close: "🌐 Закрито на біржі", auto_gate_wait: "⏸ Пауза Auto-gate", bos_2_partial: "✂️ Часткове BOS-2", bos_3_partial: "✂️ Часткове BOS-3", bos_4_partial: "✂️ Часткове BOS-4", fuel_flipped: "⛽ МММ розвернувся", fuel_faded: "⛽ МММ згас" };
+  var PP_REASON = { manual: "✋ Закрито вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit", manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 Автопілот: ціль досягнута", breakeven: "🟰 Беззбиток", breakeven_close: "⚖️ Беззбиток", sbr_exit: "🔔 Протилежний сигнал SBR", sbr_trail_exit: "🔔⏳ Трейл після SBR", opposite_ob_exit: "🧱 Новий протилежний OB", mm_flat_exit: "🧮 МММ LiQ ⚖ рівновага", mm_against_exit: "🧮 МММ LiQ проти", reverse_signal: "🔄 Протилежний сигнал (реверс)", mirror_close: "🪞 Дзеркало: бот закрив угоду", reverse_smc: "🔄 Розворот структури", exh_exit: "🎯 Досягнення вершини", spring_fired_exit: "💥 Пружина вистрілила", ai_exit: "🤖 Вихід ШІ", ai_pro_exit: "🧠 Проф. вихід ШІ", forecast_1h_exit: "🔮 Прогноз 1H проти", forecast_4h_exit: "🔮 Прогноз 4H проти", forecast_1h_confluence: "🔮 Прогноз 1H + розворот", decision_exit: "🧠 Decision проти", signal_exit_and: "🔗 Усі вердикти проти", htf_flip: "📡 Розворот старшого TF", time_stop: "⏱ Вихід за часом", trailing_stop: "📈 Трейлінг-стоп", external_close: "🌐 Закрито на біржі", auto_gate_wait: "⏸ Пауза Auto-gate", bos_2_partial: "✂️ Часткове BOS-2", bos_3_partial: "✂️ Часткове BOS-3", bos_4_partial: "✂️ Часткове BOS-4", fuel_flipped: "⛽ МММ розвернувся", fuel_faded: "⛽ МММ згас" };
   // 🎯 «Досягнення вершини»: частка піку угоди, взята на виході (результат ÷ пік).
   function ppPeakShare(c) {
     if (!c || c.reason !== "exh_exit") return null;

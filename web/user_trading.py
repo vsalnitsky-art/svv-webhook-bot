@@ -12,14 +12,18 @@
 • Налаштування — `prefs['trade'] = {'enabled': bool, 'coins': {SYM: 'paper'|'real'}}`
   (ЧИСТА `trade_norm`). Монети — лише з WATCHLIST кабінету.
 • Доступ — адміністратор завжди; користувач — лише на книги, які йому
-  дозволив адміністратор (🛡 `trade_paper` / `trade_real`, вимога 24.11).
-  Угоди йдуть через Trade Manager БОТА (ключі й депозит бота). Підроблені
-  prefs нічого не дають — `auth.info_trade_subscribers` відкидає монети з
-  недозволеною книгою. 🔐 Ключі біржі — лише адміністратор.
+  дозволив адміністратор (🛡 `trade_paper` / `trade_real`). Підроблені prefs
+  нічого не дають — `auth.info_trade_subscribers` відкидає монети з
+  недозволеною книгою.
+• 👤 ХТО ТОРГУЄ (вимога 24.11): адміністратор = Trade Manager БОТА (ключі
+  бота); кожен інший користувач — свій ОСОБИСТИЙ Trade Manager
+  (`detection/user_tm.py`, дзеркало бота) з ВЛАСНИМИ ключами (`web.user_keys`).
+  Ключі бота угоди користувача не бачать ніколи, і навпаки.
 • Сигнал — той самий ⚠ «сценарій входу», що йде в Telegram (рушій ШІ
   `ai_signals._anom_personal`), одна дія на НОВИЙ сценарій. Виконання —
   `TradeManager.cab_signal_trade` (тримати / відкрити / реверс).
-• Ключі біржі — `web.exchange_keys` (Fernet → БД; ті самі, якими торгує бот).
+• Ключі біржі: адміністратор — `web.exchange_keys` (ключі бота);
+  користувач — `web.user_keys` (лише свої, лише для свого TM).
 """
 import json
 import threading
@@ -117,8 +121,26 @@ def trade_allowed(u) -> bool:
 
 
 def keys_allowed(u) -> bool:
-    """🔐 Ключі біржі — це ключі БОТА, тож лише адміністратор."""
+    """🔐 Ключі БОТА — лише адміністратор."""
     return bool(u is not None and getattr(u, 'is_admin', False))
+
+
+def keys_owner(u) -> str:
+    """🔐 Чиї ключі керує цей користувач у кабінеті: 'bot' (адміністратор —
+    ключі бота) | 'user' (власні, для свого TM; потрібне право на реальну
+    книгу) | '' (ключів немає)."""
+    if u is None:
+        return ''
+    if getattr(u, 'is_admin', False):
+        return 'bot'
+    # Trade Manager користувача без ключів не існує → ключі потрібні для будь-якої книги
+    return 'user' if user_books(u) else ''
+
+
+def is_admin_sub(t) -> bool:
+    """Підписка адміністратора (торгує TM бота). Старі записи без прапорця —
+    як і раніше (адміністратор)."""
+    return bool((t or {}).get('admin', True))
 
 
 def trade_limit_books(t, books):
@@ -135,10 +157,26 @@ def trade_plan(subs, symbol):
     S = _norm_symbol(symbol)
     out = {}
     for _uid, email, t in subs or []:
+        if not is_admin_sub(t):
+            continue          # 👤 користувач торгує СВОЇМ TM (`user_plan`)
         t = trade_norm(t)
         if not t['enabled'] or S not in t['coins']:
             continue
         out.setdefault(t['coins'][S], []).append(email)
+    return out
+
+
+def user_plan(subs, symbol):
+    """ЧИСТА: [(uid, email, книга)] — користувачі (не адміністратори), чиї
+    ОСОБИСТІ Trade Manager торгують монетою."""
+    S = _norm_symbol(symbol)
+    out = []
+    for uid, email, t in subs or []:
+        if is_admin_sub(t):
+            continue
+        tn = trade_norm(t)
+        if tn['enabled'] and S in tn['coins']:
+            out.append((uid, email, tn['coins'][S]))
     return out
 
 
@@ -188,11 +226,23 @@ def _tm():
 def trade_execute(symbol, side, note='', subs=None, tm=None):
     """⚠ Сигнал «сценарій входу» → дія в кожній обраній книзі. → [результат].
     Кличе рушій ШІ на НОВОМУ сценарії (той самий, що йде в Telegram)."""
-    plan = trade_plan(trade_subs() if subs is None else subs, symbol)
-    if not plan:
-        return []
-    tm = tm or _tm()
+    subs = trade_subs() if subs is None else subs
+    plan = trade_plan(subs, symbol)
     out = []
+    for uid, email, book in user_plan(subs, symbol):
+        try:
+            from detection import user_tm
+            r = user_tm.execute(uid, email, symbol, side, book, note=note)
+        except Exception as e:
+            r = {'ok': False, 'status': 'rejected', 'mode': book, 'reason': str(e)[:200]}
+        r = dict(r or {}, symbol=_norm_symbol(symbol), side=side, book=book,
+                 by=[email], ts=time.time(), note=note, own=True)
+        out.append(r)
+        with _lock:
+            _log.appendleft(r)
+    if not plan:
+        return out
+    tm = tm or _tm()
     for book in BOOKS:
         if book not in plan:
             continue
@@ -230,6 +280,52 @@ def _tm_view(tm):
             'max_open': (s or {}).get('max_open_positions')}
 
 
+_POS_KEYS = ('symbol', 'side', 'entry_price', 'current_price', 'qty', 'pnl_pct',
+             'opened_at', 'opened_by', 'manual_sl', 'manual_tp', 'manual_tp1',
+             'sl_price', 'tp_price', 'leverage', 'liq_price', 'pnl_net', 'paper_size',
+             'cab_avg_n', 'cab_tranches', 'mirror_bot', 'sl_breakeven', 'manual_sl_tf')
+_CLOSED_KEYS = ('symbol', 'side', 'entry_price', 'exit_price', 'pnl_pct', 'pnl_usd',
+                'opened_at', 'closed_at', 'reason', 'opened_by', 'paper_result',
+                'cab_avg_n', 'pnl_source', 'peak_pnl_pct')
+
+
+def _slim(rows, keys, limit=None):
+    out = []
+    for p in (rows or []):
+        if isinstance(p, dict):
+            out.append({k: p[k] for k in keys if k in p})
+    return out[-limit:][::-1] if limit else out
+
+
+def user_tm_view(t, light=False):
+    """Стан ОСОБИСТОГО Trade Manager для кабінету (лише дані власника)."""
+    from detection import user_tm as _u
+    try:
+        st = t.get_state()
+    except Exception as e:
+        st = {'error': str(e)[:200]}
+    s = st.get('settings') or t.get_settings()
+    v = {'ok': True, 'owner': 'user', 'enabled': bool(s.get('enabled')),
+         'test_mode': bool(s.get('test_mode', True)), 'running': bool(st.get('running')),
+         'has_key': t.bybit is not None, 'books': list(t.books()),
+         'mirror_allowed': t.mirror_allowed(), 'meta': t.meta(),
+         'settings': _u.personal_only(s),
+         'positions': _slim(st.get('positions'), _POS_KEYS),
+         'shadow_positions': _slim(st.get('shadow_positions'), _POS_KEYS),
+         'stats': st.get('stats') or {}, 'shadow_stats': st.get('shadow_stats') or {},
+         'paper_account': st.get('paper_account') or {}}
+    if not light:
+        v['closed'] = _slim(st.get('closed_trades'), _CLOSED_KEYS, 40)
+        v['shadow_closed'] = _slim(st.get('shadow_closed'), _CLOSED_KEYS, 40)
+        v['log'] = t.user_log(60)
+        if t.bybit is not None:
+            try:
+                v['wallet'] = t.wallet_info()
+            except Exception:
+                v['wallet'] = {'ok': False}
+    return v
+
+
 def register_user_trading(app):
     from flask import jsonify, request
 
@@ -249,6 +345,13 @@ def register_user_trading(app):
             return user_info(prefs, universe()).get('wl') or []
         except Exception:
             return None
+
+    def _utm(u, create=True):
+        """👤 Особистий TM користувача (адміністратор — ні: його TM = бот)."""
+        if u is None or getattr(u, 'is_admin', False):
+            return None
+        from detection import user_tm
+        return user_tm.ensure(u.id, u.email) if create else user_tm.get(u.id)
 
     @app.route('/api/me/trading', methods=['GET', 'POST'])
     def api_me_trading():
@@ -281,38 +384,160 @@ def register_user_trading(app):
             except Exception:
                 pass
         adm = keys_allowed(u)
+        tm = _tm() if adm else _utm(u)
+        view = _tm_view(tm)
+        if not adm and tm is None:
+            view['need_keys'] = True
+        view['owner'] = 'bot' if adm else 'user'
         return jsonify({'ok': not err, 'error': err, 'allowed': True, **cur, 'books': list(bks),
-                        'keys_allowed': adm, 'is_admin': adm,
-                        'tm': _tm_view(_tm()),
-                        # журнал дій — спільний для всіх; користувач бачить лише свої
+                        'keys_allowed': bool(keys_owner(u)), 'keys_owner': keys_owner(u),
+                        'is_admin': adm, 'tm': view,
+                        # журнал дій — адміністратор бачить усе, користувач — лише свої
                         'log': [r for r in trade_log() if adm or u.email in (r.get('by') or [])][:15]})
+
+    # ── 🔐 ключі: адміністратор — ключі БОТА, користувач — ЛИШЕ свої ─────────
+    def _keys_mod(u):
+        own = keys_owner(u)
+        if own == 'bot':
+            from web import exchange_keys
+            return own, exchange_keys
+        if own == 'user':
+            from web import user_keys
+            return own, user_keys
+        return '', None
+
+    def _out(r, owner):
+        return jsonify({**{k: v for k, v in r.items() if k != 'code'}, 'owner': owner}), r.get('code', 200)
 
     @app.route('/api/me/keys', methods=['GET', 'POST'])
     def api_me_keys():
         u = _me()
-        if not keys_allowed(u):
+        own, m = _keys_mod(u)
+        if m is None:
             return _deny(u)
-        from web import exchange_keys
         if request.method == 'POST':
             d = request.get_json(silent=True) or {}
-            r = exchange_keys.save(d.get('api_key') or '', d.get('api_secret') or '')
-            return jsonify({k: v for k, v in r.items() if k != 'code'}), r.get('code', 200)
-        return jsonify(exchange_keys.status())
+            k, sc = d.get('api_key') or '', d.get('api_secret') or ''
+            r = m.save(k, sc) if own == 'bot' else m.save(u.id, k, sc)
+            return _out(r, own)
+        return _out(m.status() if own == 'bot' else m.status(u.id), own)
 
     @app.route('/api/me/keys/clear', methods=['POST'])
     def api_me_keys_clear():
         u = _me()
-        if not keys_allowed(u):
+        own, m = _keys_mod(u)
+        if m is None:
             return _deny(u)
-        from web import exchange_keys
-        r = exchange_keys.clear()
-        return jsonify({k: v for k, v in r.items() if k != 'code'}), r.get('code', 200)
+        return _out(m.clear() if own == 'bot' else m.clear(u.id), own)
 
     @app.route('/api/me/keys/test', methods=['POST'])
     def api_me_keys_test():
         u = _me()
-        if not keys_allowed(u):
+        own, m = _keys_mod(u)
+        if m is None:
             return _deny(u)
-        from web import exchange_keys
-        r = exchange_keys.test()
-        return jsonify({k: v for k, v in r.items() if k != 'code'}), r.get('code', 200)
+        return _out(m.test() if own == 'bot' else m.test(u.id), own)
+
+    # ── 👤 МІЙ TRADE MANAGER ───────────────────────────────────────────────
+    def _tm_guard():
+        u = _me()
+        if u is None:
+            return None, None, _deny(u)
+        if getattr(u, 'is_admin', False):
+            return u, None, (jsonify({'ok': True, 'owner': 'bot',
+                                      'reason': 'Ваш Trade Manager — це Trade Manager бота'}), 200)
+        if not user_books(u):
+            return u, None, _deny(u)
+        t = _utm(u)
+        if t is None:
+            # 🔐 TM зʼявляється лише після підключення ключів API
+            return u, None, (jsonify({'ok': True, 'owner': 'user', 'need_keys': True,
+                                      'reason': 'Підключіть свої ключі API Bybit — після '
+                                                'цього зʼявиться ваш Trade Manager'}), 200)
+        return u, t, None
+
+    @app.route('/api/me/tm', methods=['GET'])
+    def api_me_tm():
+        u, t, err = _tm_guard()
+        if err:
+            return err
+        return jsonify(user_tm_view(t, request.args.get('light') == '1'))
+
+    @app.route('/api/me/tm/settings', methods=['POST'])
+    def api_me_tm_settings():
+        u, t, err = _tm_guard()
+        if err:
+            return err
+        d = request.get_json(silent=True) or {}
+        msg = []
+        meta = d.get('meta') if isinstance(d.get('meta'), dict) else {}
+        if meta:
+            meta = dict(meta)
+            if meta.get('mirror_signals') and not t.mirror_allowed():
+                meta.pop('mirror_signals', None)
+                msg.append('🪞 Дублювання угод бота не дозволено адміністратором')
+            if meta.get('mirror_book') and meta.get('mirror_book') not in t.books():
+                meta.pop('mirror_book', None)
+                msg.append('Книга дублювання не дозволена адміністратором')
+            t.set_meta(meta)
+        st = d.get('settings') if isinstance(d.get('settings'), dict) else {}
+        if st:
+            st = dict(st)
+            if st.get('enabled') and 'real' not in t.books():
+                st.pop('enabled', None)
+                msg.append('Реальну торгівлю не дозволено адміністратором')
+            if st.get('test_mode') and 'paper' not in t.books():
+                st.pop('test_mode', None)
+                msg.append('Paper-книгу не дозволено адміністратором')
+            from detection.activity_log import owner_scope
+            with owner_scope(t._log_sink):
+                t.update_personal(st)
+        return jsonify({**user_tm_view(t, True), 'note': ' · '.join(msg)})
+
+    def _sym_side_book(d, t):
+        S = _norm_symbol(d.get('symbol'))
+        sd = str(d.get('side') or '').upper()
+        bk = d.get('book')
+        if not S or bk not in BOOKS:
+            return None, None, None, 'невірні параметри'
+        if bk not in t.books():
+            return None, None, None, 'Адміністратор не дозволив книгу ' + BOOK_UA[bk]
+        return S, sd, bk, ''
+
+    @app.route('/api/me/tm/open', methods=['POST'])
+    def api_me_tm_open():
+        u, t, err = _tm_guard()
+        if err:
+            return err
+        S, sd, bk, why = _sym_side_book(request.get_json(silent=True) or {}, t)
+        if why or sd not in ('LONG', 'SHORT'):
+            return jsonify({'ok': False, 'reason': why or 'side: LONG / SHORT'}), 400
+        from detection import user_tm
+        r = user_tm.hand_open(u.id, u.email, S, sd, bk)
+        return jsonify(r), (200 if r.get('ok') else 400)
+
+    @app.route('/api/me/tm/add', methods=['POST'])
+    def api_me_tm_add():
+        u, t, err = _tm_guard()
+        if err:
+            return err
+        S, _sd, bk, why = _sym_side_book(request.get_json(silent=True) or {}, t)
+        if why:
+            return jsonify({'ok': False, 'reason': why}), 400
+        from detection import user_tm
+        r = user_tm.hand_add(u.id, u.email, S, bk)
+        return jsonify(r), (200 if r.get('ok') else 400)
+
+    @app.route('/api/me/tm/close', methods=['POST'])
+    def api_me_tm_close():
+        u, t, err = _tm_guard()
+        if err:
+            return err
+        d = request.get_json(silent=True) or {}
+        S = _norm_symbol(d.get('symbol'))
+        bk = d.get('book')
+        if not S or bk not in BOOKS:
+            return jsonify({'ok': False, 'reason': 'невірні параметри'}), 400
+        from detection import user_tm
+        r = user_tm.hand_close(u.id, u.email, S, bk)
+        return jsonify(r), (200 if r.get('ok') else 400)

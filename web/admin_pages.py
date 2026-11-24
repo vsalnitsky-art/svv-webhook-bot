@@ -173,7 +173,19 @@ async function act(id,a,extra){
   const d=await r.json().catch(()=>({ok:false,error:'HTTP '+r.status}));
   if(!d.ok){toast(d.error||'Помилка',false);return null;}
   return d;}
+function grpBadge(u){
+  if(u.grp_state==='banned') return '<span class="badge b-off" title="Забанено в Telegram-групі'+(u.tg_banned_at?' адміністратором групи':' ботом')+'">🚫 TG</span>';
+  if(u.grp_state==='restricted') return '<span class="badge b-warn" title="Обмежено в Telegram-групі (стара версія) — наступна синхронізація забанить">🔇 TG</span>';
+  return '';}
+function grpText(u){
+  if(!u.tg_linked) return ['без Telegram','c-dim'];
+  if(u.grp_state==='banned') return [u.tg_banned_at?'🚫 забанено адміністратором групи':'🚫 забанено ботом','c-short'];
+  if(u.grp_state==='restricted') return ['🔇 обмежено (буде бан)','c-warn'];
+  if(u.blocked) return ['⏳ бан чекає синхронізації','c-warn'];
+  return [u.active?'✓ доступ відкрито':'—', u.active?'c-long':'c-dim'];}
 function statusBadge(u){
+  return statusBadge0(u)+grpBadge(u);}
+function statusBadge0(u){
   if(u.disabled) return '<span class="badge b-off">вимкнено</span>';
   if(u.active) return '<span class="badge b-on">активний</span>';
   if(u.approved&&u.email_confirmed) return '<span class="badge">неактивний</span>';
@@ -338,11 +350,18 @@ function draw(){
   h+='<section class="card"><div class="card-h">✅ Статус і схвалення</div><div class="kv">'+
     '<span class="k">Email</span><span class="v '+(u.email_confirmed?'c-long':'c-warn')+'">'+(u.email_confirmed?'підтверджено':'не підтверджено')+'</span>'+
     '<span class="k">Схвалення</span><span class="v '+(u.approved?'c-long':'c-warn')+'">'+(u.approved?'схвалено':'очікує')+'</span>'+
-    '<span class="k">Стан</span><span class="v '+(u.disabled?'c-short':(u.active?'c-long':''))+'">'+(u.disabled?'вимкнено':(u.active?'активний':'неактивний'))+'</span></div>'+
+    '<span class="k">Стан</span><span class="v '+(u.disabled?'c-short':(u.active?'c-long':''))+'">'+(u.disabled?'вимкнено':(u.active?'активний':'неактивний'))+'</span>'+
+    '<span class="k">Telegram-група</span><span class="v '+grpText(u)[1]+'">'+grpText(u)[0]+'</span></div>'+
     '<div class="btns'+(u.email_confirmed?'':' two')+'">'+
     (u.approved?btn('✕ Відкликати схвалення','revoke',{},'btn-warn','Схвалення знято'):btn('✓ Схвалити (30 днів)','approve',{},'btn-ok','Схвалено'))+
     (u.email_confirmed?'':btn('✉ Підтвердити email','confirm',{},'','Email підтверджено'))+
     (u.email_confirmed?'':btn('↻ Надіслати лист','resend',{},'','Лист надіслано'))+'</div></section>';
+  // Telegram-група (вимога 23.11): блок у боті = бан у групі, і навпаки
+  if(u.tg_linked&&!u.is_admin) h+='<section class="card"><div class="card-h">📨 Telegram-група</div>'+
+    '<div class="big-val '+grpText(u)[1]+'" style="font-size:15px">'+grpText(u)[0]+'</div>'+
+    '<div class="note" style="margin:8px 0 10px">Акаунт заблоковано (вимкнено / строк минув / схвалення знято) → бан у кожному чаті бота. Доступ відновлено → бан знято + особисте запрошення. Бан / розбан адміністратором групи в Telegram вимикає / вмикає акаунт тут.'+
+    (u.tg_banned_at?' Забанено в групі: '+fmt(u.tg_banned_at)+'.':'')+'</div>'+
+    '<div class="btns">'+btn('🔄 Синхронізувати з групою','group_sync',{},'','Синхронізовано з групою')+'</div></section>';
   // термін
   h+='<section class="card"><div class="card-h">⏳ Термін доступу</div><div class="big-val '+(dl!=null&&dl<=0?'c-short':'')+'">'+acc+'</div>'+
     '<div class="seg">'+btn('10 дн','set_access',{days:10},'','Доступ 10 днів')+btn('15 дн','set_access',{days:15},'','Доступ 15 днів')+
@@ -400,7 +419,7 @@ function permsHTML(u){
     h+='</div>';});
   return h+'</section>';}
 async function permSet(key,el){
-  if(el.checked&&key==='trade_real'&&!confirm('Дозволити РЕАЛЬНУ торгівлю за сигналом ⚠?\n\nУгоди відкриває Trade Manager БОТА — з ключами і депозитом бота.')){el.checked=false;return;}
+  if(el.checked&&key==='trade_real'&&!confirm('Дозволити РЕАЛЬНУ торгівлю?\n\nУгоди відкриває ОСОБИСТИЙ Trade Manager користувача — на ЙОГО рахунку Bybit, ЙОГО ключами (зʼявиться після підключення ключів).')){el.checked=false;return;}
   el.disabled=true;await run('set_perms',{key:key,on:el.checked},'Права оновлено');}
 function customDays(){const n=prompt('На скільки днів надати доступ? (0 = без обмеження)');if(n===null)return;run('set_access',{days:parseInt(n)||0},'Термін оновлено');}
 async function setPw(){const p=document.getElementById('np').value;if(!p)return;const d=await run('set_password',{password:p},'Пароль змінено');if(d)document.getElementById('np').value='';}

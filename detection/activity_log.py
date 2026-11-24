@@ -25,6 +25,43 @@ _DB_EVENTS = 'activity_log_events'       # persisted event buffer (survives rest
 _FLUSH_EVERY_SEC = 8                     # throttle DB writes (bounded single row)
 
 
+# 👤 Лог ВЛАСНИКА (вимога 24.11: «Trade Manager має працювати окремо під кожного
+# користувача»). Потік, що виконує роботу TM користувача, ставить свій «приймач»;
+# усі записи з нього йдуть у лог ЦЬОГО користувача, а НЕ в спільний 🧾 Лог бота.
+_scope = threading.local()
+
+
+def _owner_sink():
+    return getattr(_scope, 'sink', None)
+
+
+class owner_scope:
+    """`with owner_scope(sink): …` — записи логу в цьому потоці йдуть у `sink`."""
+
+    def __init__(self, sink):
+        self.sink = sink
+
+    def __enter__(self):
+        self.prev = getattr(_scope, 'sink', None)
+        _scope.sink = self.sink
+        return self
+
+    def __exit__(self, *a):
+        _scope.sink = self.prev
+        return False
+
+
+def scoped(sink, fn):
+    """Обгортка цілі потоку: функція працює в лозі власника (`sink`)."""
+    if sink is None:
+        return fn
+
+    def _run(*a, **k):
+        with owner_scope(sink):
+            return fn(*a, **k)
+    return _run
+
+
 class ActivityLog:
     def __init__(self):
         self._events = deque(maxlen=_MAX_EVENTS)
@@ -137,6 +174,17 @@ class ActivityLog:
         extra: optional STRUCTURED fields (entry_score, ctr_stc, ctr_lean,
                fuel_str, kind, price, …) stored under 'x' so analytics can pivot
                WITHOUT parsing the Ukrainian detail text. Must be JSON-safe."""
+        sink = _owner_sink()
+        if sink is not None:
+            try:
+                ev = {'t': ts if ts is not None else time.time(),
+                      'symbol': (symbol or '').upper().strip(), 'side': side,
+                      'event': str(event or ''), 'detail': str(detail or '')[:400],
+                      'source': str(source or '')}
+                sink(ev)
+            except Exception:
+                pass
+            return
         if not self.is_enabled():
             return
         try:

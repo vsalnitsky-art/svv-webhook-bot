@@ -680,6 +680,16 @@ def create_app():
             except Exception as e:
                 print(f"[APP] Failed to start Spring Scan: {e}")
 
+        if not _auto_started.get('user_tm'):
+            _auto_started['user_tm'] = True
+            try:
+                # 👤 Особисті Trade Manager користувачів (24.11) — дзеркало бота,
+                # кожен зі своїми ключами, угодами й логом.
+                from detection import user_tm
+                user_tm.boot()
+            except Exception as e:
+                print(f"[APP] Failed to start user Trade Managers: {e}")
+
         if not _auto_started.get('tickr_opp'):
             _auto_started['tickr_opp'] = True
             try:

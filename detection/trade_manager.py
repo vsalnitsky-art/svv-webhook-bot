@@ -1058,6 +1058,36 @@ def ai_tg_line(pos) -> str:
     return ''
 
 class TradeManager:
+
+    # 👤 Власник екземпляра (вимога 24.11: «Trade Manager має працювати окремо
+    # під кожного користувача»). None = Trade Manager БОТА (ключі адміністратора).
+    # Екземпляр користувача — `detection/user_tm.UserTradeManager`: свої ключі,
+    # свої налаштування, свої угоди, свій лог і свій Telegram; черг ❤️ Fuel
+    # Filter, ШІ і спільного логу бота він НЕ чіпає.
+    owner_uid = None
+    _owner_tag = ''
+    _log_sink = None
+
+    def _mirror_emit(self, kind: str, rec: Dict, is_paper: bool) -> None:
+        """🪞 Угода БОТА відкрилась / закрилась → особисті TM користувачів із
+        увімкненим «дзеркалом» повторюють її на СВОЇХ рахунках (24.11). TM
+        користувача сам нічого не транслює."""
+        if self.owner_uid or not rec:
+            return
+        try:
+            import sys
+            m = sys.modules.get('detection.user_tm')
+            if m is not None:
+                m.mirror_event(kind, dict(rec), bool(is_paper))
+        except Exception as e:
+            print(f"[TM] mirror emit: {e}")
+
+    def _scoped(self, fn):
+        """Ціль потоку в лозі ВЛАСНИКА (бот — без змін)."""
+        if self._log_sink is None:
+            return fn
+        from detection.activity_log import scoped
+        return scoped(self._log_sink, fn)
     
     def __init__(self, db=None, notifier=None, bybit=None, scanner=None):
         self.db = db
@@ -1623,7 +1653,8 @@ class TradeManager:
         if self._running:
             return
         self._running = True
-        self._monitor_thread = threading.Thread(target=self._loop, daemon=True, name="TradeManager")
+        self._monitor_thread = threading.Thread(target=self._scoped(self._loop), daemon=True,
+                                                name="TradeManager" + (self._owner_tag or ''))
         self._monitor_thread.start()
         print(f"[TM] ✅ Started: enabled={self.is_enabled()}, "
               f"open_positions={len(self._positions)}")
@@ -1632,7 +1663,7 @@ class TradeManager:
         # counter at startup → _tick_count == 1 % RECONCILE_EVERY_N_TICKS
         # won't fire on tick 1; but we don't want to wait), so we kick a
         # one-shot async call here.
-        threading.Thread(target=self._reconcile_with_bybit,
+        threading.Thread(target=self._scoped(self._reconcile_with_bybit),
                           daemon=True, name="TM-InitReconcile").start()
     
     def stop(self):
@@ -1692,7 +1723,11 @@ class TradeManager:
         try:
             _fd = self._feed()
             if _fd is not None:
-                _fd.watch(set(symbols) | set(shadow_symbols))
+                _ws = set(symbols) | set(shadow_symbols)
+                try:
+                    _fd.watch(_ws, owner=self._owner_tag or 'bot')
+                except TypeError:
+                    _fd.watch(_ws)
         except Exception:
             pass
 
@@ -7055,6 +7090,7 @@ class TradeManager:
         """Append a closed trade to the permanent DB archive (never trimmed).
         Carries the pre-trade snapshot captured at open. Guarded so it can
         never disrupt the close flow. Only archives if the archive toggle is ON."""
+        self._mirror_emit('close', closed, is_paper)
         if not self.db:
             return
         # БЕЗУМОВНО (гейт по прихованому archive_trades прибрано) — «пиши ВСІ
@@ -7065,7 +7101,8 @@ class TradeManager:
         except Exception as e:
             print(f"[TM] archive_closed error: {e}")
         # 🏆 Угода ШІ закрилась → кандидат у ЕТАЛОН відмінних угод (22.11)
-        if self._ai_owned(pos) or str(closed.get('opened_by') or '').lower().startswith('ai'):
+        if not self.owner_uid and (self._ai_owned(pos) or
+                                   str(closed.get('opened_by') or '').lower().startswith('ai')):
             try:
                 from detection import ai_signals as _ais
                 _cb = getattr(_ais, 'on_ai_trade_closed', None)
@@ -7312,6 +7349,7 @@ class TradeManager:
         self._set_open_manual_levels(position, side, entry_price, manual_sl, manual_tp)
 
         self._notify_open(position)
+        self._mirror_emit('open', position, False)
         return {'ok': True}
 
     def _close_externally(self, symbol: str, exit_price: float, reason: str = 'external_close'):
@@ -7426,7 +7464,7 @@ class TradeManager:
                     notify_fn(closed)
                 except Exception as e:
                     print(f"[TM] close-notify async error {symbol}: {e}")
-        threading.Thread(target=_run, daemon=True,
+        threading.Thread(target=self._scoped(_run), daemon=True,
                          name=f"close-finalize-{symbol}").start()
 
     def _apply_exchange_close_truth(self, symbol: str, closed: Dict,
@@ -7526,7 +7564,7 @@ class TradeManager:
                         print(f"[TM] exchange resync {c.get('symbol')}: {e}")
             finally:
                 self._exch_resync_busy = False
-        threading.Thread(target=_run, daemon=True, name='exch-close-resync').start()
+        threading.Thread(target=self._scoped(_run), daemon=True, name='exch-close-resync').start()
 
     def _archive_update(self, closed: Dict):
         """Переписати в постійному архіві рядок угоди фактом біржі (ресинк
@@ -8037,6 +8075,7 @@ class TradeManager:
             'reverse_smc': 'SMC-структура розвернулась (CHoCH проти)',
             'ctr_reversal_after_peak': '🔄 Розворот після піку (CTR + підтвердження)',
             'reverse_signal': 'Протилежний сигнал входу',
+            'mirror_close': '🪞 Дзеркало: бот закрив угоду',
             'forecast_1h_confluence': '1H прогноз проти позиції',
             'opposite_ob_exit': "З'явився НОВИЙ протилежний Order Block "
                                 "(новіший за той, що був на вході)",
@@ -8167,7 +8206,7 @@ class TradeManager:
         # наступним тіком, і це виглядало б як «угода з повітря».
         try:
             from detection.fuel_filter import get_fuel_filter
-            _ff = get_fuel_filter()
+            _ff = None if self.owner_uid else get_fuel_filter()
             if _ff:
                 _ff.note_trade_closed(symbol)
                 if str(reason or '') == 'manual':
@@ -8583,6 +8622,7 @@ class TradeManager:
         # just skip the OB line in the message.
         ob_line = self._format_last_ob_telegram(symbol)
         self._notify_open(pos, is_test=True)
+        self._mirror_emit('open', pos, True)
         print(f"[TM] [TEST] Shadow open: {symbol} {side} @ {self._fmt_price(entry_price)}")
         return {'ok': True}
 
@@ -8747,7 +8787,7 @@ class TradeManager:
         # наступним тіком, і це виглядало б як «угода з повітря».
         try:
             from detection.fuel_filter import get_fuel_filter
-            _ff = get_fuel_filter()
+            _ff = None if self.owner_uid else get_fuel_filter()
             if _ff:
                 _ff.note_trade_closed(symbol)
                 if str(reason or '') == 'manual':
@@ -9291,7 +9331,9 @@ class TradeManager:
             return None
         try:
             from detection.price_feed import get_price_feed
-            return get_price_feed(bb)
+            # 👤 TM користувача стрічку НЕ створює (вона спільна й публічна) —
+            # лише користується тією, що підняв бот.
+            return get_price_feed(None if self.owner_uid else bb)
         except Exception:
             return None
 
@@ -9372,7 +9414,7 @@ class TradeManager:
         fd = self._feed()
         if fd is not None and current:
             try:
-                r = fd.take_range(self._pilot_key(symbol, is_shadow), symbol)
+                r = fd.take_range(self._owner_tag + self._pilot_key(symbol, is_shadow), symbol)
             except Exception:
                 r = None
             if r:
@@ -10979,7 +11021,10 @@ class TradeManager:
             chat via self.notifier.
 
         Gated by the master toggle: is_test → test_telegram_alerts, else
-        telegram_alerts. Best-effort; never blocks the trading path."""
+        telegram_alerts. Best-effort; never blocks the trading path.
+
+        👤 TM КОРИСТУВАЧА: усе йде ЛИШЕ йому особисто (`_personal_notify`) —
+        ні в групу, ні адміну бота."""
         # Master gate — off ⇒ nothing goes out at all.
         if is_test:
             if not self._settings.get('test_telegram_alerts', True):
@@ -10987,6 +11032,15 @@ class TradeManager:
         else:
             if not self._settings.get('telegram_alerts', True):
                 return
+
+        if self.owner_uid:
+            fn = getattr(self, '_personal_notify', None)
+            if callable(fn):
+                try:
+                    fn(msg)
+                except Exception as e:
+                    print(f"[TM{self._owner_tag}] notify error: {e}")
+            return
 
         if category:
             # Market categories (trades/funding/…) go to the GROUP topic ONLY —
@@ -11296,6 +11350,7 @@ class TradeManager:
             'take_profit': '🎯 Take Profit',
             'reverse_smc': '🔄 Reverse SMC (CHoCH)',
             'reverse_signal': '🔁 Reverse Signal (qualified)',
+            'mirror_close': '🪞 Дзеркало бота',
             'opposite_ob_exit': '🔃 Opposite OB Exit',
             'forecast_1h_exit': '🔮 Forecast 1H Exit',
             'forecast_4h_exit': '🔮 Forecast 4H Exit',

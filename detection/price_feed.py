@@ -44,11 +44,18 @@ class PriceFeed:
         self.errors = 0
 
     # ── керування ────────────────────────────────────────────────────────
-    def watch(self, symbols: Iterable[str]) -> None:
+    def watch(self, symbols: Iterable[str], owner: str = 'bot') -> None:
         """Набір монет, які стережемо (відкриті угоди). Порожній → стрічка
-        біржу не смикає взагалі."""
-        ws = {str(s).upper() for s in (symbols or []) if s}
+        біржу не смикає взагалі. `owner` — чий набір (бот / TM користувача):
+        стрічка стереже ОБʼЄДНАННЯ, і TM одного власника не стирає набір іншого."""
+        mine = {str(s).upper() for s in (symbols or []) if s}
         with self._lock:
+            own = self.__dict__.setdefault('_owners', {})
+            if mine:
+                own[str(owner or 'bot')] = mine
+            else:
+                own.pop(str(owner or 'bot'), None)
+            ws = set().union(*own.values()) if own else set()
             self._watch = ws
             for s in list(self._hist):
                 if s not in ws:

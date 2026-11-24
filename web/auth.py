@@ -247,15 +247,84 @@ def approve_user(uid, days=DEFAULT_ACCESS_DAYS):
     return True
 
 
-def sync_user_group(uid):
+def sync_user_group(uid, force=False):
     """Привести членство користувача в Telegram-групі до його доступу на сайті
-    (заблоковано → видалити з групи; знову активний → зняти бан + запрошення).
-    Best-effort."""
+    (заблоковано → бан у кожному чаті бота; знову активний → зняти бан +
+    запрошення). `force` — забути позначку стану й зробити дію наново (кнопка
+    «🔄 Синхронізувати з групою»). Best-effort. → к-сть дій."""
     try:
+        if force:
+            u = get_user_by_id(uid)
+            if u is not None and is_blocked(u):
+                set_user_pref(uid, 'grp_state', None)        # → бан наново скрізь
+            elif u is not None and _is_active(u) and u.telegram_chat_id:
+                from web.tg_bot import group_unban
+                group_unban(u.telegram_chat_id)              # залишковий бан геть
         from web.tg_bot import group_access_sync
-        group_access_sync(uid)
+        return group_access_sync(uid)
     except Exception as e:
         print(f"[AUTH] sync_user_group error: {e}")
+        return 0
+
+
+def tg_group_member_event(tg_id, ev):
+    """НАВПАКИ (вимога 23.11): адміністратор Telegram-групи забанив / зняв бан
+    → акаунт у боті вимикається / вмикається. `ev` = 'banned' | 'unbanned'
+    (`tg_bot.tg_member_event`). Адміністратора бота не чіпаємо.
+    → 'disabled' | 'enabled' | 'enabled_blocked' | None."""
+    s = get_session()
+    try:
+        u = s.query(User).filter_by(telegram_chat_id=str(tg_id)).first()
+        if u is None or u.is_admin:
+            return None
+        uid, lbl, was_off = u.id, u.email, bool(u.disabled)
+    finally:
+        s.close()
+    from web.tg_bot import tg_send, notify_category
+    out = None
+    if ev == 'banned':
+        if was_off:
+            sync_user_group(uid)                   # уже вимкнено — лише бан у решті чатів
+            return None
+        _update_user(uid, disabled=True, session_token=None)
+        set_user_pref(uid, 'tg_banned_at', datetime.utcnow().isoformat())
+        try:
+            tg_send(tg_id, "⛔ Ваш акаунт вимкнено адміністратором.")
+            notify_category('register', f"🚫 <b>{lbl}</b> — забанено в Telegram-групі "
+                                        f"→ акаунт у боті ВИМКНЕНО.")
+        except Exception:
+            pass
+        sync_user_group(uid)                       # бан і в решті чатів бота
+        return 'disabled'
+    if ev == 'unbanned':
+        if was_off:
+            _update_user(uid, disabled=False)
+        set_user_pref(uid, 'tg_banned_at', None)
+        u2 = get_user_by_id(uid)
+        still = bool(u2 is not None and is_blocked(u2))
+        if still:
+            # доступ однаково не активний (строк минув / схвалення знято) →
+            # бан повернеться; адміну — чому
+            set_user_pref(uid, 'grp_state', None)
+            out = 'enabled_blocked' if was_off else None
+            try:
+                notify_category('register', f"⚠️ <b>{lbl}</b> — бан у Telegram-групі знято, "
+                                            f"але доступ не активний (строк минув або схвалення "
+                                            f"знято) → у групі знову бан. Продовжте термін у "
+                                            f"🛡 Керування користувачами.")
+            except Exception:
+                pass
+        elif was_off:
+            out = 'enabled'
+            try:
+                tg_send(tg_id, "✅ Ваш акаунт знову активний.")
+                notify_category('register', f"✅ <b>{lbl}</b> — бан у Telegram-групі знято "
+                                            f"→ акаунт у боті УВІМКНЕНО.")
+            except Exception:
+                pass
+        sync_user_group(uid)       # активний → розбан у решті чатів + запрошення
+        return out
+    return None
 
 
 def notify_user_approved(uid, silent=False):
@@ -281,17 +350,21 @@ def notify_user_approved(uid, silent=False):
                     buttons=[[{'text': '🔐 Увійти', 'url': f"{b}/login"}]] if b else None)
         # 🎉 Auto-onboard the approved user into the community group (personal
         # one-time invite link — Bot API can't add a member directly).
+        _st = (_load_prefs(u) or {}).get('grp_state')
         try:
             from web.tg_bot import invite_user_to_group
-            invite_user_to_group(u.telegram_chat_id)   # сам знімає бан у групі
+            # сам знімає бан у КОЖНОМУ чаті бота
+            invite_user_to_group(u.telegram_chat_id, back=(_st == 'banned'))
             set_user_pref(uid, 'grp_banned', None)
         except Exception as _e:
             print(f"[AUTH][TG] group invite error: {_e}")
-        try:                                           # був обмежений → права назад
-            if (_load_prefs(get_user_by_id(uid)) or {}).get('grp_state'):
+        try:
+            if _st == 'restricted':                    # обмежений версією 09.11 → права назад
                 from web.tg_bot import group_unrestrict
                 group_unrestrict(u.telegram_chat_id)
+            if _st:
                 set_user_pref(uid, 'grp_state', None)
+            set_user_pref(uid, 'tg_banned_at', None)
         except Exception as _e:
             print(f"[AUTH][TG] group invite error: {_e}")
     except Exception as e:
@@ -399,6 +472,10 @@ def list_users():
             days_left = None
             if au:
                 days_left = round((au - datetime.utcnow()).total_seconds() / 86400, 1)
+            try:
+                _pf = json.loads(u.prefs or '{}')
+            except Exception:
+                _pf = {}
             out.append({
                 'id': u.id, 'email': u.email, 'is_admin': u.is_admin,
                 'email_confirmed': u.email_confirmed, 'approved': u.approved,
@@ -419,6 +496,11 @@ def list_users():
                 # 🛡 права інфосайту: збережені + що реально діє (адмін — усе)
                 'perms': _perms_raw(u),
                 'perms_eff': _perms_eff(u),
+                # 🚫 Telegram-група: 'banned' | 'restricted' (09.11) | None;
+                # tg_banned_at — забанив адміністратор САМОЇ групи (23.11)
+                'grp_state': _pf.get('grp_state') or ('banned' if _pf.get('grp_banned') else None),
+                'tg_banned_at': _pf.get('tg_banned_at'),
+                'blocked': is_blocked(u),
             })
         return out
     finally:
@@ -521,9 +603,12 @@ def info_anom_subscribers():
                 prefs = {}
             if not _up().effective(u.is_admin, prefs.get('perms')).get('ntf_anom'):
                 continue                 # 🛡 адміністратор забрав це право
-            sub = ((prefs.get('info') or {}).get('anom')) or []
+            info = prefs.get('info') or {}
+            sub = info.get('anom') or []
             if isinstance(sub, list) and sub:
-                out.append((str(u.telegram_chat_id), list(sub)))
+                # 3-й елемент — формат повідомлення: short (деф.) | full (24.11)
+                out.append((str(u.telegram_chat_id), list(sub),
+                            'full' if info.get('anom_fmt') == 'full' else 'short'))
         return out
     except Exception:
         return []
@@ -552,7 +637,8 @@ def info_trade_subscribers():
             bk = _up().books(_up().effective(u.is_admin, prefs.get('perms')))
             coins = {k: v for k, v in t['coins'].items() if v in bk}
             if coins:
-                out.append((u.id, u.email, dict(t, coins=coins)))
+                # 👤 admin → торгує Trade Manager БОТА (ключі бота); інші — свій TM
+                out.append((u.id, u.email, dict(t, coins=coins, admin=bool(u.is_admin))))
         return out
     except Exception:
         return []
@@ -1747,8 +1833,13 @@ def register_auth_routes(app):
         _info_home = (_info_url or '/info') + '/#trade-card'
         if u.is_admin or _pm.get('trade_paper') or _pm.get('trade_real'):
             _trade_section = (
-                '<div class="sect2" id="trade"><div class="seclbl">🤖 Торгівля з кабінету</div>'
-                '<p class="sub" style="margin-top:-4px">Сигнал — ⚠ «Аномалії обсягу · сценарій входу». '
+                '<div class="sect2" id="trade"><div class="seclbl">'
+                + ('🤖 Торгівля з кабінету' if u.is_admin else '👤 Мій Trade Manager') + '</div>'
+                + ('' if u.is_admin else
+                   '<p class="sub" style="margin-top:-4px">Особистий Trade Manager — дзеркало бота, що '
+                   'торгує ЛИШЕ на вашому рахунку Bybit вашими ключами. Зʼявиться на інфосайті після '
+                   'підключення <b>ваших</b> ключів API.</p>')
+                + '<p class="sub" style="margin-top:-4px">Сигнал — ⚠ «Аномалії обсягу · сценарій входу». '
                 'Немає угоди → відкрити · той самий бік → нічого · протилежний → закрити й відкрити нову.</p>'
                 '<div id="trs" class="sub">⏳ …</div>'
                 f'<a href="{_info_home}" style="display:inline-block;margin-top:6px">'
@@ -2096,6 +2187,11 @@ def register_auth_routes(app):
                 pass
             return jsonify({'ok': True, 'perms': _tp['perms'],
                             'perms_eff': _up().effective(False, _tp['perms'])})
+        elif action == 'group_sync':
+            # 🔄 привести Telegram-групу до доступу НАНОВО (бан не пройшов —
+            # бот не був адміном тощо)
+            n = sync_user_group(uid, force=True)
+            return jsonify({'ok': True, 'n': n})
         elif action == 'kick':
             # Invalidate all live sessions of this user (force re-login).
             _update_user(uid, session_token=None)
@@ -2158,6 +2254,17 @@ def register_auth_routes(app):
 
 
 def _delete_user(uid):
+    # 🔐 ключі біржі й особистий Trade Manager користувача — разом із ним
+    try:
+        from web import user_keys
+        user_keys.purge(uid)
+    except Exception:
+        pass
+    try:
+        from detection import user_tm
+        user_tm.drop(uid)
+    except Exception:
+        pass
     s = get_session()
     try:
         u = s.query(User).filter_by(id=int(uid)).first()

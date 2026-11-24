@@ -48,10 +48,15 @@ PERMS = (
     ('ntf_anom', 'notify', '⚠ Аномалії обсягу в Telegram', True, 'sec_terminal',
      'Особисті сповіщення «сценарій входу».'),
 
-    ('trade_paper', 'trade', '🧪 Торгівля за сигналом ⚠ — paper', False, 'sec_terminal',
-     'Угоди йдуть у тестову книгу бота.'),
-    ('trade_real', 'trade', '🏦 Торгівля за сигналом ⚠ — РЕАЛЬНА', False, 'sec_terminal',
-     '⚠️ Реальні угоди відкриває Trade Manager БОТА — з ключами і депозитом бота.'),
+    ('trade_paper', 'trade', '🧪 Мій Trade Manager — paper', False, 'sec_terminal',
+     'Особистий Trade Manager користувача (дзеркало бота): тестова книга з власним '
+     'віртуальним депозитом. Угоди відкриває і додає сам користувач.'),
+    ('trade_real', 'trade', '🏦 Мій Trade Manager — РЕАЛЬНА', False, 'sec_terminal',
+     '🔐 Реальні угоди — на ВЛАСНОМУ рахунку Bybit користувача, ЙОГО ключами. '
+     'Ключі й депозит бота не використовуються ніколи.'),
+    ('trade_mirror', 'trade', '🪞 Дублювання угод бота', False, 'sec_terminal',
+     'Користувач може ввімкнути: бот відкрив / закрив угоду → його Trade Manager '
+     'повторює її на його рахунку (в обраній книзі).'),
 )
 
 GROUPS = (
@@ -123,6 +128,11 @@ def apply(cur, body):
     if k in KEYS and 'on' in body:
         out[k] = bool(body.get('on'))
     return out
+
+
+def mirror_ok(perms):
+    """ЧИСТА: дозволено дублювання угод бота (і є хоча б одна книга)."""
+    return bool((perms or {}).get('trade_mirror')) and bool(books(perms))
 
 
 def books(perms):

@@ -268,9 +268,10 @@ def test_admin_only():
     body = auth[auth.index('def info_trade_subscribers'):auth.index('def is_blocked')]
     assert '_is_active(u)' in body and '.books(' in body and 'effective(u.is_admin' in body
     ut = _src('web/user_trading.py')
+    # 🔐 24.11: адміністратор → ключі БОТА, користувач → ЛИШЕ свої (`_keys_mod`)
     for r in ('/api/me/keys', '/api/me/keys/clear', '/api/me/keys/test'):
         i = ut.index(f"'{r}'")
-        assert 'if not keys_allowed(u):' in ut[i:i + 400], r
+        assert '_keys_mod(u)' in ut[i:i + 400] and 'if m is None:' in ut[i:i + 400], r
 
 
 # ── підключення до сигналу ⚠ ─────────────────────────────────────────────

@@ -520,3 +520,7 @@ body.perm-no-sec_terminal .pm-sec_terminal,body.perm-no-sec_signals .pm-sec_sign
 .iw-sig.is-anom.is-long .tag{background:#38bdf8}.iw-sig.is-anom.is-short .tag{background:#f59e0b}.iw-sig .r.st b{text-align:right;font:500 11px var(--font);line-height:1.45}
 .iw-sig-arrow.anom.long .ring,.iw-sig-arrow.anom.long .edge{stroke:#38bdf8}.iw-sig-arrow.anom.short .ring,.iw-sig-arrow.anom.short .edge{stroke:#f59e0b}
 .iw-layers button.ly-anom.on{color:#f59e0b}
+.ut-box{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}.ut-box .tr-status{align-items:center}
+.ut-open{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 8px}.ut-open input{background:var(--elev);border:1px solid var(--line);color:var(--txt);border-radius:4px;padding:6px 9px;font:12px var(--mono);width:120px;text-transform:uppercase}
+.ut-long{color:var(--up,#20b26c)!important;border-color:currentColor!important}.ut-short{color:var(--dn,#ef454a)!important;border-color:currentColor!important}
+.ut-act{padding:2px 8px!important;font-size:11px!important}.ut-form{margin:6px 0 4px}

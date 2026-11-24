@@ -38,6 +38,24 @@ class BybitConnector:
         # of a generic "order failed". Cleared on the next successful order.
         self._last_order_error: Optional[str] = None
     
+    @classmethod
+    def for_keys(cls, api_key: str, api_secret: str) -> 'BybitConnector':
+        """🔐 Окремий конектор на ключах КОНКРЕТНОГО КОРИСТУВАЧА (вимога 24.11:
+        ключі адміністратора = ключі бота, ключі користувача — лише для нього).
+        Не синглтон, не читає ключів бота і ніколи їх не перечитує
+        (`reload_keys` на такому екземплярі нічого не робить)."""
+        obj = cls.__new__(cls)
+        obj.api_key = (api_key or '').strip()
+        obj.api_secret = (api_secret or '').strip()
+        obj.testnet = BYBIT_CONFIG.get('testnet', False)
+        obj.recv_window = BYBIT_CONFIG.get('recv_window', 20000)
+        obj._owner = 'user'
+        obj.session = obj._create_session()
+        obj._perp_symbols_cache = None
+        obj._perp_symbols_cached_at = 0.0
+        obj._last_order_error = None
+        return obj
+
     def reload_keys(self) -> bool:
         """Re-read API keys from config (after UI save) and rebuild HTTP session.
         
@@ -50,6 +68,9 @@ class BybitConnector:
         if the resolver returned empty (public-only mode). The caller
         decides whether to surface that as an error in the UI response.
         """
+        if getattr(self, '_owner', 'bot') == 'user':
+            # 🔐 конектор користувача НІКОЛИ не підхоплює ключі бота
+            return bool(self.api_key and self.api_secret)
         from config.bot_settings import get_bybit_keys, reload_bybit_keys
         # Refresh module-level constants too (in case other code reads them)
         reload_bybit_keys()
