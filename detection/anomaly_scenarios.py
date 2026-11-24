@@ -19,14 +19,14 @@ dir, role, level, conf, price, o1, o4, climax_of), CHoCH {dir, t} і конте�
 ціни (`ctx`: price, beyond, fired, charged).
 
 ВХІД (бік d = 'up' для LONG):
-  E1 🔁 Розворот після виснаження — 🔥 виснаження зустрічного руху / 🧽 поглинання
+  E1 🔁 Розворот: кульмінація + абсорбція — 🔥 виснаження зустрічного руху / 🧽 поглинання
      на рівні → друга реакція в бік d (🧽 / ⚡ зміна ініціативи) → підтвердження
      (свічка в новий бік / CHoCH / ⚡ продовження) → ціна тримається, зустрічного
      тиску немає → ВХІД.
-  E2 💥 Старт розряду Пружини — пружина заряджена → імпульс у бік d (🔥 старт /
+  E2 💥 Пробій після стиснення (squeeze) — пружина заряджена → імпульс у бік d (🔥 старт /
      📈 сплеск / пробій коробки) → продовження (⚡ / підтверджена свічка / CHoCH)
      → пробій ніхто не поглинає (немає 🧽 проти) → ВХІД.
-  E3 ↗ Продовження після відкату — підтверджений рух у бік d → відкат без
+  E3 ↗ Продовження з відкату (pullback) — підтверджений рух у бік d → відкат без
      зустрічного тиску → нова реакція в бік d НА РІВНІ → ВХІД.
 ВИХІД (угода в бік d; лише реакції ПІСЛЯ входу):
   X1 🔥→🧽 Кульмінація руху угоди — 🔥 виснаження нашого руху → 🧽 проти на 1–3
@@ -38,7 +38,7 @@ dir, role, level, conf, price, o1, o4, climax_of), CHoCH {dir, t} і конте�
      (o4 < 0.2%) → зустрічна реакція або CHoCH проти → ВИХІД.
   X4 🧽🧽 Подвійне поглинання проти — два 🧽 проти угоди (другий не спростований)
      → ВИХІД.
-  E4 🪤 Спринг (хибний пробій вниз) — ціна вибиває нижню межу діапазону → реакція
+  E4 🪤 Spring — хибний пробій (sweep) вниз — ціна вибиває нижню межу діапазону → реакція
      покупців і повернення в діапазон → підтвердження → ВХІД.
   X5 🪤 Аптраст (хибний пробій угору) — дзеркально для виходу з LONG (і навпаки).
 
@@ -61,8 +61,9 @@ ENTRY_FRESH_BARS = 2            # точка входу «свіжа» — ос�
 NO_PROGRESS_PCT = 0.2           # X3: рух через 4 свічки менший — «без результату»
 HOLD_TOL_PCT = 0.35             # ціна «тримається» біля рівня реакції
 
-ENTRY_NAMES = {'E1': '🔁 Розворот після виснаження', 'E2': '💥 Старт розряду Пружини',
-               'E3': '↗ Продовження після відкату', 'E4': '🪤 Спринг (хибний пробій)'}
+# 24.11: назви сетапів — у термінології професійного трейдера (Wyckoff / VSA / order flow).
+ENTRY_NAMES = {'E1': '🔁 Розворот: кульмінація + абсорбція', 'E2': '💥 Пробій після стиснення (squeeze)',
+               'E3': '↗ Продовження з відкату (pullback)', 'E4': '🪤 Spring — хибний пробій (sweep)'}
 EXIT_NAMES = {'X1': '🔥→🧽 Кульмінація руху угоди', 'X2': '⚡ Перехоплення ініціативи',
               'X3': '⚖ Зусилля без результату', 'X4': '🧽🧽 Подвійне поглинання проти',
               'X5': '🪤 Аптраст (хибний пробій за угодою)'}
@@ -73,29 +74,29 @@ EXIT_NAMES = {'X1': '🔥→🧽 Кульмінація руху угоди', 'X
 CATALOG = {
     'entry': [
         {'key': 'E1', 'name': ENTRY_NAMES['E1'],
-         'stages': ['🔥 виснаження зустрічного руху або 🧽 поглинання на рівні',
-                    'друга реакція в бік входу (🧽 / ⚡ зміна ініціативи)',
-                    'підтвердження: свічка закрилась у новий бік / CHoCH / ⚡ продовження',
-                    'ціна тримається біля рівня реакції, зустрічного тиску немає'],
+         'stages': ['🔥 climax-обсяг зустрічного руху або 🧽 абсорбція на рівні',
+                    'повторна реакція в бік входу (🧽 абсорбція / ⚡ зміна ініціативи)',
+                    'підтвердження: закриття свічки в новий бік / CHoCH / follow-through',
+                    'рівень реакції утримано, зустрічної агресії немає'],
          'why': 'продавця (покупця) вичерпано і його обсяг поглинули — розворот із найкращою ціною входу',
          'break': 'підтверджена зустрічна реакція або ціна не втримала рівень'},
         {'key': 'E2', 'name': ENTRY_NAMES['E2'],
-         'stages': ['🌀 пружина заряджена (стиснення)',
-                    'імпульс у бік входу: 🔥 старт / 📈 сплеск / пробій коробки',
-                    'продовження: ⚡ перекіс / підтверджена свічка / CHoCH',
-                    'пробій ніхто не поглинає (немає 🧽 проти)'],
+         'stages': ['🌀 стиснення волатильності (squeeze)',
+                    'імпульс: пробій діапазону на обсязі (🔥 / 📈 сплеск)',
+                    'follow-through: ⚡ агресія / закриття свічки / CHoCH',
+                    'пробій прийнято — абсорбції проти немає'],
          'why': 'енергія стиснення вивільняється в один бік, і пробій приймають',
          'break': '🧽 поглинання проти пробою або пробій коробки в інший бік'},
         {'key': 'E3', 'name': ENTRY_NAMES['E3'],
-         'stages': ['підтверджений рух у бік входу',
-                    'відкат без зустрічного тиску',
-                    'нова реакція в бік входу на рівні (OB / межа коробки)'],
+         'stages': ['підтверджений імпульс за трендом',
+                    'корекція без зустрічної агресії (no supply / no demand)',
+                    'відновлення руху від рівня (OB / межа діапазону)'],
          'why': 'тренд живий, відкат слабкий — вхід з рівня за трендом (Wyckoff LPS / VSA no supply)',
          'break': 'підтверджена зустрічна реакція під час відкату'},
         {'key': 'E4', 'name': ENTRY_NAMES['E4'],
-         'stages': ['ціна вибила межу діапазону проти входу (збір стопів)',
-                    'реакція в бік входу і повернення в діапазон',
-                    'підтвердження: свічка в бік входу / CHoCH'],
+         'stages': ['sweep: прокол межі діапазону проти входу (збір стоп-лоссів)',
+                    'reclaim: реакція в бік входу і повернення в діапазон',
+                    'підтвердження: закриття свічки в бік входу / CHoCH'],
          'why': 'Wyckoff Spring: стопи зібрано, продавця поглинули — сильний розворот із межі',
          'break': 'новий екстремум за межею — пробій справжній'},
     ],
@@ -217,13 +218,13 @@ def _e1(items, d, ctx, choch, now):
                 (it.get('kind') == 'absorb' and it.get('level')):
             stop = it
             break
-    s1 = _st('stop', '🔥 виснаження / 🧽 поглинання зустрічного руху', stop)
+    s1 = _st('stop', '🔥 climax-обсяг / 🧽 абсорбція зустрічного руху', stop)
     two = None
     if stop:
         span = SCEN_SPAN_BARS * _bar(stop)
         two = _after(items, _f(stop['t']), lambda x: x.get('dir') == d and x is not stop
                      and x.get('role') in ('reversal', 'shift', 'combo'), span)
-    s2 = _st('react', 'друга реакція в бік входу (🧽 / ⚡ зміна ініціативи)', two)
+    s2 = _st('react', 'повторна реакція в бік входу (🧽 абсорбція / ⚡ зміна ініціативи)', two)
     conf, cw = None, ''
     if two:
         t2 = _f(two['t'])
@@ -235,7 +236,7 @@ def _e1(items, d, ctx, choch, now):
             c = _after(items, t2, lambda x: x.get('dir') == d and x.get('conf') is True)
             if c:
                 conf, cw = _f(c['t']), c.get('why') or 'підтверджена реакція'
-    s3 = _st('confirm', 'підтвердження (свічка / CHoCH / ⚡ продовження)', t=conf, why=cw)
+    s3 = _st('confirm', 'підтвердження: закриття свічки / CHoCH / follow-through', t=conf, why=cw)
     broken, hold_t = '', None
     if two:
         ctr = _counter(items, _f(two['t']), d)
@@ -247,7 +248,7 @@ def _e1(items, d, ctx, choch, now):
                 hold_t = max(conf, _f(two['t']))
             elif h is False:
                 broken = 'ціна не втримала рівень реакції'
-    s4 = _st('hold', 'ціна тримається, зустрічного тиску немає', t=hold_t)
+    s4 = _st('hold', 'рівень утримано, зустрічної агресії немає', t=hold_t)
     st = [s1, s2, s3, s4]
     for s, it in zip(st, (stop, two, two, two)):
         s['bar'] = _bar(it)
@@ -256,7 +257,7 @@ def _e1(items, d, ctx, choch, now):
 
 def _e2(items, d, ctx, choch, now):
     side = 'LONG' if d == 'up' else 'SHORT'
-    s1 = _st('charged', '🌀 пружина заряджена', t=now if ctx.get('charged') else None)
+    s1 = _st('charged', '🌀 стиснення волатильності (squeeze)', t=now if ctx.get('charged') else None)
     s1['state'] = True              # стан, а не подія — у свіжість не входить
     imp = next((it for it in items if it.get('dir') == d and (
         it.get('role') == 'start' or it.get('kind') == 'spike')), None)
@@ -264,7 +265,7 @@ def _e2(items, d, ctx, choch, now):
     if imp_t is None and (ctx.get('beyond') == side or ctx.get('fired') == side):
         # пробій живого бару: імпульс — від ВІДКРИТТЯ цієї 1h-свічки
         imp_t = _f(ctx.get('bar_t')) or (now - 3600)
-    s2 = _st('impulse', 'імпульс у бік входу (🔥 старт / 📈 сплеск / пробій коробки)',
+    s2 = _st('impulse', 'імпульс: пробій діапазону на обсязі (🔥 / 📈 сплеск)',
              t=imp_t, why=(imp or {}).get('why') or 'пробій коробки')
     fol, fw = None, ''
     if imp_t is not None:
@@ -277,7 +278,7 @@ def _e2(items, d, ctx, choch, now):
                 fol, fw = _f(c['t']), c.get('why') or 'продовження'
             elif choch and choch.get('dir') == d and (_f(choch.get('t')) or 0) >= imp_t - _bar(imp):
                 fol, fw = _f(choch['t']), '🔀 CHoCH у бік входу'
-    s3 = _st('follow', 'продовження (⚡ / підтверджена свічка / CHoCH)', t=fol, why=fw)
+    s3 = _st('follow', 'follow-through: ⚡ агресія / закриття свічки / CHoCH', t=fol, why=fw)
     broken, clean = '', None
     if imp_t is not None:
         ab = _after(items, imp_t - 1, lambda x: x.get('dir') == _od(d)
@@ -288,7 +289,7 @@ def _e2(items, d, ctx, choch, now):
             broken = 'ціна пробила коробку в протилежний бік'
         elif fol is not None:
             clean = fol
-    s4 = _st('clean', 'пробій ніхто не поглинає (немає 🧽 проти)', t=clean)
+    s4 = _st('clean', 'пробій прийнято — абсорбції проти немає', t=clean)
     st = [s1, s2, s3, s4]
     for s in st:
         s['bar'] = _bar(imp) if imp else 3600
@@ -298,7 +299,7 @@ def _e2(items, d, ctx, choch, now):
 def _e3(items, d, ctx, choch, now):
     leg = next((it for it in items if it.get('dir') == d and it.get('conf') is True
                 and it.get('role') in ('continuation', 'start')), None)
-    s1 = _st('trend', 'підтверджений рух у бік входу', leg)
+    s1 = _st('trend', 'підтверджений імпульс за трендом', leg)
     quiet_t, broken, res = None, '', None
     if leg:
         t1 = _f(leg['t'])
@@ -311,8 +312,8 @@ def _e3(items, d, ctx, choch, now):
                      SCEN_SPAN_BARS * _bar(leg))
         if not broken and res:
             quiet_t = _f(res['t']) - 1
-    s2 = _st('pullback', 'відкат без зустрічного тиску', t=quiet_t)
-    s3 = _st('resume', 'нова реакція в бік входу на рівні', res if (res and not broken) else None)
+    s2 = _st('pullback', 'корекція без зустрічної агресії', t=quiet_t)
+    s3 = _st('resume', 'відновлення руху від рівня (OB / межа діапазону)', res if (res and not broken) else None)
     st = [s1, s2, s3]
     for s in st:
         s['bar'] = _bar(res or leg)
@@ -331,7 +332,7 @@ def _false_break(items, d, ctx, choch, push):
     # що потім повертає: комплекс = щонайменше дві різні реакції
     sweep = next((it for it in items if out(_f(it.get('price'))) and it.get('dir') == push),
                  None) if edge else None
-    s1 = _st('sweep', 'ціна вибила межу діапазону', sweep,
+    s1 = _st('sweep', 'sweep: прокол межі діапазону (збір ліквідності)', sweep,
              why=(f"закриття {sweep.get('price')} за межею {edge:g}" if sweep else ''))
     ret, rw, broken = None, '', ''
     if sweep:
@@ -348,7 +349,7 @@ def _false_break(items, d, ctx, choch, push):
                        and x.get('dir') == push and x.get('conf') is True), None)
         if deeper:
             broken = 'новий екстремум за межею — пробій справжній'
-    s2 = _st('back', 'реакція і повернення в діапазон', t=ret, why=rw)
+    s2 = _st('back', 'reclaim: повернення в діапазон', t=ret, why=rw)
     cf, cw = None, ''
     if ret is not None:
         c = _after(items, _f(sweep['t']), lambda x: x.get('dir') == back and x.get('conf') is True)
@@ -356,7 +357,7 @@ def _false_break(items, d, ctx, choch, push):
             cf, cw = max(_f(c['t']), ret), 'свічка закрилась у бік повернення'
         elif choch and choch.get('dir') == back and (_f(choch.get('t')) or 0) >= _f(sweep['t']):
             cf, cw = max(_f(choch['t']), ret), '🔀 CHoCH'
-    s3 = _st('confirm', 'підтвердження: свічка / CHoCH', t=cf, why=cw)
+    s3 = _st('confirm', 'підтвердження: закриття свічки / CHoCH', t=cf, why=cw)
     st = [s1, s2, s3]
     for x in st:
         x['bar'] = _bar(sweep)
@@ -501,7 +502,7 @@ def best(scens: List[Dict]) -> Optional[Dict]:
 
 
 def stages_text(s: Optional[Dict]) -> str:
-    """«🔁 Розворот після виснаження 3/4: ✓ … · ✓ … · ⏳ …» — для логу й підказок."""
+    """«🔁 Розворот: кульмінація + абсорбція 3/4: ✓ … · ✓ … · ⏳ …» — для логу й підказок."""
     if not s:
         return ''
     parts = [('✓ ' if x['done'] else '⏳ ') + x['label'] for x in s['stages']]

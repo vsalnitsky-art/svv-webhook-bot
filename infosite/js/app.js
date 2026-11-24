@@ -100,7 +100,7 @@
     var bCls = "sym-b" + (inBot ? " in-bot" : "");
     var inner = m && m[1] ? '<b class="' + bCls + '">' + esc(m[1]) + '</b><small class="sym-q">' + esc(m[2]) + "</small>" : esc(s);
     return '<a href="' + url + '" target="tvchart" rel="noopener" ' +
-      'title="Відкрити BYBIT:' + s + '.P (ф’ючерс) у TradingView" ' +
+      'title="Графік BYBIT:' + s + '.P (USDT-перпетуал) у TradingView" ' +
       'style="color:inherit;text-decoration:none;border-bottom:1px dotted rgba(255,255,255,0.4)">' +
       inner + "</a>";
   }
@@ -477,8 +477,8 @@
   function sbrEff() { return IW.sbr_tf && IW.sbr_tf !== "chart" ? IW.sbr_tf : IW.tf; }
   function sbrCtl() {
     var on = !!IW.show_sbr;
-    return '<span class="iw-sel s-sbr"><button type="button" data-layer="show_sbr" class="ly-sbr ' + (on ? "on" : "") + '" title="SBR — Session Band Reversal">SBR</button>' +
-      '<select id="iw-sbr-tf" title="Таймфрейм сигналів SBR: = графік (TF графіка) або будь-який інший TF графіка" aria-label="Таймфрейм SBR"' + (on ? "" : " disabled") + ">" +
+    return '<span class="iw-sel s-sbr"><button type="button" data-layer="show_sbr" class="ly-sbr ' + (on ? "on" : "") + '" title="SBR — Session Band Reversal: розворот від межі волатильної смуги">SBR</button>' +
+      '<select id="iw-sbr-tf" title="TF сигналів SBR: «= графік» — TF графіка, або інший TF (мультитаймфреймний аналіз)" aria-label="Таймфрейм SBR"' + (on ? "" : " disabled") + ">" +
       '<option value="chart"' + (IW.sbr_tf === "chart" ? " selected" : "") + ">= графік</option>" +
       SBR_CHART_TFS.map(function (tf) { return '<option value="' + tf + '"' + (tf === IW.sbr_tf ? " selected" : "") + ">" + tfLbl(tf) + "</option>"; }).join("") + "</select></span>";
   }
@@ -503,10 +503,10 @@
   }
 
   function pdBadge(pd) {
-    if (!pd) return '<span class="bdg mute" title="PD-зона ще не порахована">PD —</span>';
+    if (!pd) return '<span class="bdg mute" title="Premium / Discount ще розраховується">PD —</span>';
     var name = pd.zone === "discount" ? "Discount" : (pd.zone === "premium" ? "Premium" : "Equilibrium");
     var cls = pd.zone === "discount" ? "long" : (pd.zone === "premium" ? "short" : "mute");
-    return '<span class="bdg hb ' + cls + '" title="Premium / Discount · ' + pd.tf + '"><span class="d"></span>' +
+    return '<span class="bdg hb ' + cls + '" title="Позиція ціни в дилінг-діапазоні ' + pd.tf + ': Premium — зона продажу, Discount — зона покупки, Equilibrium — 50%"><span class="d"></span>' +
       '<span class="hb-z">' + name + '</span><span class="hb-v">' + Math.round(pd.pct) + '%</span>' +
       '<span class="hb-tf">' + esc(pd.tf) + "</span></span>";
   }
@@ -514,12 +514,12 @@
   function pocBadge(poc, state) {
     if (!poc) {
       var t = state === "none" ? "POC немає даних" : "POC ⏳";
-      return '<span class="bdg mute" title="POC рахується">' + t + "</span>";
+      return '<span class="bdg mute" title="Volume Profile: POC розраховується">' + t + "</span>";
     }
     var d = poc.dist_pct, rel = poc.rel;
     var cls = rel === "above" ? "short" : (rel === "below" ? "long" : "mute");
-    var hint = rel === "above" ? "краще SHORT" : (rel === "below" ? "краще LONG" : "на POC");
-    var tip = "POC — ціна з найбільшим обсягом торгів за останні " + poc.days + " доби · " + hint;
+    var hint = rel === "above" ? "ціна над POC — перевага SHORT (mean reversion)" : (rel === "below" ? "ціна під POC — перевага LONG (mean reversion)" : "ціна на POC — баланс");
+    var tip = "POC (Point of Control) — рівень максимального обсягу за " + poc.days + " дн · " + hint;
     return '<span class="bdg hb ' + cls + '" title="' + esc(tip) + '"><span class="hb-k k-poc">POC</span>' +
       '<span class="hb-px">' + fmtPrice(poc.poc).replace("$", "") + "</span>" +
       (d == null ? "" : '<span class="hb-v">' + (d >= 0 ? "+" : "") + Number(d).toFixed(2) + "%</span>") +
@@ -551,14 +551,14 @@
 
   function sbrLastBadge(tf, s, price) {
     var T = tf.toUpperCase();
-    if (!s) return '<span class="bdg mute sbr-last" title="SBR ' + T + ' рахується">SBR ' + T + " ⏳</span>";
-    if (s.none) return '<span class="bdg mute sbr-last" title="Сигналів SBR ' + T + ' немає">SBR ' + T + " —</span>";
+    if (!s) return '<span class="bdg mute sbr-last" title="SBR ' + T + ': сигнал розраховується">SBR ' + T + " ⏳</span>";
+    if (s.none) return '<span class="bdg mute sbr-last" title="SBR ' + T + ': активного сигналу немає">SBR ' + T + " —</span>";
     var lg = s.side === "LONG", m = sbrMove(s.side, s.trigger, price);
     var cls = !m || m.fav == null ? "mute" : (m.fav ? "long" : "short");
     var pct = m ? (m.pct >= 0 ? "+" : "") + m.pct.toFixed(2) + "%" : "—";
     var tip = "Останній сигнал SBR " + T + (s.n ? " #" + s.n : "") + " · спрацював " + (sct(s) ? locDM(sct(s)) + " " + locHM(sct(s)) : "") +
       " · Trigger " + fmtPrice(s.trigger) + (s.score != null ? " · Score " + Number(s.score).toFixed(1) + "%" : "") +
-      " → зараз " + (price ? fmtPrice(price) : "—") + " · " + (!m || m.fav == null ? "без руху" : (m.fav ? "в бік" : "проти"));
+      " → зараз " + (price ? fmtPrice(price) : "—") + " · " + (!m || m.fav == null ? "без руху" : (m.fav ? "у бік сигналу" : "проти сигналу"));
     return '<span class="bdg hb sbr-last ' + cls + '" title="' + esc(tip) + '">' +
       '<span class="hb-k k-sbr">SBR</span><span class="hb-tf">' + T + "</span>" +
       '<span class="sl-side ' + (lg ? "lg" : "sh") + '">' + (lg ? "▲ LONG" : "▼ SHORT") + "</span>" +
@@ -590,10 +590,10 @@
   function mmTip(sym) {
     if (MM_SYMS.indexOf(sym) < 0) return sym;
     var m = (IW.rows[sym] || {}).mm;
-    if (!m) return "МММ-бабло: даних немає";
-    if (m.dir === "LONG") return "МММ-бабло ↑ зверху → тягне в LONG · " + m.str + "%";
-    if (m.dir === "SHORT") return "МММ-бабло ↓ знизу → тягне в SHORT · " + m.str + "%";
-    return "МММ-бабло ⚖ рівновага — напрямку немає · " + m.str + "%";
+    if (!m) return "МММ (ліквідність): даних немає";
+    if (m.dir === "LONG") return "МММ (ліквідність): кластери ліквідацій над ціною — тяга вгору, перевага LONG · сила " + m.str + "%";
+    if (m.dir === "SHORT") return "МММ (ліквідність): кластери ліквідацій під ціною — тяга вниз, перевага SHORT · сила " + m.str + "%";
+    return "МММ (ліквідність) ⚖ баланс — вираженої тяги немає · сила " + m.str + "%";
   }
 
   var IW_SORT = "default";
@@ -614,15 +614,15 @@
     if (IW_SORT === "change") sorted.sort(function (a, b) { var av = Number((IW.rows[a] || {}).chg24), bv = Number((IW.rows[b] || {}).chg24); return (isFinite(bv) ? bv : -Infinity) - (isFinite(av) ? av : -Infinity); });
     host.innerHTML = sorted.map(function (sym) {
       var r = IW.rows[sym] || {};
-      var ext = r.src === "ext" ? '<small title="Outside the bot\'s WATCHLIST">🛰</small>' : "";
+      var ext = r.src === "ext" ? '<small title="Поза WATCHLIST бота — розрахунок окремим потоком">🛰</small>' : "";
       var chg = r.chg24, bell = bellHTML(sym);
       var chgHtml = chg == null ? '<span class="iw-chg">—</span>'
-        : '<span class="iw-chg ' + (chg > 0 ? "up" : (chg < 0 ? "dn" : "")) + '" title="Зміна ціни за ~24 год">' +
+        : '<span class="iw-chg ' + (chg > 0 ? "up" : (chg < 0 ? "dn" : "")) + '" title="Зміна за 24 год">' +
           (chg > 0 ? "+" : "") + Number(chg).toFixed(2) + "%</span>";
       return '<div class="iw-row' + (sym === IW.sel ? " sel" : "") + '" data-sym="' + esc(sym) + '">' +
         '<div class="iw-main"><span class="iw-sym' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + coinIcon(sym) + '<b class="' + (r.src && r.src !== "ext" ? "in-bot" : "") + '">' + esc(sym.replace(/USDT$/, "")) + '</b><small>USDT</small>' + ext + "</span>" +
         '<span class="iw-quote"><span class="iw-price' + dirCls(sym) + '">' + (livePx(sym) ? fmtPrice(livePx(sym)) : "—") + "</span>" + chgHtml + '</span></div>' +
-        bell.btn + '<button class="iw-del" data-del="' + esc(sym) + '" title="Прибрати зі списку">×</button>' + bell.menu +
+        bell.btn + '<button class="iw-del" data-del="' + esc(sym) + '" title="Видалити з WATCHLIST">×</button>' + bell.menu +
         (r.err ? '<div class="iw-err" title="' + esc(r.err) + '">⚠ ' + esc(r.err) + "</div>" : "") + "</div>";
     }).join("");
     keepCoinIcons(host, oldIcons);
@@ -692,13 +692,13 @@
             return '<label><input type="checkbox" data-belltf="' + tf + '"' + (tfs.indexOf(tf) >= 0 ? " checked" : "") + "> " + tf.toUpperCase() + "</label>";
           }).join("") + "</div>" : "") +
           (okA ? '<div class="t t2">⚠ Аномалії обсягу</div>' +
-          '<label class="iw-bell-anom" title="Сигнал, найближчий до моменту входу: по монеті склався сценарій входу ШІ (комплекс реакцій обсягу — виснаження/поглинання/продовження — підтверджено, точка свіжа ≤ 2 свічки, а напрямок аномалій за 6 год не проти)."><input type="checkbox" data-bellanom="1"' + (an ? " checked" : "") + '><span class="iw-bell-anom-t">сценарій входу<small>LONG / SHORT</small></span></label>' +
-          (an ? '<div class="iw-bell-fmt" title="Вигляд повідомлення в Telegram (для всіх монет): коротке — лише бік, монета, ціна й сценарій; повне — ще й етапи сценарію та напрямок аномалій за 6 год.">' +
+          '<label class="iw-bell-anom" title="Сетап на вхід за order flow: сценарій ШІ підтверджено (climax / абсорбція / follow-through), тригер свіжий — не старший за 2 свічки, фон order flow за 6 год не проти позиції."><input type="checkbox" data-bellanom="1"' + (an ? " checked" : "") + '><span class="iw-bell-anom-t">сценарій входу<small>LONG / SHORT</small></span></label>' +
+          (an ? '<div class="iw-bell-fmt" title="Формат алерту в Telegram (для всіх інструментів): коротке — напрямок, інструмент, ціна сигналу й сетап; повне — ще й етапи сетапу та фон order flow за 6 год.">' +
             ["short", "full"].map(function (f) {
               return '<button type="button" data-bellanomfmt="' + f + '" class="' + ((IW.anom_fmt || "short") === f ? "on" : "") + '">' + (f === "short" ? "коротке" : "повне") + "</button>";
             }).join("") + "</div>" : "") : "") +
           (okT
-            ? '<div class="t t2">🤖 Торгівля за сигналом ⚠</div><div class="iw-bell-trade"><label title="Новий сценарій входу ⚠ → угода: немає угоди — відкрити · той самий бік — нічого · протилежний — закрити поточну і відкрити нову"><input type="checkbox" data-belltrade="1"' + (trd ? " checked" : "") + "> торгувати</label>" +
+            ? '<div class="t t2">🤖 Торгівля за сигналом ⚠</div><div class="iw-bell-trade"><label title="Автоторгівля за сетапом ⚠: немає позиції — вхід · сигнал у бік позиції — утримання, або усереднення (DCA) з кращої ціни · протилежний — реверс (закрити й відкрити зустрічну)"><input type="checkbox" data-belltrade="1"' + (trd ? " checked" : "") + "> торгувати</label>" +
                 (trd ? trBookSel(sym, "data-belltradebook") : "") + "</div>" +
                 (trd && !TR.enabled ? '<div class="w">⏸ Торгівлю вимкнено головним тумблером у картці «🤖 Торгівля з кабінету».</div>' : "")
             : "") +
@@ -742,18 +742,18 @@
     if (pt) pt.innerHTML = POC_TFS.map(function (tf) { return '<option value="' + tf + '"' + (tf === IW.poc_tf ? " selected" : "") + ">" + tfLbl(tf) + "</option>"; }).join("");
     var lay = $("#iw-layers");
     if (lay) lay.innerHTML =
-      (pOk("ly_imb") ? '<button type="button" data-layer="show_imb" class="ly-imb ' + (IW.show_imb ? "on" : "") + '" title="IMB">IMB</button>' : "") +
+      (pOk("ly_imb") ? '<button type="button" data-layer="show_imb" class="ly-imb ' + (IW.show_imb ? "on" : "") + '" title="IMB — імбаланс (Fair Value Gap) з розкладом обсягу покупців / продавців">IMB</button>' : "") +
       (pOk("ly_hl") ? hlCtl() : "") +
       (pOk("ly_sbr") ? sbrCtl() : "") +
       (pOk("ly_shl") ? shlCtl() : "") +
-      (pOk("ly_anom") ? '<button type="button" data-layer="show_anom" class="ly-anom ' + (IW.show_anom ? "on" : "") + '" title="⚠ Аномалії обсягу — сигнали входу (той самий сигнал, що в Telegram): B — LONG, S — SHORT. Позначки зʼявляються з моменту, як монету почали вести (графік відкрито з цим шаром, або монета в Пружинах / підписках).">⚠ Сигнали</button>' : "");
+      (pOk("ly_anom") ? '<button type="button" data-layer="show_anom" class="ly-anom ' + (IW.show_anom ? "on" : "") + '" title="⚠ Сетапи на вхід за аномаліями обсягу (ті самі, що в Telegram): B — Buy / LONG, S — Sell / SHORT. Маркери накопичуються з моменту, коли інструмент узято на моніторинг (графік із цим шаром, Пружини або підписки).">⚠ Сигнали</button>' : "");
     liqUi();
   }
 
   // 🏁 High/Low + вибір TF (24.11, як у HH/HL і SBR).
   function shlCtl() {
     var on = !!IW.show_shl;
-    return '<span class="iw-sel s-shl"><button type="button" data-layer="show_shl" class="ly-shl ' + (on ? "on" : "") + '" title="High/Low — Strong/Weak High і Low дилінг-діапазону">High/Low</button>' +
+    return '<span class="iw-sel s-shl"><button type="button" data-layer="show_shl" class="ly-shl ' + (on ? "on" : "") + '" title="Strong / Weak High і Low — межі дилінг-діапазону (Weak — ціль ліквідності, Strong — захищений екстремум)">High/Low</button>' +
       '<select id="iw-shl-tf" title="Таймфрейм High/Low" aria-label="Таймфрейм High/Low"' + (on ? "" : " disabled") + ">" +
       HL_TFS.map(function (tf) { return '<option value="' + tf + '"' + (tf === IW.shl_tf ? " selected" : "") + ">" + tfLbl(tf) + "</option>"; }).join("") + "</select></span>";
   }
@@ -762,7 +762,7 @@
   function hlCtl() {
     var on = IW.hl_tf !== "off", cur = on ? IW.hl_tf : tfLast("hl_tf");
     return '<span class="iw-sel s-hl"><button type="button" id="iw-hl-on" class="iw-tgl ly-hl' + (on ? " on" : "") + '" data-tgl="hl_tf" aria-pressed="' + (on ? "true" : "false") +
-      '" title="HH · HL · LH · LL — свінг-структура (зелений — бичача, червоний — ведмежа)">HH/HL</button>' +
+      '" title="Ринкова структура: HH / HL — висхідна (bullish), LH / LL — низхідна (bearish)">HH/HL</button>' +
       '<select id="iw-hl-tf" title="Таймфрейм HH/HL" aria-label="Таймфрейм HH/HL"' + (on ? "" : " disabled") + ">" +
       HL_TFS.map(function (tf) { return '<option value="' + tf + '"' + (tf === cur ? " selected" : "") + ">" + tfLbl(tf) + "</option>"; }).join("") + "</select></span>";
   }
@@ -1003,7 +1003,7 @@
     }, function (e) { if (e && e.net) liqBrMark(ex, true); throw e; });
   }
   function liqFromServer(sym, st) { return api("/api/info/liq?symbol=" + encodeURIComponent(sym) + "&exchange=" + LQ.ex + "&bars=" + LQ.bars + "&res=" + LQ.res + (st ? "&step=" + st : "")); }
-  function liqSrcLbl(d) { return d.src === "browser" ? '<span class="src" title="Дані з біржі взяв ваш браузер">🖥</span>' : '<span class="src" title="Дані взяв сервер">☁ ' + (Number(d.age) || 0) + "с</span>"; }
+  function liqSrcLbl(d) { return d.src === "browser" ? '<span class="src" title="Дані завантажено з біржі напряму (браузер)">🖥</span>' : '<span class="src" title="Дані з кешу сервера">☁ ' + (Number(d.age) || 0) + "с</span>"; }
   function liqLoad() {
     var sym = IW.sel; if (!sym || !pOk("ly_liq")) return;
     var tok = ++LQ.seq;
@@ -1599,9 +1599,9 @@
       '<div class="h ' + (S ? "short" : "long") + '"><span class="tag">' + (S ? "S" : "B") + "</span>" + (S ? "SHORT" : "LONG") +
       '<span class="tf">⚠ Аномалії · ' + esc(locDM(ct)) + " " + esc(locHM(ct)) + "</span>" +
       '<button class="x" aria-label="Закрити">×</button></div>' +
-      row("Сценарій", esc(s.name || "—")) +
-      row("Ціна", s.px ? fmtPrice(s.px) : "—", "v-trg") +
-      (s.adir ? row("Аномалії 6 год", (s.adir === "LONG" ? "▲ " : "▼ ") + esc(s.adir)) : "") +
+      row("Сетап", esc(s.name || "—")) +
+      row("Ціна сигналу", s.px ? fmtPrice(s.px) : "—", "v-trg") +
+      (s.adir ? row("Order flow 6 год", (s.adir === "LONG" ? "▲ " : "▼ ") + esc(s.adir)) : "") +
       ((s.stages || []).length ? '<div class="r st"><span>Етапи</span><b>' + s.stages.map(function (x) { return "✓ " + esc(x); }).join("<br>") + "</b></div>" : "");
     el.classList.toggle("is-short", S); el.classList.toggle("is-long", !S); el.classList.add("is-anom"); el.style.display = "block";
     var bw = box.clientWidth, bh = box.clientHeight, ew = el.offsetWidth, eh = el.offsetHeight;
@@ -1745,7 +1745,7 @@
        переноситься в нову розмітку, а незмінна шапка не чіпається взагалі. */
     var headHtml = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym, !!(c.src && c.src !== "ext")) + "</span>" +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" + (pOk("ly_pd") ? pdBadge(c.pd) : "") + (pOk("ly_poc") ? pocBadge(c.poc, c.poc_state) : "") +
-      (c.src === "ext" ? '<span class="bdg warn ext-badge" title="Outside the bot\'s WATCHLIST">🛰 NOT IN BOT</span>' : "");
+      (c.src === "ext" ? '<span class="bdg warn ext-badge" title="Поза WATCHLIST бота — розрахунок окремим потоком">🛰 NOT IN BOT</span>' : "");
     var keepLg = document.getElementById("tv-ohlc"), keepCoin = document.getElementById("iw-head-coin");
     if (h._headSig !== headHtml || !keepLg || keepLg.parentNode !== h || !keepCoin || keepCoin.parentNode !== h) {
       h.innerHTML = headHtml;
@@ -1764,13 +1764,13 @@
     }
     /* Легенда шарів переїхала в нижній рядок графіка (chart-footer). */
     IW.layerLg =
-      '<span title="VOB"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
-      '<span title="OB"><i style="background:rgba(41,98,255,.2);outline:1px solid rgba(120,160,255,.7)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
-      '<span title="CHoCH / BOS"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
-      '<span title="IMB"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
-      '<span title="SBR"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
-      '<span title="POC"><i style="background:#f5f5f5;height:2px"></i>POC</span>' +
-      '<span title="High/Low"><i style="background:#f87171;height:2px;width:7px"></i><i style="background:#4ade80;height:2px;width:7px;margin-left:-3px"></i>High/Low</span>';
+      '<span title="Volumized Order Block"><i style="background:rgba(34,197,94,.55)"></i>VOB ' + tfLbl(IW.vob_tf) + "</span>" +
+      '<span title="Order Block"><i style="background:rgba(41,98,255,.2);outline:1px solid rgba(120,160,255,.7)"></i>OB ' + tfLbl(IW.ob_tf) + "</span>" +
+      '<span title="CHoCH — зміна характеру руху · BOS — злам структури"><i style="background:#22c55e;height:2px"></i>CHoCH/BOS</span>' +
+      '<span title="IMB — імбаланс (Fair Value Gap) з розкладом обсягу покупців / продавців"><i style="background:rgba(234,128,38,.6)"></i>IMB</span>' +
+      '<span title="SBR — Session Band Reversal"><i style="background:#f23645;width:9px"></i><i style="background:#22c55e;width:9px;margin-left:-3px"></i>SBR</span>' +
+      '<span title="POC — Point of Control"><i style="background:#f5f5f5;height:2px"></i>POC</span>' +
+      '<span title="High / Low — межі дилінг-діапазону"><i style="background:#f87171;height:2px;width:7px"></i><i style="background:#4ade80;height:2px;width:7px;margin-left:-3px"></i>High/Low</span>';
     if (lg) legendPaint();
   }
 
@@ -1971,11 +1971,11 @@
       h += ' <span class="vl-up' + (bp >= 50 ? " vl-win" : "") + '">▲ покупці ' + bp + "% · " + esc(fmtVol(m.buy, 3) || "0") + "</span>" +
         ' <span class="vl-dn' + (bp < 50 ? " vl-win" : "") + '">▼ продавці ' + (100 - bp) + "% · " + esc(fmtVol(m.sell, 3) || "0") + "</span>" +
         ' <span class="' + (m.delta >= 0 ? "vl-up" : "vl-dn") + '">Δ ' + (m.delta >= 0 ? "+" : "−") + esc(fmtVol(Math.abs(m.delta), 3) || "0") + "</span>";
-      if (m.split < m.n) h += ' <span class="vl-n" title="Для частини свічок розклад ще рахується — покупці/продавці з ' + m.split + ' свічок">розклад ' + m.split + "/" + m.n + "</span>";
+      if (m.split < m.n) h += ' <span class="vl-n" title="Дельта ще розраховується: розклад buy / sell є для ' + m.split + ' свічок">розклад ' + m.split + "/" + m.n + "</span>";
     }
-    if (m.chg != null) h += ' <span class="' + (m.chg >= 0 ? "vl-up" : "vl-dn") + '" title="Ціна: від відкриття першої свічки до поточної">ціна ' + (m.chg >= 0 ? "+" : "") + m.chg.toFixed(2) + "%</span>";
+    if (m.chg != null) h += ' <span class="' + (m.chg >= 0 ? "vl-up" : "vl-dn") + '" title="Зміна ціни від open першої свічки діапазону">ціна ' + (m.chg >= 0 ? "+" : "") + m.chg.toFixed(2) + "%</span>";
     if (VOL.anom && m.anoms) h += ' <span class="vl-n">⚠ ' + m.anoms + "</span>";
-    return h + ' <span class="vl-x" title="Скинути (Esc або подвійний клік ще раз)">✕</span>';
+    return h + ' <span class="vl-x" title="Скинути діапазон (Esc або повторний подвійний клік)">✕</span>';
   }
   function volSetRange(t) {
     VOL.sel = (t == null || VOL.sel === t) ? null : t;
@@ -1998,13 +1998,13 @@
     if (!a) return ["", ""];
     var x = "×" + a.rv.toFixed(1), bp = a.sh != null ? Math.round(a.sh * 100) : null;
     if (a.k === "absorb") return a.by === "sell"
-      ? ["🧽 поглинання покупок", "Покупці агресивні (" + bp + "%), обсяг " + x + ", але свічка ЧЕРВОНА: лімітні продавці поглинули тиск — ризик розвороту вниз. Не поспішати з LONG."]
-      : ["🧽 поглинання продажів", "Продавці агресивні (" + (100 - bp) + "%), обсяг " + x + ", але свічка ЗЕЛЕНА: лімітні покупці поглинули тиск — можливий розворот угору. Не поспішати з SHORT."];
-    if (a.k === "climax") return ["🔥 кульмінація " + x, "Обсяг " + x + " від медіани " + VOL_AN.base + " свічок: вершина / дно руху, ліквідації або новина. Вхід навздогін ризикований — чекати реакції наступних свічок." + (bp != null ? " Покупці " + bp + "%." : "")];
+      ? ["🧽 абсорбція покупок", "Агресивні ринкові покупки " + bp + "%, обсяг " + x + ", але свічка закрилась ЧЕРВОНОЮ: лімітні продавці абсорбували попит — ризик розвороту вниз. LONG без підтвердження не брати."]
+      : ["🧽 абсорбція продажів", "Агресивні ринкові продажі " + (100 - bp) + "%, обсяг " + x + ", але свічка закрилась ЗЕЛЕНОЮ: лімітні покупці абсорбували пропозицію — ймовірний розворот угору. SHORT без підтвердження не брати."];
+    if (a.k === "climax") return ["🔥 climax-обсяг " + x, "Обсяг " + x + " до медіани " + VOL_AN.base + " свічок: кульмінація руху (buying / selling climax) — каскад ліквідацій або новина. Вхід навздогін — ризик купити вершину / продати дно; чекати реакції наступних свічок." + (bp != null ? " Ринкові покупки " + bp + "%." : "")];
     if (a.k === "side") return a.dir === "up"
-      ? ["⚡ агресивні покупці " + bp + "%", "Покупці " + bp + "% при обсязі " + x + ": сильний односторонній тиск угору — підтримує LONG, проти SHORT."]
-      : ["⚡ агресивні продавці " + (100 - bp) + "%", "Продавці " + (100 - bp) + "% при обсязі " + x + ": сильний односторонній тиск униз — підтримує SHORT, проти LONG."];
-    return ["📈 сплеск обсягу " + x, "Обсяг " + x + " від медіани " + VOL_AN.base + " свічок без явної переваги боку — ринок прокинувся, варто стежити."];
+      ? ["⚡ агресія покупців " + bp + "%", "Ринкові покупки " + bp + "% при обсязі " + x + ": сильний дисбаланс дельти вгору — підтримує LONG, проти SHORT."]
+      : ["⚡ агресія продавців " + (100 - bp) + "%", "Ринкові продажі " + (100 - bp) + "% при обсязі " + x + ": сильний дисбаланс дельти вниз — підтримує SHORT, проти LONG."];
+    return ["📈 сплеск обсягу " + x, "Обсяг " + x + " до медіани " + VOL_AN.base + " свічок без вираженої дельти — пожвавлення інтересу, стежити за реакцією ціни."];
   }
   function volTfSec(tf) { var t = String(tf || "").toLowerCase(), n = parseInt(t, 10) || 1, u = t.slice(-1); return n * (u === "d" ? 86400 : u === "h" ? 3600 : 60); }
   /* Стрічка угод: t0 — час біржі, з якого потік БЕЗ розривів; bars[t] = {b, s,
@@ -2553,7 +2553,7 @@
   function ppInlineHTML(a) {
     a = a || {};
     var usd = function (v) { return '<b class="ppi-usd">$' + ppNum(v) + "</b>"; }, pct = function (v) { return '<b class="ppi-pct">' + ppNum(v) + "%</b>"; };
-    var deal = a.mode === "pct" && a.margin_pct != null ? pct(a.margin_pct) + ' <span class="ppi-l" title="Вільні кошти: гаманець − маржа відкритих угод + їхній незафіксований збиток (прибуток, що ще в угоді, не рахується) — як на біржі">від вільних</span> ' + usd(a.available != null ? a.available : a.balance) + ' <span class="ppi-l">=</span> ' + usd(a.margin_usd) : usd(a.margin_usd);
+    var deal = a.mode === "pct" && a.margin_pct != null ? pct(a.margin_pct) + ' <span class="ppi-l" title="Вільна маржа (available): гаманець − маржа відкритих позицій + нереалізований збиток (нереалізований прибуток не враховується) — як на біржі">від вільних</span> ' + usd(a.available != null ? a.available : a.balance) + ' <span class="ppi-l">=</span> ' + usd(a.margin_usd) : usd(a.margin_usd);
     return '<span class="ppi-l">депозит</span> ' + usd(a.deposit) + ' <span class="ppi-sep">·</span> <span class="ppi-l">угода</span> ' + deal + ' <span class="ppi-l">×</span> <b class="ppi-lev">' + (a.leverage || 0) + "x</b>" + ' <span class="ppi-sep">·</span> <span class="ppi-l">комісія</span> ' + pct(a.fee_pct);
   }
   function ppRenderKpis(d, label) {
@@ -2586,9 +2586,9 @@
     if (!e) return '<span class="muted">—</span>';
     var prog = (e.prog != null && isFinite(Number(e.prog))) ? Number(e.prog) : (Number(e.pct) || 0);
     var pct = Math.max(0, Math.min(100, prog)), col = prog < 0 ? "#f87171" : exhColor(pct);
-    var tip = "🎯 Ціль " + fmtPrice(e.target) + ": " + (prog >= 0 ? "пройдено +" : "відхилення −") + Math.abs(Math.round(prog)) + "% шляху від входу";
+    var tip = "🎯 Ціль (measured move) " + fmtPrice(e.target) + ": " + (prog >= 0 ? "пройдено +" : "просідання −") + Math.abs(Math.round(prog)) + "% шляху від входу";
     var lab = '<b style="color:' + col + '">' + (prog >= 0 ? "+" : "−") + Math.abs(Math.round(prog)) + "%</b>" + (e.climax ? '<b style="color:#f472b6">💥</b>' : "") + (fd && fd.side !== p.side ? '<b class="pp-blink" style="color:#f87171">⚠</b>' : "");
-    return '<span class="pp-exh' + (prog < 0 ? " neg" : "") + '" title="' + esc(tip) + '"><i><b style="width:' + pct + "%;background-size:" + (pct > 0 ? 10000 / pct : 100) + '% 100%"></b></i>' + lab + (p.exh_trail && p.exh_trail.stop_px != null ? ' <b class="pp-exh-st" title="🎯 Кульмінацію зловлено">🎯 ' + fmtPrice(p.exh_trail.stop_px).replace("$", "") + "</b>" : "") + "</span>";
+    return '<span class="pp-exh' + (prog < 0 ? " neg" : "") + '" title="' + esc(tip) + '"><i><b style="width:' + pct + "%;background-size:" + (pct > 0 ? 10000 / pct : 100) + '% 100%"></b></i>' + lab + (p.exh_trail && p.exh_trail.stop_px != null ? ' <b class="pp-exh-st" title="🎯 Climax-трейл: стоп підтягнуто за кульмінацією">🎯 ' + fmtPrice(p.exh_trail.stop_px).replace("$", "") + "</b>" : "") + "</span>";
   }
   function ppLvl(v, done) { return !v ? '<span class="muted">—</span>' : fmtPrice(v).replace("$", "") + (done ? ' <span class="pp-up">✓</span>' : ""); }
   function ppPnlCols(pc, usd) { return '<span class="pp-pnl"><span class="pp-pnl-p">' + ppPct(pc) + "</span>" + (usd != null ? '<span class="pp-pnl-s">·</span><span class="pp-pnl-u"><b class="pp-usd ' + (Number(usd) >= 0 ? "up" : "dn") + '">' + ppUsd(usd) + "</b></span>" : "") + "</span>"; }
@@ -2598,7 +2598,7 @@
     var pc = Number(p.pnl_pct || 0), n = p.pnl_net, z = p.paper_size || {};
     if (!n) return '<td class="r ' + ppCls(pc) + '">' + ppPct(pc) + "</td>";
     var roi = n.roi_pct != null ? "ROI " + (n.roi_pct >= 0 ? "+" : "−") + Math.abs(Number(n.roi_pct)).toFixed(1) + "%" : "";
-    var tip = "Рух ціни " + (pc >= 0 ? "+" : "−") + Math.abs(pc).toFixed(2) + "% · маржа $" + Number(z.margin || 0).toFixed(2) + " × " + (z.lev || "?") + "x · комісії −$" + Number(n.fees_usd || 0).toFixed(2) + " (вхід + вихід)";
+    var tip = "Рух ціни " + (pc >= 0 ? "+" : "−") + Math.abs(pc).toFixed(2) + "% · маржа $" + Number(z.margin || 0).toFixed(2) + " × " + (z.lev || "?") + "x · комісії −$" + Number(n.fees_usd || 0).toFixed(2) + " (taker: вхід + вихід)";
     return '<td class="r pp-pnl2 ' + ppCls(n.net_usd) + '" title="' + esc(tip) + '"><b>' + ppPct(pc) + "</b><br>" +
       '<b class="pp-usd ' + (Number(n.net_usd) >= 0 ? "up" : "dn") + '">' + ppUsd(n.net_usd) + "</b>" +
       (roi ? ' <span class="pp-roi">' + roi + (z.lev ? " ×" + z.lev : "") + "</span>" : "") + "</td>";
@@ -2606,9 +2606,9 @@
   function ppObMark(p, tf) {
     var o = p["ob" + tf], L = tf.toUpperCase();
     if (!o) return "";
-    if (!o.bias) return '<span class="pp-ob" style="color:#6b7280;border-color:#4b5563" title="OB ' + L + ': живого блоку немає">' + L + " —</span>";
+    if (!o.bias) return '<span class="pp-ob" style="color:#6b7280;border-color:#4b5563" title="OB ' + L + ': активного order block немає">' + L + " —</span>";
     var bull = o.bias === "BULLISH", col = bull ? "#22c55e" : "#ef4444", agree = (bull && p.side === "LONG") || (!bull && p.side === "SHORT");
-    var tip = "Останній OB " + L + ": " + (bull ? "BULLISH (LONG)" : "BEARISH (SHORT)") + (o.tag ? " · " + o.tag : "") + (o.bar_time ? " · свічка " + locDM(o.bar_time) + " " + locHM(o.bar_time) : "") + (agree ? " — ЗА угодою" : " — ПРОТИ угоди") + (o.restored ? " · ↻ з минулого запуску" : "");
+    var tip = "Останній OB " + L + ": " + (bull ? "BULLISH (LONG)" : "BEARISH (SHORT)") + (o.tag ? " · " + o.tag : "") + (o.bar_time ? " · свічка " + locDM(o.bar_time) + " " + locHM(o.bar_time) : "") + (agree ? " — у бік позиції" : " — проти позиції") + (o.restored ? " · ↻ з минулого запуску" : "");
     return '<span class="pp-ob" style="color:' + col + ";border-color:" + (agree ? col : "#fbbf24") + (o.restored ? ";opacity:.5" : "") + '" title="' + esc(tip) + '">' + L + (bull ? "▲" : "▼") + "</span>";
   }
   function ppAlertCell(p) {
@@ -2616,35 +2616,35 @@
     if (t && t.armed_px) {
       var armed = Number(t.armed_px), cur = Number(p.current_price) || armed, stop = Number(t.stop_px) || armed;
       var dist = armed > 0 ? (cur - armed) / armed * 100 * (p.side === "SHORT" ? -1 : 1) : 0;
-      return '<td class="nw"><span class="pp-al pre" title="🔔⏳ протилежний сигнал SBR — угоду ведемо трейлом · стоп ' + esc(fmtPrice(stop)) + '">🔔⏳ ' + esc(t.tf || "") + " 🛡" + fmtPrice(stop).replace("$", "") + ' <b class="' + ppCls(dist) + '">' + (dist >= 0 ? "+" : "−") + Math.abs(dist).toFixed(2) + "%</b></span></td>";
+      return '<td class="nw"><span class="pp-al pre" title="🔔⏳ Зустрічний сигнал SBR — позицію ведемо трейлінг-стопом · стоп ' + esc(fmtPrice(stop)) + '">🔔⏳ ' + esc(t.tf || "") + " 🛡" + fmtPrice(stop).replace("$", "") + ' <b class="' + ppCls(dist) + '">' + (dist >= 0 ? "+" : "−") + Math.abs(dist).toFixed(2) + "%</b></span></td>";
     }
     var m = p.mmd, a = m && m.alert;
-    if (!a) return '<td class="nw"><span class="muted" title="Даних 🔔 МММ-SBR по монеті ще немає">—</span></td>';
+    if (!a) return '<td class="nw"><span class="muted" title="SBR по інструменту ще не розраховано">—</span></td>';
     var al = PP_ALERT[a.level];
     if (al) return '<td class="nw"><span class="pp-al ' + al[1] + '" title="' + esc(a.text || "") + '">' + al[0] + (a.level === "against" && a.tf ? " " + esc(a.tf) : "") + "</span></td>";
     if (a.level === "pre" && a.side) {
       return '<td class="nw"><span class="pp-al pp-al-now ' + (a.side === "LONG" ? "pp-long" : "pp-short") + '" title="' + esc(a.text || "") + '">🔔 ' + (a.side === "LONG" ? "▲ LONG" : "▼ SHORT") + (a.tf ? " " + esc(a.tf) : "") + "</span></td>";
     }
-    return '<td class="nw"><span class="pp-al pp-al-now muted" title="' + esc(a.text || "сигналу SBR по монеті немає") + '">🔔 без сигналу</span></td>';
+    return '<td class="nw"><span class="pp-al pp-al-now muted" title="' + esc(a.text || "активного сигналу SBR немає") + '">🔔 без сигналу</span></td>';
   }
   function ppSlCell(p) {
     var v = p.manual_sl; if (!v) return '<td class="r"><span class="muted">—</span></td>';
-    var tag = p.sl_breakeven ? ' <span class="pp-sltf be" title="Стоп у беззбитку">⚖️БЗ</span>'
-      : (p.manual_sl_src === "auto" && p.manual_sl_tf ? ' <span class="pp-sltf" title="SL виставив бот із ' + esc(p.manual_sl_tf) + '">' + esc(p.manual_sl_tf) + "</span>" : "");
+    var tag = p.sl_breakeven ? ' <span class="pp-sltf be" title="Стоп перенесено в беззбиток (BE)">⚖️БЗ</span>'
+      : (p.manual_sl_src === "auto" && p.manual_sl_tf ? ' <span class="pp-sltf" title="Стоп за структурою ' + esc(p.manual_sl_tf) + ' (виставив бот)">' + esc(p.manual_sl_tf) + "</span>" : "");
     return '<td class="r">' + fmtPrice(v).replace("$", "") + tag + "</td>";
   }
   // ➕ Усереднення угоди за ⚠ сигналами аномалій (24.11) — дзеркало cabAvgMarkHTML бота.
   function ppAvgMark(p) {
     var n = Number((p && p.cab_avg_n) || 0);
     if (!n) return "";
-    return '<span class="pp-avg" title="➕ Усереднення: ' + n + ' докуповування за ⚠ сигналами аномалій · закриття закриває всю позицію">➕' + n + "</span>";
+    return '<span class="pp-avg" title="➕ Усереднення (DCA): ' + n + ' докупівель з кращої ціни за сетапом ⚠ · вихід закриває всю позицію">➕' + n + "</span>";
   }
   function ppPeak(c) {
     var pk = c.peak_pnl_pct != null ? Number(c.peak_pnl_pct) : null;
     if (pk == null || !isFinite(pk)) return '<td class="r"><span class="muted">—</span></td>';
     var fin = c.pnl_pct != null ? Number(c.pnl_pct) : null;
     if (fin != null && fin > pk) pk = fin;
-    var tip = "Пік угоди: найкращий рух ціни від входу" + (fin != null ? " · віддано від піку " + Math.max(0, pk - fin).toFixed(2) + " п.п." : "");
+    var tip = "MFE — максимальний сприятливий рух від входу" + (fin != null ? " · віддано від піку " + Math.max(0, pk - fin).toFixed(2) + " п.п." : "");
     return '<td class="r ' + ppCls(pk) + '" title="' + esc(tip) + '">' + ppPct(pk) + "</td>";
   }
   var PP_PIN = '<span class="pp-pin" title="Ручне керування (Manual mode)">📌</span>';
@@ -2672,7 +2672,7 @@
   function ppReason(c) {
     var t = esc(PP_REASON[c.reason] || c.reason || "—"), v = ppPeakShare(c);
     if (v == null) return t;
-    return t + ' <b class="pp-share ' + (v >= 80 ? "hi" : v >= 50 ? "mid" : "lo") + '" title="Взято ' + v + '% від вершини (піку) угоди">' + v + "%</b>";
+    return t + ' <b class="pp-share ' + (v >= 80 ? "hi" : v >= 50 ? "mid" : "lo") + '" title="Capture: зафіксовано ' + v + '% від MFE угоди">' + v + "%</b>";
   }
   function ppRenderClosed(d) {
     var rows = d.closed || [], tb = $("#pp-closed tbody"); $("#pp-closed-n").textContent = rows.length;
@@ -2730,7 +2730,7 @@
     pos = Math.max(0, Math.min(100, pos)); var p0 = pos.toFixed(0);
     var grad = up ? "linear-gradient(90deg,#ff3b3b,#ffb020 " + (pos / 2).toFixed(0) + "%,#94a3b8 " + p0 + "%,#00e676)" : "linear-gradient(90deg,#00e676,#94a3b8 " + p0 + "%,#ffb020 " + ((pos + 100) / 2).toFixed(0) + "%,#ff3b3b)";
     var rr = Number(r.rr), rrc = !isFinite(rr) ? "" : rr >= 1.5 ? "rr-good" : rr >= 1 ? "rr-mid" : "rr-bad";
-    return '<span class="rec-path" title="Ризик ' + recPct(r.sl_pct) + " · хід " + recPct(r.tp_pct) + (isFinite(rr) ? " · R " + rr.toFixed(2) : "") + '"><span class="bar" style="background:' + grad + '">' +
+    return '<span class="rec-path" title="Ризик до SL ' + recPct(r.sl_pct) + " · потенціал до TP " + recPct(r.tp_pct) + (isFinite(rr) ? " · R:R " + rr.toFixed(2) : "") + '"><span class="bar" style="background:' + grad + '">' +
       '<i style="left:' + pos.toFixed(1) + '%"></i></span>' + (isFinite(rr) ? '<b class="rr ' + rrc + '">' + rr.toFixed(2) + "R</b>" : "") + "</span>";
   }
   // 📊 Група розрахунку одного TF (1H / 15m): 🛑 SL · 🎯 TP · Хід (вимога 11.11).
@@ -2738,7 +2738,7 @@
   // 🎯 TP СПІЛЬНИЙ для обох груп — окрема колонка перед ними.
   function recGroupCells(g, up, cls) {
     var sl = Number(g.sl) > 0;
-    var wt = '<span class="muted" title="' + esc(g.err || g.sl_label || "рахується") + '">' + (g.wait || g.sl_wait ? "⏳" : "—") + "</span>";
+    var wt = '<span class="muted" title="' + esc(g.err || g.sl_label || "розраховується") + '">' + (g.wait || g.sl_wait ? "⏳" : "—") + "</span>";
     var slC = sl ? '<span class="rec-lv sl">' + fmtPrice(g.sl) + " <small>" + recPct(g.sl_pct) + '</small> <small class="rec-tf" title="' + esc(g.sl_label || "") + '">' + esc(String(g.sl_tf || "").toUpperCase()) + "</small></span>" : wt;
     return '<td class="r ' + cls + ' gs">' + slC + '</td><td class="c ' + cls + '">' + recPath(g, up) + "</td>";
   }
@@ -2749,14 +2749,14 @@
     var ex = String(r.ex || (r.src === "scan" ? "binance" : "bybit")).toLowerCase();
     var icon = '<span class="rec-ic" title="' + (ex === "binance" ? "Binance" : "Bybit") + '">' + (SPB_ICON[ex] || "") + "</span>";
     var ai = r.ai || null;
-    var aiTip = ai ? ("ШІ: ВХІД ГОТОВИЙ" + (ai.side ? " " + ai.side : "") + (ai.scenario_name ? " · " + ai.scenario_name : "") + (ai.stage ? " " + ai.stage : "") + (ai.rank != null ? " · ранг " + ai.rank : "") + (ai.confidence != null ? " · впевненість " + ai.confidence : "") + (ai.etalon && ai.etalon.mature ? " · мозок еталонів: " + (ai.etalon.verdict === "take" ? "бере" : "ні") + (ai.etalon.p_good != null ? " (відмінних серед схожих " + Math.round(ai.etalon.p_good * 100) + "%)" : "") : (ai.sim != null ? " · схожість на еталони " + Number(ai.sim).toFixed(2) : ""))) : "";
+    var aiTip = ai ? ("VSV·AI: сетап на вхід" + (ai.side ? " " + ai.side : "") + (ai.scenario_name ? " · " + ai.scenario_name : "") + (ai.stage ? " " + ai.stage : "") + (ai.rank != null ? " · ранг " + ai.rank : "") + (ai.confidence != null ? " · впевненість " + ai.confidence : "") + (ai.etalon && ai.etalon.mature ? " · модель еталонів: " + (ai.etalon.verdict === "take" ? "вхід" : "пропуск") + (ai.etalon.p_good != null ? " (win rate схожих " + Math.round(ai.etalon.p_good * 100) + "%)" : "") : (ai.sim != null ? " · подібність до еталонних угод " + Number(ai.sim).toFixed(2) : ""))) : "";
     // «ВХІД» — у слоті сталої ширини праворуч, рядок не зсувається
     var aiCell = '<span class="rec-ai-slot">' + (ai && ai.ready ? '<span class="rec-ai on" title="' + esc(aiTip) + '">' + AI_BRAND + "<b>ВХІД</b></span>" : "") + "</span>";
-    var nb = r.bybit === false ? ' <span class="rec-nb" title="Монети немає на Bybit">⚠</span>' : "";
+    var nb = r.bybit === false ? ' <span class="rec-nb" title="Інструмент не торгується на Bybit">⚠</span>' : "";
     var pr = prob != null && isFinite(prob) ? prob : null;
     var prCell = pr == null ? '<span class="muted">—</span>' : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span><b class="rec-' + dc + '">' + pr.toFixed(0) + "%</b>";
     var g1 = recGroupCells(r, up, "g1"), g15 = recGroupCells(r.m15 || { wait: true }, up, "g15");
-    var tpCell = Number(r.tp) > 0 ? '<span class="rec-lv tp">' + fmtPrice(r.tp) + " <small>" + recPct(r.tp_pct) + "</small></span>" : '<span class="muted" title="Цілі в бік угоди немає">—</span>';
+    var tpCell = Number(r.tp) > 0 ? '<span class="rec-lv tp">' + fmtPrice(r.tp) + " <small>" + recPct(r.tp_pct) + "</small></span>" : '<span class="muted" title="Цілі в напрямку позиції немає">—</span>';
     return '<tr class="rec-row ' + dc + (ai && ai.ready ? " ai-pick" : "") + '"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td>" +
       '<td><span class="rec-dir ' + dc + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</span></td>" +
       '<td class="r">' + prCell + "</td>" + '<td class="r tpc">' + tpCell + "</td>" + g1 + g15 + "</tr>";

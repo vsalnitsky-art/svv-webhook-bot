@@ -44,7 +44,7 @@ AI_DEFAULTS = {
     'exit_enabled': True,      # ШІ супроводжує й закриває СВОЇ угоди
     'exit_mode': 'confirmed',  # 'confirmed' | 'all'
     'min_charge': 65,          # монета Пружини береться в роботу з цього заряду
-    'scenarios': ['E2'],       # вхід лише на «💥 Старт розряду» (рішення 22.11)
+    'scenarios': ['E2'],       # вхід лише на E2 «💥 Пробій після стиснення» (рішення 22.11)
     'allow_long': True,
     'allow_short': True,
     'book': 'auto',            # 'auto' (TRD · TM · Test Mode) | 'paper' | 'real'
@@ -2389,18 +2389,18 @@ def anom_tg_text(symbol: str, side: str, r: Dict, price=None, adir: Optional[Dic
     """Текст Telegram: бік, монета, сценарій, етапи, ціна, напрямок аномалій."""
     sc = (r or {}).get('scenario') or {}
     emo = '🟢' if side == 'LONG' else '🔴'
-    out = ['🤖 <b>VSV·AI</b>', f"⚠️ <b>Аномалії обсягу</b> · {emo} <b>{side}</b>",
-           f"<b>#{symbol}</b> · {sc.get('name') or 'сценарій входу'}"]
+    out = ['🤖 <b>VSV·AI</b>', f"⚠️ <b>Аномалії обсягу · сетап на вхід</b> · {emo} <b>{side}</b>",
+           f"<b>#{symbol}</b> · {sc.get('name') or 'сетап на вхід'}"]
     for st in (sc.get('stages') or [])[:5]:
         out.append(('✓ ' if st.get('done') else '· ') + str(st.get('label') or ''))
     try:
         if price:
             from detection.sbr_signals import fmt_price
-            out.append(f"💵 Ціна: <code>{fmt_price(float(price))}</code>")
+            out.append(f"💵 Ціна сигналу: <code>{fmt_price(float(price))}</code>")
     except Exception:
         pass
     if adir and adir.get('state') == 'dir' and adir.get('dir'):
-        out.append(f"🧭 Аномалії 6 год: {'▲' if adir['dir'] == 'LONG' else '▼'} {adir['dir']}")
+        out.append(f"🧭 Order flow 6 год: {'▲' if adir['dir'] == 'LONG' else '▼'} {adir['dir']}")
     return '\n'.join(out)
 
 

@@ -5000,7 +5000,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     <div id="aip-body" style="background:rgba(167,139,250,0.03);border:1px solid rgba(167,139,250,0.22);border-radius:8px;padding:10px 12px;margin-bottom:12px">
         <div id="aip-st" style="font-size:0.72rem;color:#8b93a7;margin-bottom:8px">—</div>
         <div class="aip-grid">
-            <span title="Сценарій входу. «💥 Старт розряду» (E2) — найраніша точка; інші спрацьовують пізніше">Вхід на: <span id="aip-scen"></span></span>
+            <span title="Сетап на вхід. «💥 Пробій після стиснення (squeeze)» (E2) — найраніший тригер; решта спрацьовують пізніше">Вхід на: <span id="aip-scen"></span></span>
             <span>Напрямки: <span class="aip-chip" data-aip-side="allow_long" onclick="aipChip(this)">▲ LONG</span> <span class="aip-chip" data-aip-side="allow_short" onclick="aipChip(this)">▼ SHORT</span></span>
             <label title="Монета Пружини береться в роботу ШІ з цього заряду (0-100)">заряд ≥ <input type="number" id="aip-min-charge" min="0" max="100" step="5" style="width:52px" onchange="aipSave()"></label>
             <label title="Книга угод ШІ: авто — за правилом TRD · Trade Manager · Test Mode; або завжди 🧪 paper / 🏦 реальна">книга <select id="aip-book" onchange="aipSave()"><option value="auto">авто</option><option value="paper">🧪 paper</option><option value="real">🏦 реальна</option></select></label>
@@ -5019,7 +5019,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <span style="font-size:11px;color:#6b7280">Після зміни стопа R до цілі перераховується: якщо стає менше 1.3 — вхід не беремо.</span>
         </div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
-            <label class="sm-checkbox" title="💥 «Старт розряду» (E2) — лише ПІДТВЕРДЖЕНИЙ: пробій 24-год коробки має закритись 1h-свічкою, і ще N закритих свічок мусять утримати ціну за межею. Пробій лише на живій (незакритій) свічці або повернення в коробку = хибний старт, угоду не відкриваємо."><input type="checkbox" id="aip-dis-on" onchange="aipSave()"> 💥 розряд лише підтверджений</label>
+            <label class="sm-checkbox" title="💥 «Пробій після стиснення» (E2) — лише ПІДТВЕРДЖЕНИЙ: пробій 24-год діапазону має закритись 1h-свічкою, і ще N закритих свічок мусять утримати ціну за межею (acceptance). Пробій лише на живій свічці або повернення в діапазон = хибний пробій, угоду не відкриваємо."><input type="checkbox" id="aip-dis-on" onchange="aipSave()"> 💥 розряд лише підтверджений</label>
             <label title="TF, закриттям свічок якого підтверджується розряд. Рівень пробою — завжди межа 24-год коробки 1h (як і сама Пружина). 1H — надійніше, вхід до ~1-2 год пізніше; 15m — вхід на 30-45 хв раніше, але більше хибних стартів; 5m CHoCH+BOS — напрямок і сигнал дає внутрішня структура 5m: CHoCH у бік розряду, далі BOS, і свічка BOS закрилась за межею коробки 1h (CHoCH усередині коробки — шум, не сигнал); структура розвернулась після BOS — хибний старт. Вихід на хибному старті — завжди за закриттям 1h. Обидва варіанти бот веде в тіньовій статистиці нижче.">підтвердження <select id="aip-dis-tf" onchange="aipSave()"><option value="1h">1H (закриття)</option><option value="15m">15m (закриття)</option><option value="5m">5m CHoCH+BOS (структура)</option><option value="v1h" title="Звичайний старт розряду (пробій коробки 24 год, утримувати закритими свічками не треба) + САМИЙ ОСТАННІЙ Volumized OB на 1H (детектор і параметри «📦 Volumized OB Trend», свічки з живою — як на графіку) у бік розряду і не зламаний">📦 VOB 1H у бік розряду</option><option value="auto">🎓 авто (найкращий за тінню)</option></select></label>
             <label id="aip-dis-bars-l" title="Скільки закритих 1h-свічок після пробою мусять утримати ціну за межею коробки">утримати ≥ <input type="number" id="aip-dis-bars" min="1" max="4" step="1" style="width:42px" onchange="aipSave()"> св. 1H</label>
             <label id="aip-dis-bars15-l" title="Скільки закритих 15m-свічок після пробою мусять утримати ціну за межею коробки 1h">утримати ≥ <input type="number" id="aip-dis-bars15" min="1" max="8" step="1" style="width:42px" onchange="aipSave()"> св. 15m</label>
@@ -7129,7 +7129,7 @@ function aipApply(d) {
         document.querySelectorAll('[data-aip-side]').forEach(c => c.classList.toggle('on', a[c.dataset.aipSide] !== false));
         const sc = g('aip-scen');
         if (sc) {
-            const nm = {E1: '🔁 E1 Розворот', E2: '💥 E2 Старт розряду', E3: '↗ E3 Продовження', E4: '🪤 E4 Спринг'};
+            const nm = {E1: '🔁 E1 Розворот (climax)', E2: '💥 E2 Пробій (squeeze)', E3: '↗ E3 Продовження (pullback)', E4: '🪤 E4 Spring (sweep)'};
             const on = new Set(a.scenarios || []);
             sc.innerHTML = (d.scenario_keys || ['E1', 'E2', 'E3', 'E4']).map(k =>
                 `<span class="aip-chip${on.has(k) ? ' on' : ''}" data-aip-scen="${k}" onclick="aipChip(this)">${nm[k] || k}</span>`).join(' ');

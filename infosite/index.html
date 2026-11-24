@@ -65,8 +65,8 @@
       <a href="#trade-card" class="pm-trade">Торгівля</a>
     </nav>
     <div class="top-actions">
-      <button id="site-search" class="top-icon" type="button" title="Знайти монету" aria-label="Знайти монету"><svg><use href="#i-search"/></svg></button>
-      <button id="theme-btn" class="top-icon" type="button" title="Змінити тему" aria-label="Змінити тему"><svg><use href="#i-sun"/></svg></button>
+      <button id="site-search" class="top-icon" type="button" title="Пошук інструмента" aria-label="Знайти монету"><svg><use href="#i-search"/></svg></button>
+      <button id="theme-btn" class="top-icon" type="button" title="Світла / темна тема" aria-label="Змінити тему"><svg><use href="#i-sun"/></svg></button>
       <div id="conn" class="conn conn--wait" role="status">● підключення…</div>
       <nav id="auth-links" class="auth-links" aria-label="Акаунт"></nav>
     </div>
@@ -114,9 +114,9 @@
         </div>
         <form class="iw-add" id="iw-add-form" autocomplete="off">
           <svg class="input-icon"><use href="#i-search"/></svg>
-          <input id="iw-add-in" list="iw-universe" placeholder="Знайти або додати" maxlength="24" title="До 20 монет" aria-label="Додати монету">
+          <input id="iw-add-in" list="iw-universe" placeholder="Знайти або додати" maxlength="24" title="Ліміт WATCHLIST — до 20 інструментів" aria-label="Додати монету">
           <datalist id="iw-universe"></datalist>
-          <button type="submit" title="Додати монету" aria-label="Додати монету"><svg><use href="#i-plus"/></svg></button>
+          <button type="submit" title="Додати інструмент у WATCHLIST" aria-label="Додати монету"><svg><use href="#i-plus"/></svg></button>
         </form>
         <div class="iw-msg" id="iw-msg" aria-live="polite"></div>
         <div class="iw-cols"><span>Символ / ціна</span><label class="iw-sort-label">Сортування<select id="iw-sort" aria-label="Сортування Watchlist"><option value="default">За списком</option><option value="name">За назвою</option><option value="price">За ціною</option><option value="change">За зміною 24г</option></select></label></div>
@@ -129,7 +129,7 @@
         <div class="iw-head" id="iw-head"><span class="iw-title">VSV Terminal</span></div>
 
         <div class="iw-tfbar" id="iw-tfbar">
-          <div class="iw-tfs" id="iw-tfs" title="Таймфрейм графіка"></div>
+          <div class="iw-tfs" id="iw-tfs" title="Таймфрейм графіка (TF)"></div>
           <span class="toolbar-divider"></span>
           <div class="chart-quick-actions">
             <button type="button" id="tv-type" class="tv-btn" title="Свічки / Heikin Ashi (H)"><svg><use href="#i-candles"/></svg></button>
@@ -141,7 +141,7 @@
                 <label><input type="checkbox" data-indicator="ema50"><span>EMA</span><b>50</b></label>
                 <label><input type="checkbox" data-indicator="ema200"><span>EMA</span><b>200</b></label>
                 <label class="pm-ly_vol"><input type="checkbox" data-indicator="volume"><span>Обсяг</span><b>покупці / продавці</b></label>
-                <label class="pm-ly_vol" title="Позначки на стовпчиках обсягу: 🧽 поглинання · 🔥 кульмінація · ⚡ одностороння агресія · 📈 сплеск. Пояснення — у нижньому рядку графіка при наведенні на свічку."><input type="checkbox" data-indicator="volanom"><span>Аномалії обсягу</span><b>⚠ сигнали</b></label>
+                <label class="pm-ly_vol" title="Маркери аномального обсягу (до медіани 20 свічок): 🧽 абсорбція · 🔥 climax-обсяг · ⚡ одностороння агресія (дисбаланс дельти) · 📈 сплеск обсягу. Розшифровка — у статус-рядку під графіком при наведенні на свічку."><input type="checkbox" data-indicator="volanom"><span>Аномалії обсягу</span><b>⚠ сигнали</b></label>
                 <div class="menu-title menu-separator">Вигляд свічок</div>
                 <label><input type="checkbox" id="tv-standard-candles"><span>Біржові кольори</span><b>Green / Red</b></label>
               </div>
@@ -153,23 +153,23 @@
             <button type="button" id="tv-zoom-in" class="tv-btn" title="Збільшити масштаб"><svg><use href="#i-zoom-in"/></svg></button>
             <button type="button" id="tv-reset" class="tv-btn" title="Скинути масштаб (Home)"><svg><use href="#i-reset"/></svg></button>
             <span class="tv-sep"></span>
-            <button type="button" id="tv-long" class="tv-btn tv-btn-pos long" title="Довга позиція"><svg><use href="#i-long"/></svg><span>Long</span></button>
-            <button type="button" id="tv-short" class="tv-btn tv-btn-pos short" title="Коротка позиція"><svg><use href="#i-short"/></svg><span>Short</span></button>
-            <button type="button" id="tv-clear-pos" class="tv-btn" title="Видалити всі позиції"><svg><use href="#i-trash"/></svg></button>
+            <button type="button" id="tv-long" class="tv-btn tv-btn-pos long" title="Інструмент Long-позиції (вхід · SL · TP · R:R)"><svg><use href="#i-long"/></svg><span>Long</span></button>
+            <button type="button" id="tv-short" class="tv-btn tv-btn-pos short" title="Інструмент Short-позиції (вхід · SL · TP · R:R)"><svg><use href="#i-short"/></svg><span>Short</span></button>
+            <button type="button" id="tv-clear-pos" class="tv-btn" title="Видалити всі інструменти позицій"><svg><use href="#i-trash"/></svg></button>
           </div>
           <button type="button" class="iw-fs" id="iw-fs" title="На весь екран (F)" aria-pressed="false"><svg><use href="#i-full"/></svg></button>
         </div>
 
         <div class="advanced-strip">
-          <span class="iw-sel s-ob pm-ly_ob"><button type="button" id="iw-ob-on" class="iw-tgl" data-tgl="ob_tf" title="OB на графіку">OB</button><select id="iw-ob-tf" title="Таймфрейм OB" aria-label="Таймфрейм OB"></select></span>
-          <span class="iw-sel s-vob pm-ly_vob"><button type="button" id="iw-vob-on" class="iw-tgl" data-tgl="vob_tf" title="VOB на графіку">VOB</button><select id="iw-vob-tf" title="Таймфрейм VOB" aria-label="Таймфрейм VOB"></select></span>
-          <label class="iw-sel s-poc pm-ly_poc" title="Профіль обсягу">POC <select id="iw-poc-days" aria-label="Дні POC"></select><select id="iw-poc-tf" aria-label="Таймфрейм POC"></select></label>
+          <span class="iw-sel s-ob pm-ly_ob"><button type="button" id="iw-ob-on" class="iw-tgl" data-tgl="ob_tf" title="Order Blocks — зони інституційних ордерів">OB</button><select id="iw-ob-tf" title="Таймфрейм Order Blocks" aria-label="Таймфрейм OB"></select></span>
+          <span class="iw-sel s-vob pm-ly_vob"><button type="button" id="iw-vob-on" class="iw-tgl" data-tgl="vob_tf" title="Volumized OB — order block з розкладом обсягу">VOB</button><select id="iw-vob-tf" title="Таймфрейм Volumized OB" aria-label="Таймфрейм VOB"></select></span>
+          <label class="iw-sel s-poc pm-ly_poc" title="Volume Profile — POC (рівень максимального обсягу): глибина в днях і TF">POC <select id="iw-poc-days" aria-label="Дні POC"></select><select id="iw-poc-tf" aria-label="Таймфрейм POC"></select></label>
           <div class="iw-tfs iw-layers" id="iw-layers" title="Шари графіка"></div>
           <span class="iw-liq pm-ly_liq" id="iw-liq">
-            <button type="button" class="iw-liq-btn" id="iw-liq-btn" aria-pressed="false" title="Профіль ліквідності"><svg><use href="#i-chart"/></svg><span>Ліквідність</span></button>
-            <select id="iw-liq-ex" title="Біржа" aria-label="Біржа ліквідності"><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
-            <select id="iw-liq-bars" title="Глибина історії" aria-label="Глибина історії"></select>
-            <select id="iw-liq-res" title="Розмір сходинки" aria-label="Розмір сходинки"><option value="fine">Дрібно</option><option value="mid" selected>Середньо</option><option value="coarse">Крупно</option></select>
+            <button type="button" class="iw-liq-btn" id="iw-liq-btn" aria-pressed="false" title="Liquidation heatmap — кластери ліквідацій (оцінка з OI)"><svg><use href="#i-chart"/></svg><span>Ліквідність</span></button>
+            <select id="iw-liq-ex" title="Біржа — джерело OI" aria-label="Біржа ліквідності"><option value="binance">Binance</option><option value="bybit">Bybit</option></select>
+            <select id="iw-liq-bars" title="Глибина історії для розрахунку кластерів" aria-label="Глибина історії"></select>
+            <select id="iw-liq-res" title="Крок цінового кластера" aria-label="Розмір сходинки"><option value="fine">Дрібно</option><option value="mid" selected>Середньо</option><option value="coarse">Крупно</option></select>
             <span class="iw-liq-st" id="iw-liq-st"></span>
           </span>
         </div>
@@ -223,7 +223,7 @@
       <div class="pp-section-head"><h3 class="pp-h"><svg class="h-ic h-ic-pulse"><use href="#i-chart"/></svg>Відкриті тестові угоди <span class="count-badge" id="pp-open-n">0</span></h3><span class="pp-inline muted" id="pp-inline"></span></div>
       <div class="pp-wrap"><table class="pp-tbl" id="pp-open"><thead><tr><th>Монета</th><th>Бік</th><th class="r">Вхід</th><th class="r">Зараз</th><th class="r">PnL</th><th>Ціль</th><th>Стан</th><th class="r">Manual SL</th><th class="r">TP-1</th><th class="r">TP-2</th><th class="r">Таймер</th></tr></thead><tbody><tr><td colspan="11" class="muted">—</td></tr></tbody></table></div>
       <h3 class="pp-h acc-h" id="pp-closed-head" role="button" tabindex="0" aria-expanded="false"><svg class="h-ic h-ic-spin"><use href="#i-clock"/></svg>Останні закриті тестові угоди <span class="count-badge" id="pp-closed-n">0</span><span class="acc-caret">▸</span></h3>
-      <div class="pp-wrap" id="pp-closed-body" style="display:none"><table class="pp-tbl" id="pp-closed"><thead><tr><th>Закрито</th><th>Монета</th><th>Бік</th><th class="r">Вхід</th><th class="r">Вихід</th><th class="r">PnL</th><th class="r" title="Пік — найкращий рух ціни від входу">Пік</th><th>Причина</th></tr></thead><tbody></tbody></table></div>
+      <div class="pp-wrap" id="pp-closed-body" style="display:none"><table class="pp-tbl" id="pp-closed"><thead><tr><th>Закрито</th><th>Монета</th><th>Бік</th><th class="r">Вхід</th><th class="r">Вихід</th><th class="r">PnL</th><th class="r" title="MFE — максимальний сприятливий рух ціни від входу">Пік</th><th>Причина</th></tr></thead><tbody></tbody></table></div>
     </section>
 
     <section class="card" id="trade-card" style="display:none">
@@ -244,8 +244,8 @@
   </script>
   <script src="js/vendor/lightweight-charts.js"></script>
   <script src="js/config.js?v=76"></script>
-  <script src="js/demo.js?v=5"></script>
-  <script src="js/app.js?v=244"></script>
+  <script src="js/demo.js?v=6"></script>
+  <script src="js/app.js?v=245"></script>
   <script src="js/chart-pro.js?v=213"></script>
   <script src="js/chart-tools.js?v=213"></script>
   <script src="js/ui.js?v=201"></script>

@@ -46,8 +46,8 @@ VIRTUAL_W = 0.5                 # вага віртуального досвід
 DIS_MIN_DONE = 20               # тінь TF розряду: стільки завершених, щоб обирати «авто»
 PROTECTIVE = ('invalid', 'false_start', 'scenario', 'combo', 'all')
 ADJUSTABLE = ('close', 'reversal', 'giveback', 'target', 'time')
-SCEN_UA = {'E1': '🔁 Розворот після виснаження', 'E2': '💥 Старт розряду',
-           'E3': '↗ Продовження після відкату', 'E4': '🪤 Спринг'}
+SCEN_UA = {'E1': '🔁 Розворот (climax)', 'E2': '💥 Пробій (squeeze)',
+           'E3': '↗ Продовження (pullback)', 'E4': '🪤 Spring (sweep)'}
 
 
 def _f(v) -> Optional[float]:

@@ -118,7 +118,7 @@ def test_entry_decision_needs_complete_fresh_scenario():
     hi = A.entry_score('LONG', rec, vw, [], NOW)
     _check(hi['score'] >= 50 and not A.entry_decide(hi), 'бал є, сценарію немає — не входимо')
     ok = A.entry_score('LONG', rec, vw, [_an('side', 600, hint='up', o1=0.3, price=101.0)], NOW)
-    _check(A.entry_decide(ok) and 'Старт розряду' in ok['scenario_text'], ok['scenario_text'])
+    _check(A.entry_decide(ok) and 'Пробій після стиснення' in ok['scenario_text'], ok['scenario_text'])
 
 
 def test_e4_spring_false_break():
