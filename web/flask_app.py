@@ -219,6 +219,12 @@ def create_app():
     @app.after_request
     def _add_cors_headers(resp):
         try:
+            # Живі дані інфосайту не кешуємо ні в браузері, ні в проміжному
+            # проксі: підписи/версії кеша всередині бота лишаються чинними.
+            if request.path.startswith(('/api/info/', '/api/me')) and request.method in ('GET', 'HEAD'):
+                resp.headers['Cache-Control'] = 'no-store, no-cache, max-age=0, must-revalidate'
+                resp.headers['Pragma'] = 'no-cache'
+                resp.headers['Expires'] = '0'
             # 👤 /api/me/* — власні дані користувача (особистий watchlist інфосайту):
             # тут дозволено ще й POST. Безпечно: крос-доменна авторизація йде
             # заголовком X-Info-Token (без cookie), а cookie SameSite=Lax не

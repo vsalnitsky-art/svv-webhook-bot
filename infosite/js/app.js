@@ -46,16 +46,50 @@
   }
 
   var CREDS = CROSS ? "omit" : "same-origin";
+  var API_TIMEOUT = Number(CFG.API_TIMEOUT_MS) || 12000;
+  function isSyncPath(path) {
+    return path.indexOf("/api/info/") === 0 || path === "/api/me" ||
+      path === "/api/me/watchlist" || path === "/api/me/notify" ||
+      path === "/api/me/trading" || path === "/api/me/tm";
+  }
+  function markSync(path) {
+    if (!isSyncPath(path)) return;
+    var lu = $("#last-update");
+    if (lu) lu.textContent = "оновлено: " + new Date().toLocaleTimeString(window.VSV_I18N ? window.VSV_I18N.locale() : "uk-UA");
+    if (started) setConn("ok", "онлайн");
+  }
+  function markSyncError(path, e) {
+    if (!isSyncPath(path)) return;
+    if (e && (e.status === 401 || e.status === 403)) {
+      if (!appRevealed) return;                 // первинний boot сам покаже вхід / відмову
+      var deny = e.status === 403 && DENY_TXT[e.code];
+      if (getTok()) setTok("");
+      showData(false, deny ? e.code : "");
+      renderAuth(null);
+      setConn(deny ? "err" : "wait", deny ? "доступ закрито" : "потрібен вхід");
+      return;
+    }
+    if (started) setConn("err", "немає зв’язку");
+  }
 
   function api(path) {
-    return fetch(BASE + path, { headers: _headers(), credentials: CREDS, cache: "no-store" })
-      .then(function (r) {
+    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var tm = ctl ? setTimeout(function () { ctl.abort(); }, API_TIMEOUT) : null;
+    return fetch(BASE + path, {
+      headers: _headers(), credentials: CREDS, cache: "no-store",
+      signal: ctl ? ctl.signal : undefined
+    }).then(function (r) {
+        if (tm) { clearTimeout(tm); tm = null; }
         if (!r.ok) {
           var e = new Error("HTTP " + r.status); e.status = r.status;
           return r.json().then(function (j) { e.code = j && j.error; throw e; },
                                function () { throw e; });
         }
         return r.json();
+      }).then(function (d) { markSync(path); return d; }, function (e) {
+        if (tm) clearTimeout(tm);
+        markSyncError(path, e);
+        throw e;
       });
   }
 
@@ -213,8 +247,12 @@
     });
   });
 
+  var notifyBusy = false;
   function refreshNotify() {
-    api("/api/me/notify").then(renderNotify).catch(function () { renderNotify({ ok: false }); });
+    if (notifyBusy) return Promise.resolve(null);
+    notifyBusy = true;
+    return api("/api/me/notify").then(renderNotify).catch(function () { return null; })
+      .then(function (d) { notifyBusy = false; return d; });
   }
 
   /* 🤖 ТОРГІВЛЯ З КАБІНЕТУ (вимога 24.11): угоди за сигналом ⚠ «сценарій входу»,
@@ -437,12 +475,14 @@
     m.style.display = t ? "" : "none"; m.className = "tr-msg" + (bad ? " bad" : ""); m.textContent = t || "";
   }
   function utPaint() { var h = $("#ut-host"); if (h) h.innerHTML = utHTML(UT.d); }
+  var utBusy = false;
   function refreshUt() {
-    if (TR.is_admin || !TR.allowed || (TR.tm || {}).need_keys) return;
-    api("/api/me/tm").then(function (d) {
-      if (d && d.need_keys) { TR.tm = TR.tm || {}; TR.tm.need_keys = true; renderTrade(); return; }
-      UT.d = d; UT.at = Date.now(); utPaint();
-    }).catch(function () {});
+    if (utBusy || TR.is_admin || !TR.allowed || (TR.tm || {}).need_keys) return Promise.resolve(null);
+    utBusy = true;
+    return api("/api/me/tm").then(function (d) {
+      if (d && d.need_keys) { TR.tm = TR.tm || {}; TR.tm.need_keys = true; renderTrade(); return d; }
+      UT.d = d; UT.at = Date.now(); utPaint(); return d;
+    }).catch(function () { return null; }).then(function (d) { utBusy = false; return d; });
   }
   function utPost(path, body, okMsg) {
     return apiPostJ(path, body).then(function (d) {
@@ -551,12 +591,16 @@
         : '<p class="muted tr-note">Дозволені книги: ' + esc(TR.books.map(function (b) { return TR_BOOK[b] || b; }).join(", ")) + ".</p>") +
       '<h3 class="pp-h">Останні дії</h3><div class="pp-wrap tr-wrap">' + trLogHTML() + "</div>";
   }
+  var tradeBusy = false;
   function refreshTrade() {
-    api("/api/me/trading").then(function (d) {
+    if (tradeBusy) return Promise.resolve(null);
+    tradeBusy = true;
+    return api("/api/me/trading").then(function (d) {
       trApply(d); renderTrade(); renderList();
       if (TR.allowed && TR.keys_allowed && !TR.keys) refreshKeys();
       if (TR.allowed && !TR.is_admin && !(TR.tm || {}).need_keys) refreshUt();
-    }).catch(function () {});
+      return d;
+    }).catch(function () { return null; }).then(function (d) { tradeBusy = false; return d; });
   }
   function refreshKeys() {
     api("/api/me/keys").then(function (k) {
@@ -636,11 +680,17 @@
     }
   }
 
+  var authBusy = false;
   function refreshAuth() {
-    api("/api/me").then(renderAuth).catch(function () { renderAuth(null); });
+    if (authBusy) return Promise.resolve(null);
+    authBusy = true;
+    return api("/api/me").then(renderAuth).catch(function (e) {
+      if (e && (e.status === 401 || e.status === 403)) renderAuth(null);
+      return null;
+    }).then(function (d) { authBusy = false; return d; });
   }
 
-  var ROWS_MS = 15000, COIN_MS = 15000;
+  var REC_MS = 10000, PROFILE_MS = 15000, ACCOUNT_MS = 30000, UNIVERSE_MS = 60000;
   var CHART_TFS = ["15m", "30m", "1h", "4h", "1d"];
   var OB_TFS = ["15m", "30m", "1h", "4h"];
   var VOB_TFS = ["5m", "15m", "30m", "1h", "4h"];
@@ -988,30 +1038,46 @@
     if (changed) { IW.sig = ""; IW.coin = null; loadCoin(true); }
   }
 
+  var mineBusy = false, mineVersion = 0;
   function saveMine(body) {
+    mineVersion++;
     return apiPost("/api/me/watchlist", body).then(function (d) {
       if (d && d.error) iwMsg(d.error, true); else iwMsg("");
       applyMine(d); loadRows(); return d;
     }).catch(function () { iwMsg("не вдалося зберегти", true); });
   }
 
-  function loadMine() { return api("/api/me/watchlist").then(function (d) { applyMine(d); return d; }); }
+  function loadMine() {
+    if (mineBusy) return Promise.resolve(null);
+    mineBusy = true;
+    var version = mineVersion;
+    return api("/api/me/watchlist").then(function (d) {
+      if (version === mineVersion) applyMine(d);
+      return d;
+    }).then(function (d) { mineBusy = false; return d; }, function (e) { mineBusy = false; throw e; });
+  }
 
+  var rowsBusy = false;
   function loadRows() {
-    if (!IW.wl.length || !pOk("sec_terminal")) return Promise.resolve();
+    if (rowsBusy || !IW.wl.length || !pOk("sec_terminal")) return Promise.resolve(null);
+    rowsBusy = true;
     return api("/api/info/rows?symbols=" + encodeURIComponent(IW.wl.join(","))).then(function (d) {
       (d.rows || []).forEach(function (r) { IW.rows[r.symbol] = r; });
       renderQuotes(); renderHead();
-    }).catch(function () {});
+      return d;
+    }).catch(function () { return null; }).then(function (d) { rowsBusy = false; return d; });
   }
 
+  var universeBusy = false;
   function loadUniverse() {
+    if (universeBusy) return Promise.resolve(null);
+    universeBusy = true;
     return api("/api/info/universe").then(function (d) {
       IW.universe = d.symbols || [];
       var dl = $("#iw-universe");
       if (dl) dl.innerHTML = IW.universe.map(function (s) { return '<option value="' + esc(s.replace(/USDT$/, "")) + '">' + esc(s) + "</option>"; }).join("");
       return d;
-    }).catch(function () { return null; });
+    }).catch(function () { return null; }).then(function (d) { universeBusy = false; return d; });
   }
 
   document.addEventListener("submit", function (e) {
@@ -2629,13 +2695,14 @@
     if (window.VSV_PRO) { try { window.VSV_PRO.onData(IW, c); } catch (err) { console.error("[VSV_PRO]", err); } }
   }
 
-  var coinBusy = false;
+  var coinBusy = false, coinSeq = 0, coinPromise = null;
   function loadCoin(force, keepBars) {
     if (!pOk("sec_terminal")) return Promise.resolve(null);
     var sym = curSym();
     if (!sym) { setNote("оберіть монету зі списку"); renderHead(); return Promise.resolve(null); }
-    if (coinBusy && !force && !keepBars) return Promise.resolve(null);
+    if (coinBusy && !force) return coinPromise || Promise.resolve(null);
     coinBusy = true;
+    var req = ++coinSeq;
     if (force) {
       setLoading();
       if (IW.series) { IW.series.setData([]); IW.series.setMarkers([]); IW.prim.setHl([]); IW.prim.set([], [], []); setPoc(null); setShl(null); IW.lastT = null; }
@@ -2644,14 +2711,25 @@
     }
     var want = iwKey();
     var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf + "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf + "&poc_days=" + IW.poc_days + "&poc_tf=" + IW.poc_tf + "&hl_tf=" + IW.hl_tf + "&sbr_tf=" + IW.sbr_tf + "&shl_tf=" + IW.shl_tf + (IW.show_anom ? "&anom=1" : "") + (VOL.on ? "&vol=1" : "") + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
-    return api(q).then(function (c) {
-      if (want !== iwKey() || c.same) return c;
+    var request = api(q).then(function (c) {
+      if (req !== coinSeq || want !== iwKey() || c.same) return c;
       IW.coin = c; IW.sig = c.sig || "";
       renderHead(); renderQuotes(); drawCoin(c, force);
-      if (!c.ok || c.ob_wait || c.vob_wait || c.hl_wait || c.sbr_wait || c.vol_wait || (c.vsplit && c.vsplit.fill)) setTimeout(function () { if (want === iwKey()) loadCoin(false, true); }, 4000);
+      if (!c.ok || c.ob_wait || c.vob_wait || c.hl_wait || c.sbr_wait || c.vol_wait || (c.vsplit && c.vsplit.fill)) setTimeout(function () { if (req === coinSeq && want === iwKey()) loadCoin(false, true); }, 4000);
       return c;
-    }).catch(function () { setNote("не вдалося завантажити графік"); return null; })
-      .then(function (result) { coinBusy = false; return result; });
+    }).catch(function (e) {
+      if (req === coinSeq) setNote("не вдалося завантажити графік");
+      if (e && (e.status === 401 || e.status === 403)) throw e;
+      return null;
+    });
+    coinPromise = request.then(function (result) {
+      if (req === coinSeq) { coinBusy = false; coinPromise = null; }
+      return result;
+    }, function (e) {
+      if (req === coinSeq) { coinBusy = false; coinPromise = null; }
+      throw e;
+    });
+    return coinPromise;
   }
 
   document.addEventListener("click", function (e) {
@@ -3052,7 +3130,7 @@
   };
   // ⏱ Перекидний таймер (спільний для обох банерів): кожна цифра — окрема плитка.
   function spbParts(since) {
-    var s = Math.max(0, Math.floor(Date.now() / 1000 - SPB.skew - since)), d = Math.floor(s / 86400);
+    var s = since > 0 ? Math.max(0, Math.floor(Date.now() / 1000 - SPB.skew - since)) : 0, d = Math.floor(s / 86400);
     var p = function (n) { return String(n).padStart(2, "0"); };
     return { d: d ? String(d) : "", t: p(Math.floor(s % 86400 / 3600)) + p(Math.floor(s % 3600 / 60)) + p(s % 60) };
   }
@@ -3142,7 +3220,8 @@
   function mm4Icon(key) { return '<svg class="mm4-ic" viewBox="0 0 24 24" aria-hidden="true">' + (MM4_ICONS[key] || MM4_ICONS.total) + "</svg>"; }
   function mm4DirTxt(dir, pct) {
     var p = pct != null && isFinite(Number(pct)) ? " " + Number(pct).toFixed(0) + "%" : "";
-    return dir === "LONG" ? '<span class="mm4-v up">▲ LONG' + p + "</span>" : dir === "SHORT" ? '<span class="mm4-v dn">▼ SHORT' + p + "</span>" : '<span class="mm4-v flat">⚖' + p + "</span>";
+    var body = '<span class="mm4-dir">' + (dir === "LONG" ? "▲ LONG" : dir === "SHORT" ? "▼ SHORT" : "⚖") + '</span><span class="mm4-pct">' + p + "</span>";
+    return '<span class="mm4-v ' + (dir === "LONG" ? "up" : dir === "SHORT" ? "dn" : "flat") + '">' + body + "</span>";
   }
   function mm4Chip(it) {
     var nm = MM4_SHORT[it.key] || String(it.name || "").replace(/^VSV-?/, "VSV-"), tip = String(it.name || nm).replace(/VSV/g, "VSV") + " — ";
@@ -3150,7 +3229,7 @@
     if (!it.data) return '<span class="mm4-chip off" title="' + esc(tip + "даних ще немає") + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + '</span><span class="mm4-v flat">—</span></span>';
     var cls = it.dir === "LONG" ? "up" : it.dir === "SHORT" ? "dn" : "flat", pct = Math.max(0, Math.min(100, Number(it.pct) || 0));
     var split = it.dir === "LONG" ? 100 - pct : pct;
-    tip += (it.dir === "LONG" ? "LONG" : it.dir === "SHORT" ? "SHORT" : "⚖ рівновага") + " · важіль " + (it.pct != null ? Number(it.pct).toFixed(0) + "%" : "—") + (it.coins ? " · монет " + it.coins : "");
+    tip += (it.dir === "LONG" ? "LONG" : it.dir === "SHORT" ? "SHORT" : "⚖ рівновага") + " · важіль " + (it.pct != null ? Number(it.pct).toFixed(0) + "%" : "—");
     return '<span class="mm4-chip ' + cls + '" style="--split:' + split.toFixed(1) + '%" title="' + esc(tip) + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + "</span>" + mm4DirTxt(it.dir, it.pct) + "</span>";
   }
   function mm4Render(m) {
@@ -3158,27 +3237,36 @@
     var items = (m && m.items) || [];
     if (!items.length) { box.hidden = true; box.innerHTML = ""; if (card) card.classList.remove("mm4-up", "mm4-dn"); return; }
     box.hidden = false;
-    var t = m.total, lp = t ? Math.max(0, Math.min(100, Number(t.long_pct) || 0)) : 50, sp = 100 - lp;
-    var tTip = t ? "Загальний відсоток чотирьох банерів = середній важіль (Σ сила LONG − Σ сила SHORT) / Σ сила кожного банера; ⚖ — коли перевага менша за 10%. Банерів з даними: " + t.n + " з " + m.n + " · ▲ " + t.n_long + " · ▼ " + t.n_short + " · ⚖ " + t.n_flat : "Немає даних жодного банера";
-    var html = '<div class="mm4-row mm4-summary"><div class="mm4-total" title="' + esc(tTip) + '">' + mm4Icon("total") + '<span class="mm4-lbl">VSV · ЗАГАЛОМ</span>' +
-      '<span class="mm4-bar" role="img" aria-label="LONG ' + lp.toFixed(0) + '%, SHORT ' + sp.toFixed(0) + '%" style="--split:' + sp.toFixed(1) + '%"><em class="s">▼ ' + sp.toFixed(0) + '%</em><em class="l">' + lp.toFixed(0) + '% ▲</em></span></div>';
-    var ag = m.agree;
-    if (ag) {
-      var ac = ag === "LONG" ? "up" : "dn", since = Number(m.agree_since || 0);
-      html += '<div class="mm4-agree ' + ac + '" title="Усі чотири банери бота підтверджують один напрямок — найсильніший збіг. Таймер — відколи зійшовся останній.">' + mm4Icon("agree") + '<span>ЗБІГ 4/4</span> · ' + (ag === "LONG" ? "▲ LONG" : "▼ SHORT") + ' <span class="mm4-tm spb-tm ' + ac + '" data-since="' + since + '">' + spbFlipHTML(since) + "</span></div>";
-    }
-    html += '</div><div class="mm4-row mm4-chips">' + items.map(mm4Chip).join("") + "</div>";
+    var t = m.total;
+    var nLong = t ? Number(t.n_long) || 0 : items.filter(function (it) { return it.data && it.dir === "LONG"; }).length;
+    var nShort = t ? Number(t.n_short) || 0 : items.filter(function (it) { return it.data && it.dir === "SHORT"; }).length;
+    var ag = m.agree, dir = ag || (nLong === nShort ? null : nLong > nShort ? "LONG" : "SHORT");
+    var matched = dir ? items.filter(function (it) { return it.data && it.dir === dir; }) : [];
+    var count = ag ? 4 : matched.length, ac = dir === "LONG" ? "up" : dir === "SHORT" ? "dn" : "flat";
+    var since = count ? Math.max.apply(null, matched.map(function (it) { return Number(it.since || 0); }).concat([0])) : 0;
+    if (ag && m.agree_since) since = Number(m.agree_since);
+    var dots = "";
+    for (var i = 0; i < 4; i++) dots += '<i class="' + (i < count ? "on" : "") + '" style="--i:' + i + '"></i>';
+    var agreeTip = dir ? "Збіг " + count + "/4 · " + dir + ". Таймер — відколи сформовано поточну кількість банерів цього напрямку." : "Напрямки не збігаються або даних ще немає · 0/4. Таймер очікує сформованого напрямку.";
+    var html = '<div class="mm4-row mm4-summary"><div class="mm4-total" title="VSV · СИНХРОН">' + mm4Icon("total") + '<span class="mm4-lbl">VSV · СИНХРОН</span></div></div>' +
+      '<div class="mm4-row mm4-chips">' + items.map(mm4Chip).join("") + '</div>' +
+      '<div class="mm4-agree ' + ac + (ag ? " full" : " partial") + '" title="' + esc(agreeTip) + '">' +
+      '<span class="mm4-match" role="img" aria-label="Збіг ' + count + ' з 4"><span class="mm4-dots" aria-hidden="true">' + dots + '</span><b>' + count + '/4</b></span>' +
+      '<span class="mm4-agree-dir">' + (dir ? (dir === "LONG" ? "▲ LONG" : "▼ SHORT") : "⚖") + '</span>' +
+      '<span class="mm4-tm spb-tm ' + ac + '" data-since="' + since + '">' + spbFlipHTML(since) + "</span></div>";
     box.innerHTML = html;
     box.querySelectorAll(".mm4-tm[data-since]").forEach(spbFlipTick);
     if (card) { card.classList.toggle("mm4-up", ag === "LONG"); card.classList.toggle("mm4-dn", ag === "SHORT"); }
   }
   setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(spbFlipTick); }, 1000);
+  var recBusy = false;
   function loadRec() {
-    var card = $("#rec-card"); if (!card || !pOk("sec_signals")) return Promise.resolve(null);
+    var card = $("#rec-card"); if (!card || recBusy || !pOk("sec_signals")) return Promise.resolve(null);
+    recBusy = true;
     return api("/api/info/recommended").then(function (d) {
       if (!d || !d.ok) { card.style.display = "none"; spbRender(null); return d; }
       card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recRender(); spbRender(d); return d;
-    }).catch(function () { return null; });
+    }).catch(function () { return null; }).then(function (d) { recBusy = false; return d; });
   }
   document.addEventListener("click", function (e) {
     if (!e.target.closest) return;
@@ -3204,12 +3292,16 @@
     var tb = $(".topbar"); if (tb) tb.style.display = ok ? "" : "none";
   }
 
-  var appRevealed = false;
+  var appRevealed = false, bootTimer = null;
   function revealApp() {
     if (appRevealed) return Promise.resolve();
     var language = window.VSV_I18N && window.VSV_I18N.ready ? window.VSV_I18N.ready : Promise.resolve();
     var fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    var loaded = document.readyState === "complete" ? Promise.resolve() : new Promise(function (resolve) {
+      window.addEventListener("load", resolve, { once: true });
+    });
     return Promise.all([
+      loaded,
       Promise.resolve(language).catch(function () { return null; }),
       Promise.resolve(fonts).catch(function () { return null; })
     ]).then(function () {
@@ -3224,34 +3316,78 @@
     });
   }
 
+  /* Старт лише після реальних барів і завершення всіх pending-розрахунків.
+     Порожній WATCHLIST або заборонений термінал завантаження не блокують. */
+  function initialCoinReady() {
+    if (!pOk("sec_terminal") || !curSym()) return true;
+    var c = IW.coin;
+    return !!(c && c.ok && (c.ohlc || []).length && IW.series &&
+      !c.ob_wait && !c.vob_wait && !c.hl_wait && !c.sbr_wait &&
+      !c.vol_wait && !(c.vsplit && c.vsplit.fill));
+  }
+  function waitInitialCoin() {
+    return new Promise(function (resolve, reject) {
+      var lastTry = 0, done = false;
+      function finish(fn, value) { if (done) return; done = true; fn(value); }
+      function tick() {
+        if (done) return;
+        if (initialCoinReady()) { finish(resolve); return; }
+        var now = Date.now();
+        if (!coinBusy && now - lastTry >= 4000) {
+          lastTry = now;
+          loadCoin(false, true).catch(function (e) { finish(reject, e); });
+        }
+        if (!done) setTimeout(tick, 150);
+      }
+      tick();
+    });
+  }
+
+  function syncMarket() { return Promise.all([loadRows(), loadCoin(false), loadPaper()]); }
+  function syncProfile() { return Promise.all([loadMine().catch(function () { return null; }), refreshAuth()]); }
+  function syncAccount() { return Promise.all([refreshNotify(), refreshTrade()]); }
+  function syncAll() {
+    if (document.hidden) return Promise.resolve([]);
+    return Promise.all([syncMarket(), loadRec(), syncProfile(), syncAccount(), loadUniverse()]);
+  }
+
   var started = false;
+  function startSync() {
+    if (started) return;
+    started = true;
+    setInterval(function () { if (!document.hidden) syncMarket(); }, REFRESH);
+    setInterval(function () { if (!document.hidden) loadRec(); }, REC_MS);
+    setInterval(function () { if (!document.hidden) syncProfile(); }, PROFILE_MS);
+    setInterval(function () { if (!document.hidden) syncAccount(); }, ACCOUNT_MS);
+    setInterval(function () { if (!document.hidden) loadUniverse(); }, UNIVERSE_MS);
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) syncAll(); });
+    window.addEventListener("online", function () { syncAll(); });
+  }
+
   function boot() {
+    if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; }
     loadMine().then(function () {
       showData(true); setConn("ok", "онлайн");
-      var initial = Promise.all([loadUniverse(), loadRows(), loadCoin(true), loadPaper(), loadRec()]);
-      if (!started) {
-        started = true;
-        setInterval(function () { if (!document.hidden) loadRec(); }, 30000);
-        setInterval(function () { if (!document.hidden) loadPaper(); }, REFRESH);
-        document.addEventListener("visibilitychange", function () { if (!document.hidden) loadPaper(); });
-        setInterval(function () { if (!document.hidden) loadRows(); }, ROWS_MS);
-        setInterval(function () { if (!document.hidden) loadCoin(false); }, COIN_MS);
-        setInterval(function () { if (!document.hidden) { refreshAuth(); refreshNotify(); refreshTrade(); } }, 60000);
-      }
-      return initial.then(function () {
-        var lu = $("#last-update"); if (lu) lu.textContent = "оновлено: " + new Date().toLocaleTimeString(window.VSV_I18N ? window.VSV_I18N.locale() : "uk-UA");
-        return revealApp();
-      });
+      var first = !started;
+      startSync();
+      if (first) syncAccount();
+      return Promise.all([loadUniverse(), loadRows(), loadCoin(true), loadPaper(), loadRec()])
+        .then(waitInitialCoin)
+        .then(revealApp);
     }).catch(function (e) {
       if (e && (e.status === 401 || e.status === 403)) {
         var deny = e.status === 403 && DENY_TXT[e.code];
         if (getTok()) setTok("");
         showData(false, deny ? e.code : "");
         setConn(deny ? "err" : "wait", deny ? "доступ закрито" : "потрібен вхід");
-      } else { showData(true); setConn("err", "бот недоступний"); setTimeout(boot, 10000); }
-      return revealApp();
+        return revealApp();
+      }
+      /* Неготову сторінку не відкриваємо: LOADING лишається до успішного
+         повного циклу, а сервер повторно опитується без перезавантаження. */
+      setConn("err", "бот недоступний");
+      bootTimer = setTimeout(boot, 4000);
+      return null;
     });
-    refreshAuth(); refreshNotify(); refreshTrade();
   }
 
   (function fixChrome() {
