@@ -227,7 +227,7 @@ def test_brand_icon_everywhere():
     _check("signalCodeOf(raw) === 'ai'" in _HTML and '${AI_BRAND_IMG}${_AIX_ICON' in _HTML, 'угоди + 🚨')
     _check("x === 'AI' ? aiBrand(" in _HTML, '🧾 лог')
     _check('id="aip-body"' in _HTML and "togglePanel('aip')" in _HTML, 'панель ШІ')
-    _check('AI_BRAND' in _JS and 'rec-ai' in _JS and 'ai.etalon' in _JS, 'інфосайт: рекомендовані')
+    _check('AI_BRAND' in _JS and 'rec-ai' in _JS, 'інфосайт: рекомендовані')
     _check('def rec_ai_merge' in _IP, 'вибір ШІ для «Рекомендовані ботом»')
     _check("'🤖 <b>VSV·AI</b>'" in open(os.path.join(_ROOT, 'detection', 'ai_signals.py'), encoding='utf-8').read(),
            'TG ⚠ аномалій теж марковано')
@@ -311,9 +311,9 @@ def test_vsv_signals_only_ai_with_exchange():
     idx = open(os.path.join(_ROOT, 'infosite', 'index.html'), encoding='utf-8').read()
     _check('VSV SIGNALS' in idx and 'Рекомендовані ботом</span>' not in idx, 'у шапці лише VSV SIGNALS')
     head = idx[idx.index('id="rec-tbl"'):idx.index('</table>', idx.index('id="rec-tbl"'))]
-    _check('Заряд' not in head and 'colspan="8"' in head, 'без колонки «Заряд»')
+    _check('colspan="8"' in head, '8 колонок')
     rr = _JS[_JS.index('function recRow(r)'):_JS.index('function recRender()')]
-    _check('SPB_ICON[ex]' in rr and 'chCell' not in rr and 'rec-ai-slot' in rr, 'біржа замість ШІ🌀, слот «ВХІД»')
+    _check('SPB_ICON[ex]' in rr and 'rec-ai-slot' in rr, 'біржа замість ШІ🌀, слот «ВХІД»')
     css = open(os.path.join(_ROOT, 'infosite', 'css', 'style.css'), encoding='utf-8').read().replace(' ', '')
     _check('#rec-tbl{table-layout:fixed;width:100%}' in css and '.rec-ai-slot{flex:0066px' in css, 'у ширину екрана')
 

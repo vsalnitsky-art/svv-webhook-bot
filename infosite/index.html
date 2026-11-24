@@ -10,9 +10,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=234">
+  <link rel="stylesheet" href="css/style.css?v=235">
 </head>
-<body>
+<body class="perm-no-sec_paper">
   <svg class="svg-sprite" aria-hidden="true">
     <defs>
       <symbol id="vsv-mark" viewBox="0 0 40 40">
@@ -196,12 +196,28 @@
     <section class="card rec-card pm-sec_signals" id="rec-card" style="display:none">
       <div class="pp-head">
         <span class="rec-badge">VSV SIGNALS</span>
-        <div class="pp-period" id="rec-tabs"><button type="button" data-d="all">Всі (0)</button><button type="button" data-d="LONG">LONG (0)</button><button type="button" data-d="SHORT">SHORT (0)</button></div>
+        <button type="button" class="rec-info-btn" id="rec-info-btn" aria-expanded="false" aria-controls="rec-info" title="Що показує VSV SIGNALS">ⓘ Що це?</button>
+        <div class="pp-period" id="rec-tabs"><button type="button" data-d="all">Усі (0)</button><button type="button" data-d="charged">🌀 Стиснення (0)</button><button type="button" data-d="impulse">💥 Імпульс (0)</button><button type="button" data-d="ai">VSV·AI (0)</button></div>
         <span class="pp-note muted" id="rec-note"></span>
       </div>
+      <div class="rec-info" id="rec-info" hidden>
+        <h4>VSV SIGNALS — радар волатильності</h4>
+        <p>Інструменти з підвищеною ймовірністю імпульсного руху (<b>volatility expansion</b>). Бот відбирає монети з обох сканерів «Пружини» — WATCHLIST бота і скану всієї біржі — у фазі <b>стиснення волатильності (squeeze)</b>: ціна торгується у вузькому діапазоні, ATR у нижніх перцентилях, обсяг висихає. Так виглядає накопичення ліквідності перед виходом із діапазону (<b>range breakout</b>). Показуються монети з найвищим VSV Score.</p>
+        <ul>
+          <li><b>VSV Score</b> — композитна оцінка готовності до імпульсу 0–100: заряд 45% · тривалість стиснення 15% · низька волатильність 15% · висихання обсягу 10% · підтвердження VSV·AI 15%. Клас A ≥ 80 · B ≥ 65 · C — нижче.</li>
+          <li><b>Заряд</b> — енергія стиснення «Пружини»: TTM-squeeze, перцентиль ATR, звуження 24-год діапазону проти 96-год, висихання обсягу. Δ — зміна від моменту потрапляння в список.</li>
+          <li><b>Стиснення</b> — скільки годин поспіль смуги Боллінджера всередині каналу Кельтнера (TTM squeeze).</li>
+          <li><b>Волатильність</b> — перцентиль поточного ATR у власній історії монети: низький = енергія ще не витрачена.</li>
+          <li><b>Обсяг</b> — поточний обсяг до середнього: &lt; 1 — ліквідність висихає перед рухом, &gt; 1.5 — учасники вже активні.</li>
+          <li><b>Амплітуда</b> — орієнтовний хід за принципом measured move (висота діапазону) у будь-який бік.</li>
+          <li><b>💥 Імпульс</b> — вихід із діапазону вже почався: доцільніше чекати ретест рівня, ніж наздоганяти ціну.</li>
+          <li><b>VSV·AI</b> — штучний інтелект бота бачить по монеті сформований сетап (послідовність реакцій обсягу).</li>
+        </ul>
+        <p class="rec-warn">⚠ Напрямок свідомо не вказується: пробій діапазону можливий в обидва боки. VSV SIGNALS — інформаційний watchlist для уваги, а не торгова рекомендація. Вхід — лише після власного підтвердження (пробій з обсягом, структура CHoCH/BOS, ретест рівня) і з вашим ризик-менеджментом.</p>
+      </div>
       <div class="pp-wrap rec-wrap"><table class="pp-tbl" id="rec-tbl">
-        <colgroup><col style="width:19%"><col style="width:9%"><col style="width:12%"><col style="width:14%"><col style="width:12%"><col style="width:11%"><col style="width:12%"><col style="width:11%"></colgroup>
-        <thead><tr class="rec-gh"><th rowspan="2">Монета</th><th rowspan="2">Напрямок</th><th rowspan="2" class="r">СИЛА СИГНАЛУ</th><th rowspan="2" class="r tpc">ЦІЛЬ</th><th colspan="2" class="c g1 gs">1H · OB 1H</th><th colspan="2" class="c g15 gs">15m · OB 15m→5m</th></tr><tr class="rec-sh"><th class="r g1 gs">SL</th><th class="c g1">Хід</th><th class="r g15 gs">SL</th><th class="c g15">Хід</th></tr></thead>
+        <colgroup><col style="width:15%"><col style="width:13%"><col style="width:11%"><col style="width:9%"><col style="width:10%"><col style="width:8%"><col style="width:9%"><col style="width:25%"></colgroup>
+        <thead><tr><th>Монета</th><th class="r" title="Композитна оцінка готовності до імпульсу 0–100">VSV Score</th><th class="r" title="Енергія стиснення «Пружини» · Δ від потрапляння в список">Заряд</th><th class="r" title="Годин поспіль у TTM squeeze">Стиснення</th><th class="r" title="Перцентиль ATR у власній історії">Волатильність</th><th class="r" title="Обсяг до середнього">Обсяг</th><th class="r" title="Орієнтовний хід (measured move) у будь-який бік">Амплітуда</th><th title="Фаза ринку і пояснення по монеті">Фаза · коментар</th></tr></thead>
         <tbody><tr><td colspan="8" class="muted">Завантаження…</td></tr></tbody>
       </table></div>
     </section>
@@ -244,8 +260,8 @@
   </script>
   <script src="js/vendor/lightweight-charts.js"></script>
   <script src="js/config.js?v=76"></script>
-  <script src="js/demo.js?v=6"></script>
-  <script src="js/app.js?v=246"></script>
+  <script src="js/demo.js?v=7"></script>
+  <script src="js/app.js?v=248"></script>
   <script src="js/chart-pro.js?v=213"></script>
   <script src="js/chart-tools.js?v=213"></script>
   <script src="js/ui.js?v=201"></script>

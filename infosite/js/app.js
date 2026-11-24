@@ -228,14 +228,20 @@
   var PERMS = null;
   var PERM_KEYS = ["sec_terminal", "sec_signals", "sec_paper", "ly_struct", "ly_ob", "ly_vob", "ly_imb", "ly_sbr", "ly_anom", "ly_hl",
                    "ly_poc", "ly_shl", "ly_pd", "ly_vol", "ly_liq", "ntf_sbr", "ntf_anom", "trade_paper", "trade_real", "trade_mirror"];
-  function pOk(k) { return !PERMS || PERMS[k] !== false; }
+  // 🧪 PAPER — ЛИШЕ АДМІНІСТРАТОР (вимога 24.11, `user_perms.ADMIN_ONLY`): поки
+  // права не прийшли або не дано явно — не показуємо нічого про paper.
+  var PERM_ADMIN_ONLY = ["sec_paper", "trade_paper"];
+  function pOk(k) {
+    if (PERM_ADMIN_ONLY.indexOf(k) >= 0) return !!(PERMS && PERMS[k] === true);
+    return !PERMS || PERMS[k] !== false;
+  }
   function permSig(p) { return PERM_KEYS.map(function (k) { return p && p[k] === false ? "0" : "1"; }).join(""); }
   function applyPerms(p) {
     if (!p || typeof p !== "object") return;
     var was = permSig(PERMS), now = permSig(p);
     PERMS = p;
     var b = document.body;
-    if (b) PERM_KEYS.forEach(function (k) { b.classList.toggle("perm-no-" + k, p[k] === false); });
+    if (b) PERM_KEYS.forEach(function (k) { b.classList.toggle("perm-no-" + k, !pOk(k)); });
     var none = p.sec_terminal === false && p.sec_signals === false && p.sec_paper === false;
     var pn = $("#perm-note"); if (pn) pn.style.display = none ? "" : "none";
     if (was === now) return;
@@ -243,7 +249,7 @@
     renderTfBar(); renderList(); IW.sig = ""; loadCoin(true); loadRec(); loadPaper(); loadRows();
   }
 
-  var TR = { allowed: null, enabled: false, coins: {}, tm: {}, log: [], keys: null, reason: "", books: ["paper", "real"], keys_allowed: false, keys_owner: "", is_admin: false };
+  var TR = { allowed: null, enabled: false, coins: {}, tm: {}, log: [], keys: null, reason: "", books: ["real"], keys_allowed: false, keys_owner: "", is_admin: false };
   // 👤 Мій Trade Manager (дзеркало бота, ВЛАСНІ ключі) — стан з /api/me/tm
   var UT = { d: null, at: 0 };
   var TR_KEY = "vsv_trade_open";
@@ -278,9 +284,11 @@
     }
   }
   function trCoinOn(sym) { return !!(TR.allowed && TR.coins[sym]); }
-  function trDefBook(sym) { return TR.coins[sym] || TR.books[0] || "paper"; }
+  function trDefBook(sym) { return TR.coins[sym] || TR.books[0] || "real"; }
   function trBookSel(sym, attr) {
     var b = trDefBook(sym);
+    // 🧪 paper — лише адміністратор (24.11): одна дозволена книга → без вибору
+    if (TR.books.length < 2) return '<span class="tr-book-one tr-book-' + b + '">' + esc(TR_BOOK[b] || b) + "</span>";
     return '<select ' + attr + '="' + esc(sym) + '" class="tr-book tr-book-' + b + '">' +
       TR.books.map(function (k) { return '<option value="' + k + '"' + (k === b ? " selected" : "") + ">" + TR_BOOK[k] + "</option>"; }).join("") + "</select>";
   }
@@ -318,7 +326,7 @@
         '<label>API Key<input type="password" id="tr-k" autocomplete="off" spellcheck="false" placeholder="ключ з вашого Bybit"></label>' +
         '<label>API Secret<input type="password" id="tr-s" autocomplete="off" spellcheck="false" placeholder="секрет з вашого Bybit"></label>' +
         '<div class="tr-kbtns"><button type="submit" class="tglink-btn"' + (noMaster ? " disabled" : "") + ">🔐 " + (has ? "Замінити" : "Підключити") + " ключі</button>" +
-        (has ? '<button type="button" class="tglink-btn" data-trk="test">🧪 Перевірити</button><button type="button" class="tglink-btn tr-del" data-trk="clear">🗑 Видалити мої ключі</button>' : "") + "</div>" +
+        (has ? '<button type="button" class="tglink-btn" data-trk="test">🔎 Перевірити</button><button type="button" class="tglink-btn tr-del" data-trk="clear">🗑 Видалити мої ключі</button>' : "") + "</div>" +
       "</form>" +
       '<p class="muted tr-note">🔐 Ваші ключі — лише для ВАШОГО Trade Manager: ними торгує тільки він і тільки на вашому рахунку. Ключі бота тут не використовуються ніколи. Шифруються на сервері (Fernet), відкритий текст не повертається. Потрібні дозволи <b>Read + Trade</b> (Unified Trading), без виводу коштів.</p>' +
       '<div id="tr-kmsg" class="tr-msg" style="display:none"></div></div>';
@@ -397,16 +405,16 @@
         '<span class="muted">' + (d.running ? "● працює" : "○ зупинено") + "</span></div>" +
       '<div class="tr-status">' +
         tg("ut-mset", m.mirror_settings, "🪞 Алгоритм бота (дзеркало налаштувань)", false,
-           "Правила виходу, SL/TP, автопілот, трейли — як у бота. Ваші: увімкнення, розмір, плече, ліміт, paper-депозит.") +
+           "Правила виходу, SL/TP, автопілот, трейли — як у бота. Ваші: увімкнення, розмір, плече, ліміт" + (hasPaper ? ", paper-депозит." : ".")) +
         tg("ut-msig", m.mirror_signals && d.mirror_allowed, "🪞 Дублювати угоди бота", !d.mirror_allowed,
            d.mirror_allowed ? "Бот відкрив / закрив угоду → ваш Trade Manager повторює її на вашому рахунку" : "Не дозволено адміністратором") +
-        (d.mirror_allowed ? '<select id="ut-mbook" class="tr-book">' + bk.map(function (b) { return '<option value="' + b + '"' + (b === m.mirror_book ? " selected" : "") + ">" + TR_BOOK[b] + "</option>"; }).join("") + "</select>" : "") +
+        (d.mirror_allowed && bk.length > 1 ? '<select id="ut-mbook" class="tr-book">' + bk.map(function (b) { return '<option value="' + b + '"' + (b === m.mirror_book ? " selected" : "") + ">" + TR_BOOK[b] + "</option>"; }).join("") + "</select>" : "") +
       "</div>" +
       (fields ? '<form class="tr-kform ut-form" id="ut-form">' + fields + '<div class="tr-kbtns"><button type="submit" class="tglink-btn">💾 Зберегти</button></div></form>' : "") +
       '<h3 class="pp-h">✋ Відкрити угоду</h3>' +
       '<div class="ut-open"><input type="text" id="ut-sym" list="ut-syms" placeholder="BTC" spellcheck="false">' +
         '<datalist id="ut-syms">' + (IW.wl || []).map(function (x) { return '<option value="' + esc(x.replace(/USDT$/, "")) + '">'; }).join("") + "</datalist>" +
-        '<select id="ut-book" class="tr-book">' + bk.map(function (b) { return '<option value="' + b + '">' + TR_BOOK[b] + "</option>"; }).join("") + "</select>" +
+        '<select id="ut-book" class="tr-book"' + (bk.length < 2 ? ' style="display:none"' : "") + ">" + bk.map(function (b) { return '<option value="' + b + '">' + TR_BOOK[b] + "</option>"; }).join("") + "</select>" +
         '<button class="tglink-btn ut-long" data-utopen="LONG">▲ LONG</button><button class="tglink-btn ut-short" data-utopen="SHORT">▼ SHORT</button></div>' +
       '<div id="ut-msg" class="tr-msg" style="display:none"></div>' +
       '<h3 class="pp-h">Відкриті угоди</h3><div class="pp-wrap tr-wrap"><table class="pp-tbl"><thead><tr><th>Монета</th><th>Книга</th><th>Бік</th><th class="r">Вхід</th><th class="r">Зараз</th><th class="r">PnL</th><th class="r">Дія</th></tr></thead><tbody>' +
@@ -461,7 +469,7 @@
       var sym = String(($("#ut-sym") || {}).value || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
       if (!sym) { utMsg("Вкажіть монету", true); return; }
       if (!/USDT$/.test(sym)) sym += "USDT";
-      var sd = o.getAttribute("data-utopen"), bk = ($("#ut-book") || {}).value || "paper";
+      var sd = o.getAttribute("data-utopen"), bk = ($("#ut-book") || {}).value || "real";
       if (!window.confirm((bk === "real" ? "🏦 РЕАЛЬНА" : "🧪 Paper") + " угода " + sd + " " + sym + "?" + (bk === "real" ? "\n\nНа ВАШОМУ рахунку Bybit, вашими ключами." : ""))) return;
       utPost("/api/me/tm/open", { symbol: sym, side: sd, book: bk }, "✅ " + sym + " " + sd + " відкрито"); return;
     }
@@ -518,7 +526,7 @@
     var tmN = TR.is_admin ? "Trade Manager бота" : "ваш Trade Manager";
     if (TR.enabled && nReal && !tm.enabled) warn.push(tmN + " — реальна торгівля вимкнена: 🏦 реальні угоди не відкриються");
     if (TR.enabled && nReal && !tm.has_key) warn.push((TR.is_admin ? "ключі бота" : "ваші ключі") + " не задано — 🏦 реальні угоди не відкриються");
-    if (TR.enabled && n - nReal && !tm.test_mode) warn.push("Test Mode вимкнено — 🧪 paper-угоди не відкриються");
+    if (TR.books.indexOf("paper") >= 0 && TR.enabled && n - nReal && !tm.test_mode) warn.push("Test Mode вимкнено — 🧪 paper-угоди не відкриються");
     var rows = (IW.wl || []).map(function (sym) {
       var on = !!TR.coins[sym];
       return "<tr><td class=\"sym\">" + esc(sym.replace(/USDT$/, "")) + '</td><td><label class="tr-chk"><input type="checkbox" data-trcoin="' + esc(sym) + '"' + (on ? " checked" : "") + "> торгувати</label></td><td>" +
@@ -852,7 +860,7 @@
     if (!okS && !okA && !okT) return { btn: "", menu: "" };      // 🛡 нічого не дозволено
     var tfs = okS ? (IW.sbr[sym] || []) : [];
     var an = okA && (IW.anom || []).indexOf(sym) >= 0;
-    var trd = trCoinOn(sym), trBook = TR.coins[sym] || "paper";
+    var trd = trCoinOn(sym), trBook = trDefBook(sym);
     var on = tfs.length > 0 || an || trd;
     var lbl = tfs.map(function (t) { return String(t).toUpperCase(); }).join("+") + (an ? (tfs.length ? "+" : "") + "⚠" : "") +
       (trd ? (tfs.length || an ? "+" : "") + (trBook === "real" ? "🏦" : "🧪") : "");
@@ -2890,58 +2898,72 @@
   });
   setInterval(function () { document.querySelectorAll(".pp-timer[data-since]").forEach(function (el) { var t = Number(el.getAttribute("data-since")); if (t > 0) el.textContent = ppTimer(t); }); }, 1000);
 
-  var REC = { dir: "all", rows: [], meta: {}, autoLean: "" };
-  try { var _rd = localStorage.getItem("vsv_rec_dir"); if (_rd) REC.dir = _rd; } catch (e) {}
-  function recSide(r) { return r.side === "LONG" || r.side === "SHORT" ? r.side : ""; }
-  function recPct(v) { v = Number(v); if (!isFinite(v)) return ""; return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + '<span class="pp-pc">%</span>'; }
-  function rs(w, html, cls) { return '<span class="rs ' + (cls || "") + '" style="width:' + w + 'px">' + html + "</span>"; }
-  function recChCol(c) { return c >= 85 ? "#fb923c" : c >= 65 ? "#facc15" : "#a78bfa"; }
-  function recPath(r, up) {
-    var sl = Number(r.sl), tp = Number(r.tp), px = Number(r.price);
-    if (!(sl > 0 && tp > 0 && px > 0)) return '<span class="muted" title="' + esc(r.sl_label || "") + '">' + (r.sl_wait || r.wait ? "⏳" : "—") + "</span>";
-    var lo = Math.min(sl, tp), hi = Math.max(sl, tp), pos = hi > lo ? (px - lo) / (hi - lo) * 100 : 50;
-    pos = Math.max(0, Math.min(100, pos)); var p0 = pos.toFixed(0);
-    var grad = up ? "linear-gradient(90deg,#ff3b3b,#ffb020 " + (pos / 2).toFixed(0) + "%,#94a3b8 " + p0 + "%,#00e676)" : "linear-gradient(90deg,#00e676,#94a3b8 " + p0 + "%,#ffb020 " + ((pos + 100) / 2).toFixed(0) + "%,#ff3b3b)";
-    var rr = Number(r.rr), rrc = !isFinite(rr) ? "" : rr >= 1.5 ? "rr-good" : rr >= 1 ? "rr-mid" : "rr-bad";
-    return '<span class="rec-path" title="Ризик до SL ' + recPct(r.sl_pct) + " · потенціал до TP " + recPct(r.tp_pct) + (isFinite(rr) ? " · R:R " + rr.toFixed(2) : "") + '"><span class="bar" style="background:' + grad + '">' +
-      '<i style="left:' + pos.toFixed(1) + '%"></i></span>' + (isFinite(rr) ? '<b class="rr ' + rrc + '">' + rr.toFixed(2) + "R</b>" : "") + "</span>";
+  // 🛰 VSV SIGNALS (вимога 24.11): монети ОБОХ Пружин з найвищим VSV Score —
+  // інформаційний radar волатильності БЕЗ напрямку (пробій можливий в обидва боки).
+  var REC = { f: "all", rows: [], meta: {} };
+  var REC_F = ["all", "charged", "impulse", "ai"];
+  try { var _rf = localStorage.getItem("vsv_rec_f"); if (REC_F.indexOf(_rf) >= 0) REC.f = _rf; } catch (e) {}
+  function recPass(r, f) { return f === "all" || (f === "impulse" ? !!r.impulse : f === "ai" ? !!r.ai_ready : !r.impulse); }
+  var REC_PART_UA = { charge: "заряд", squeeze: "стиснення", volat: "низька волатильність", volume: "висихання обсягу", ai: "VSV·AI" };
+  var REC_PART_W = { charge: 45, squeeze: 15, volat: 15, volume: 10, ai: 15 };
+  function recScoreCol(v) { return v >= 80 ? "#00e676" : v >= 65 ? "#facc15" : "#94a3b8"; }
+  function recScoreCell(r) {
+    var v = Number(r.score);
+    if (!isFinite(v)) return '<span class="muted">—</span>';
+    var p = r.parts || {}, tip = ["VSV Score " + v.toFixed(0) + " · клас " + (r.grade || "") + " (" + (r.grade_ua || "") + " готовність)"];
+    Object.keys(REC_PART_W).forEach(function (k) { if (p[k] != null) tip.push(REC_PART_UA[k] + " " + Number(p[k]).toFixed(0) + "% × " + REC_PART_W[k] + "%"); });
+    var c = recScoreCol(v);
+    return '<span class="rec-score" title="' + esc(tip.join("\n")) + '"><span class="bar"><i style="width:' + Math.max(0, Math.min(100, v)).toFixed(0) + "%;background:" + c + '"></i></span><b style="color:' + c + '">' + v.toFixed(0) + '</b><span class="rec-grade g-' + esc(r.grade || "C") + '">' + esc(r.grade || "C") + "</span></span>";
   }
-  // 📊 Група розрахунку одного TF (1H / 15m): 🛑 SL · 🎯 TP · Хід (вимога 11.11).
-  // 📊 Група розрахунку одного TF (1H / 15m): 🛑 SL · Хід (вимога 11.11).
-  // 🎯 TP СПІЛЬНИЙ для обох груп — окрема колонка перед ними.
-  function recGroupCells(g, up, cls) {
-    var sl = Number(g.sl) > 0;
-    var wt = '<span class="muted" title="' + esc(g.err || g.sl_label || "розраховується") + '">' + (g.wait || g.sl_wait ? "⏳" : "—") + "</span>";
-    var slC = sl ? '<span class="rec-lv sl">' + fmtPrice(g.sl) + " <small>" + recPct(g.sl_pct) + '</small> <small class="rec-tf" title="' + esc(g.sl_label || "") + '">' + esc(String(g.sl_tf || "").toUpperCase()) + "</small></span>" : wt;
-    return '<td class="r ' + cls + ' gs">' + slC + '</td><td class="c ' + cls + '">' + recPath(g, up) + "</td>";
+  function recChargeCell(r) {
+    var c = Number(r.charge); if (!isFinite(c)) return '<span class="muted">—</span>';
+    var ci = Number(r.charge_in), d = isFinite(ci) ? c - ci : null;
+    var dh = d != null && Math.abs(d) >= 0.5 ? ' <small class="' + (d > 0 ? "rec-up" : "rec-dn") + '">' + (d > 0 ? "+" : "−") + Math.abs(d).toFixed(0) + "</small>" : "";
+    return '<span class="rec-chg" title="Енергія стиснення «Пружини»' + (d != null ? " · при потраплянні в список " + ci.toFixed(0) : "") + '"><b style="color:' + exhColor(c) + '">' + c.toFixed(0) + "</b>" + dh + "</span>";
+  }
+  function recSqCell(r) {
+    var n = Number(r.squeeze_bars);
+    if (!isFinite(n) || n <= 0) return '<span class="muted" title="Зараз не в TTM squeeze">—</span>';
+    return '<span class="' + (n >= 12 ? "rec-good" : "") + '" title="Смуги Боллінджера всередині каналу Кельтнера ' + n + ' год поспіль">' + n + " год</span>";
+  }
+  function recVolatCell(r) {
+    var a = Number(r.atr_rank); if (!isFinite(a)) return '<span class="muted">—</span>';
+    return '<span class="' + (a <= 25 ? "rec-good" : a >= 75 ? "rec-hot" : "") + '" title="Поточний ATR вищий за ' + a.toFixed(0) + '% власної історії">ATR p' + a.toFixed(0) + "</span>";
+  }
+  function recVolCell(r) {
+    var v = Number(r.vol_ratio); if (!isFinite(v)) return '<span class="muted">—</span>';
+    var cls = v <= 0.75 ? "rec-good" : v >= 1.5 ? "rec-hot" : "", t = v <= 0.75 ? "обсяг висихає — ліквідність накопичується" : v >= 1.5 ? "обсяг вище середнього — учасники вже активні" : "обсяг близький до середнього";
+    return '<span class="' + cls + '" title="' + t + '">×' + v.toFixed(2) + "</span>";
+  }
+  function recAmpCell(r) {
+    var a = Number(r.amp_pct), b = Number(r.box_pct);
+    if (!isFinite(a)) return isFinite(b) ? '<span title="Ширина 24-год діапазону">±' + b.toFixed(2) + "%</span>" : '<span class="muted">—</span>';
+    return '<span title="Measured move у будь-який бік' + (isFinite(b) ? " · діапазон 24 год " + b.toFixed(2) + "%" : "") + '">±' + a.toFixed(2) + "%</span>";
+  }
+  function recPhaseCell(r) {
+    var ph = r.impulse ? ["imp", "💥 Імпульс"] : Number(r.charge) >= 65 ? ["sq", "🌀 Стиснення"] : ["acc", "⏳ Накопичення"];
+    var notes = (r.notes || []).filter(function (x) { return x && x.indexOf("💥") !== 0; });
+    var txt = notes.join(" · ");
+    return '<span class="rec-ph"><span class="rec-phase ' + ph[0] + '">' + ph[1] + '</span><span class="rec-note" title="' + esc(txt) + '">' + esc(txt) + "</span></span>";
   }
   function recRow(r) {
-    var sd = recSide(r), up = sd === "LONG", dc = sd ? (up ? "up" : "dn") : "";
-    var prob = r.prob_long != null ? (up ? Number(r.prob_long) : 100 - Number(r.prob_long)) : null;
-    // 22.11: біля монети — біржа, з якої рахується сигнал (🌀 WATCHLIST → Bybit, 🔭 скан → біржа скану)
     var ex = String(r.ex || (r.src === "scan" ? "binance" : "bybit")).toLowerCase();
-    var icon = '<span class="rec-ic" title="' + (ex === "binance" ? "Binance" : "Bybit") + '">' + (SPB_ICON[ex] || "") + "</span>";
-    var ai = r.ai || null;
-    var aiTip = ai ? ("VSV·AI: сетап на вхід" + (ai.side ? " " + ai.side : "") + (ai.scenario_name ? " · " + ai.scenario_name : "") + (ai.stage ? " " + ai.stage : "") + (ai.rank != null ? " · ранг " + ai.rank : "") + (ai.confidence != null ? " · впевненість " + ai.confidence : "") + (ai.etalon && ai.etalon.mature ? " · модель еталонів: " + (ai.etalon.verdict === "take" ? "вхід" : "пропуск") + (ai.etalon.p_good != null ? " (win rate схожих " + Math.round(ai.etalon.p_good * 100) + "%)" : "") : (ai.sim != null ? " · подібність до еталонних угод " + Number(ai.sim).toFixed(2) : ""))) : "";
-    // «ВХІД» — у слоті сталої ширини праворуч, рядок не зсувається
-    var aiCell = '<span class="rec-ai-slot">' + (ai && ai.ready ? '<span class="rec-ai on" title="' + esc(aiTip) + '">' + AI_BRAND + "<b>ВХІД</b></span>" : "") + "</span>";
+    var icon = '<span class="rec-ic" title="' + (ex === "binance" ? "Binance" : "Bybit") + " · " + (r.src === "scan" ? "скан біржі" : "WATCHLIST бота") + '">' + (SPB_ICON[ex] || "") + "</span>";
     var nb = r.bybit === false ? ' <span class="rec-nb" title="Інструмент не торгується на Bybit">⚠</span>' : "";
-    var pr = prob != null && isFinite(prob) ? prob : null;
-    var prCell = pr == null ? '<span class="muted">—</span>' : '<span class="rec-prob ' + dc + '"><i style="width:' + Math.max(0, Math.min(100, pr)).toFixed(0) + '%"></i></span><b class="rec-' + dc + '">' + pr.toFixed(0) + "%</b>";
-    var g1 = recGroupCells(r, up, "g1"), g15 = recGroupCells(r.m15 || { wait: true }, up, "g15");
-    var tpCell = Number(r.tp) > 0 ? '<span class="rec-lv tp">' + fmtPrice(r.tp) + " <small>" + recPct(r.tp_pct) + "</small></span>" : '<span class="muted" title="Цілі в напрямку позиції немає">—</span>';
-    return '<tr class="rec-row ' + dc + (ai && ai.ready ? " ai-pick" : "") + '"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td>" +
-      '<td><span class="rec-dir ' + dc + '">' + (sd ? (up ? "▲ LONG" : "▼ SHORT") : "⚖") + "</span></td>" +
-      '<td class="r">' + prCell + "</td>" + '<td class="r tpc">' + tpCell + "</td>" + g1 + g15 + "</tr>";
+    var aiCell = '<span class="rec-ai-slot">' + (r.ai_ready ? '<span class="rec-ai on" title="' + esc("VSV·AI бачить сформований сетап" + (r.ai_scenario ? " · " + r.ai_scenario : "")) + '">' + AI_BRAND + "<b>СЕТАП</b></span>" : "") + "</span>";
+    return '<tr class="rec-row' + (r.impulse ? " imp" : "") + (r.ai_ready ? " ai-pick" : "") + '"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td>" +
+      '<td class="r">' + recScoreCell(r) + '</td><td class="r">' + recChargeCell(r) + '</td><td class="r">' + recSqCell(r) + '</td><td class="r">' + recVolatCell(r) +
+      '</td><td class="r">' + recVolCell(r) + '</td><td class="r">' + recAmpCell(r) + "</td><td>" + recPhaseCell(r) + "</td></tr>";
   }
   function recRender() {
-    var rows = REC.rows || [], n = { all: rows.length, LONG: 0, SHORT: 0 };
-    rows.forEach(function (r) { var s = recSide(r); if (s) n[s]++; });
-    var lbl = { all: "Всі", LONG: "🟢 LONG", SHORT: "🔴 SHORT" };
-    document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) { var d = b.getAttribute("data-d"); b.textContent = lbl[d] + " (" + n[d] + ")"; b.classList.toggle("on", d === REC.dir); });
-    var vis = rows.filter(function (r) { return REC.dir === "all" || recSide(r) === REC.dir; }), tb = $("#rec-tbl tbody");
-    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="8" class="muted">' + (rows.length ? "Немає сигналів у цій вкладці" : "ШІ зараз не бачить точки входу — сигнал зʼявиться, щойно складеться сценарій") + "</td></tr>";
-    var rn = $("#rec-note"); if (rn) rn.textContent = new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
+    var rows = REC.rows || [], n = {};
+    REC_F.forEach(function (f) { n[f] = rows.filter(function (r) { return recPass(r, f); }).length; });
+    var lbl = { all: "Усі", charged: "🌀 Стиснення", impulse: "💥 Імпульс", ai: "VSV·AI" };
+    document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) { var d = b.getAttribute("data-d"); b.textContent = lbl[d] + " (" + (n[d] || 0) + ")"; b.classList.toggle("on", d === REC.f); });
+    var vis = rows.filter(function (r) { return recPass(r, REC.f); }), tb = $("#rec-tbl tbody");
+    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="8" class="muted">' + (rows.length ? "У цій вкладці зараз немає монет" : "Зараз немає монет у фазі стиснення — список оновиться, щойно «Пружина» зарядиться") + "</td></tr>";
+    var c = (REC.meta || {}).counts || {}, rn = $("#rec-note");
+    if (rn) rn.textContent = (c.total > rows.length ? "топ " + rows.length + " з " + c.total + " · " : "") + new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
   }
   // ⚖ Банер «SMC Forecast» (вимога 11.11): куди накручено пружину — 🔭 скан біржі
   // і 🌀 WATCHLIST, у відсотках і з таймером «відколи тримається напрямок».
@@ -3027,23 +3049,16 @@
     }
   }
   setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(spbFlipTick); }, 1000);
-  // 🧭 Вкладка «Рекомендовані ботом» іде за СПІЛЬНИМ напрямком банера SMC
-  // Forecast (вимога 11.11): LONG → 🟢, SHORT → 🔴, ⚖ → Всі. Ручний вибір
-  // діє, доки банер не змінив напрямок.
-  function recAutoTab(d) {
-    var a = null; ((d && d.banners) || []).forEach(function (b) { if (b.key === "all") a = b; });
-    var ln = a && a.lean ? a.lean : "";
-    if (!ln || ln === REC.autoLean) return;
-    REC.autoLean = ln;
-    REC.dir = ln === "LONG" || ln === "SHORT" ? ln : "all";
-  }
   function loadRec() {
     var card = $("#rec-card"); if (!card || !pOk("sec_signals")) return;
-    api("/api/info/recommended").then(function (d) { if (!d || !d.ok) { card.style.display = "none"; spbRender(null); return; } card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recAutoTab(d); recRender(); spbRender(d); }, function () {});
+    api("/api/info/recommended").then(function (d) { if (!d || !d.ok) { card.style.display = "none"; spbRender(null); return; } card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recRender(); spbRender(d); }, function () {});
   }
   document.addEventListener("click", function (e) {
-    var b = e.target.closest ? e.target.closest("#rec-tabs button[data-d]") : null; if (!b) return;
-    REC.dir = b.getAttribute("data-d"); try { localStorage.setItem("vsv_rec_dir", REC.dir); } catch (x) {} recRender();
+    if (!e.target.closest) return;
+    var ib = e.target.closest("#rec-info-btn");
+    if (ib) { var box = $("#rec-info"); if (box) { box.hidden = !box.hidden; ib.setAttribute("aria-expanded", box.hidden ? "false" : "true"); ib.classList.toggle("on", !box.hidden); } return; }
+    var b = e.target.closest("#rec-tabs button[data-d]"); if (!b) return;
+    REC.f = b.getAttribute("data-d"); try { localStorage.setItem("vsv_rec_f", REC.f); } catch (x) {} recRender();
   });
 
   var DENY_TXT = {

@@ -421,10 +421,12 @@ def test_personal_sbr_all_timeframes_1711():
 
 def test_blocked_user_has_no_access_and_no_group():
     tg = _load('tg_bot_t', 'web/tg_bot.py')
-    _check(tg.group_action(True, False, None) == 'restrict', 'заблокований → лишається, але без прав')
-    _check(tg.group_action(True, False, 'restricted') is None, 'вже обмежений — без повторів')
-    _check(tg.group_action(True, False, 'banned') == 'restrict', 'старий бан → повертаємо обмеженим')
+    # 23.11: заблокований → ПОВНИЙ бан (замість «обмежений» 09.11)
+    _check(tg.group_action(True, False, None) == 'ban', 'заблокований → бан')
+    _check(tg.group_action(True, False, 'restricted') == 'ban', 'обмежений 09.11 → бан')
+    _check(tg.group_action(True, False, 'banned') is None, 'вже забанено — без повторів')
     _check(tg.group_action(False, True, 'restricted') == 'restore', 'знову активний → права назад')
+    _check(tg.group_action(False, True, 'banned') == 'restore', 'знову активний → розбан')
     _check(tg.group_action(False, False, None) is None, 'очікує схвалення — не чіпаємо')
     _check(all(v is False for v in tg._NO_RIGHTS.values()) and 'can_send_messages' in tg._NO_RIGHTS,
            'обмеження знімає всі права учасника')
@@ -973,14 +975,12 @@ def test_rec_two_groups_and_single_timer():
     blk = html[html.index('id="spb-card"'):html.index('id="rec-card"')]
     assert blk.count('class="spb-tm"') == 1 and blk.index('spb-title') < blk.index('spb-tm')
     tb = html[html.index('id="rec-tbl"'):]
-    assert '1H · OB 1H' in tb and '15m · OB 15m' in tb and 'colspan="8"' in tb
-    head = tb[:tb.index('</thead>')]
-    assert head.count('tpc') == 1 and 'ЦІЛЬ' in head, 'ціль спільна — одна колонка'
+    # 24.11: VSV SIGNALS — радар без напрямку, груп 1H / 15m і SL більше немає
+    assert '1H · OB 1H' not in tb and 'OB 15m' not in tb and 'colspan="8"' in tb
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     side = js[js.index('function spbSide('):js.index('function spbRender(')]
     assert 'spb-tm' not in side, 'таймер лише один — посередині'
-    assert 'function recGroupCells(' in js and 'r.m15' in js
-    assert 'function recAutoTab(' in js and 'recAutoTab(d)' in js
+    assert 'function recGroupCells(' not in js and 'recAutoTab(' not in js
     css = open(os.path.join(_HERE, 'infosite', 'css', 'style.css'), encoding='utf-8').read()
     assert '#spb-wl .spb-h' in css and 'flex-direction' in css
 

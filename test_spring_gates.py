@@ -325,18 +325,14 @@ def test_rec_levels_and_sort_by_probability():
 
 
 def test_rec_table_layout():
-    """Без колонок «Джерело» / «Стан» / «Потенціал» і без пояснень; є SL і TP."""
+    """24.11: VSV SIGNALS — радар волатильності без напрямку, SL/ЦІЛЬ прибрано."""
     i = IDX.index('id="rec-tbl"'); head = IDX[i:IDX.index('</thead>', i)]
-    for gone in ('Джерело', 'Стан', 'Потенціал'):
-        assert gone not in head, gone
-    assert 'SL' in head and 'ЦІЛЬ' in head
     cols = re.findall(r'<th[^>]*>([^<]*)</th>', head)
-    # 22.11: «Заряд» прибрано (VSV SIGNALS — лише рекомендації ШІ), дві групи 1H / 15m
-    assert 'Заряд' not in cols and cols.count('SL') == 2, cols
-    # 11.11: 🎯 TP спільний для обох груп — одна колонка перед групами
-    assert cols.count('ЦІЛЬ') == 1 and cols.index('ЦІЛЬ') < cols.index('SL'), cols
-    assert 'rec-foot' not in IDX
-    assert 'function recPath' in APP and 'rec-ic' in APP
+    assert cols == ['Монета', 'VSV Score', 'Заряд', 'Стиснення', 'Волатильність', 'Обсяг',
+                    'Амплітуда', 'Фаза · коментар'], cols
+    for gone in ('SL', 'ЦІЛЬ', 'LONG', 'SHORT', 'OB 1H'):
+        assert gone not in head, gone
+    assert 'function recPath' not in APP and 'rec-ic' in APP
     assert 'rec-wrap' in IDX and '.rec-wrap{max-height' in open(os.path.join(ROOT, 'infosite', 'css', 'style.css'), encoding='utf-8').read().replace(' ', '')
 
 
@@ -351,8 +347,9 @@ def test_gate_mark_is_left_of_the_coin():
 
 def test_infosite_has_the_table_with_tabs():
     assert 'id="rec-card"' in IDX and 'id="rec-tabs"' in IDX
-    for d in ('all', 'LONG', 'SHORT'):
+    for d in ('all', 'charged', 'impulse', 'ai'):
         assert f'data-d="{d}"' in IDX
+    assert 'data-d="LONG"' not in IDX and 'data-d="SHORT"' not in IDX
     assert '/api/info/recommended' in APP and 'function recRender' in APP
     assert "'/api/info/recommended'" in open(os.path.join(ROOT, 'web', 'info_portal.py'), encoding='utf-8').read()
 

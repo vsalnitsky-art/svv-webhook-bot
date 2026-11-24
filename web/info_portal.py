@@ -2198,6 +2198,128 @@ def rec_prob(row):
     return None
 
 
+# ─── 🛰 VSV SIGNALS — ВІДБІР ЗА ЕНЕРГІЄЮ СТИСНЕННЯ, БЕЗ НАПРЯМКУ (24.11) ──
+# Вимога: «Відображай всі монети із обох пружин, але відбирай найкращий заряд і
+# високу ймовірність відпрацювання. Напрямок не вказуй (він не має 100%
+# гарантії) — це має бути інформаційного характеру.» Джерела — ті самі записи
+# 🌀 Пружини WATCHLIST і рядки 🔭 скану біржі (лише памʼять); оцінка — ЧИСТА
+# `vsv_signal_view`, відбір — ЧИСТА `vsv_signal_rows`. Сторона (LONG/SHORT,
+# ймовірність боку, цілі, стопи) у відповідь НЕ потрапляє взагалі.
+VSV_SHOW = 20                 # скільки монет показуємо (найвищий VSV Score)
+VSV_MIN_CHARGE = 65.0         # «🌀 заряджена» — та сама межа, що в Пружині
+VSV_SQUEEZE_FULL = 24         # годин стиснення, що дають повний бал
+VSV_W = {'charge': 0.45, 'squeeze': 0.15, 'volat': 0.15, 'volume': 0.10, 'ai': 0.15}
+VSV_GRADES = ((80.0, 'A', 'висока'), (65.0, 'B', 'підвищена'), (0.0, 'C', 'помірна'))
+VSV_ROW_KEYS = ('state', 'label', 'phase', 'charge', 'charge_in', 'squeeze_bars',
+                'box_pct', 'vol_ratio', 'atr_rank', 'price', 'bar_t', 'unit_r',
+                'move24_pct')
+
+
+def _vsv_f(x, d=None):
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return d
+    return v if v == v else d
+
+
+def vsv_grade(score):
+    """ЧИСТА: VSV Score → (клас, слово)."""
+    sc = _vsv_f(score, 0.0)
+    for lo, g, w in VSV_GRADES:
+        if sc >= lo:
+            return g, w
+    return 'C', 'помірна'
+
+
+def vsv_signal_view(rec, ai=None):
+    """ЧИСТА: запис Пружини (+ вибір ШІ) → оцінка готовності до імпульсу БЕЗ
+    напрямку: {score, grade, grade_ua, parts, amp_pct, impulse, ai_ready,
+    ai_scenario, notes}. None — запису немає / не порахований."""
+    if not isinstance(rec, dict) or rec.get('ok') is False or rec.get('charge') is None:
+        return None
+    ch = max(0.0, min(100.0, _vsv_f(rec.get('charge'), 0.0)))
+    sq_b = max(0, int(_vsv_f(rec.get('squeeze_bars'), 0) or 0))
+    rank = _vsv_f(rec.get('atr_rank'))
+    vr = _vsv_f(rec.get('vol_ratio'))
+    a = ai if isinstance(ai, dict) else {}
+    ai_ready = bool(a.get('ready'))
+    parts = {
+        'charge': ch / 100.0,
+        'squeeze': min(1.0, sq_b / float(VSV_SQUEEZE_FULL)),
+        'volat': (max(0.0, min(1.0, 1.0 - rank / 100.0)) if rank is not None else 0.5),
+        'volume': (max(0.0, min(1.0, (1.3 - vr) / 0.9)) if vr is not None else 0.5),
+        'ai': 1.0 if ai_ready else 0.0,
+    }
+    score = round(100.0 * sum(VSV_W[k] * parts[k] for k in VSV_W), 1)
+    g, gw = vsv_grade(score)
+    impulse = (rec.get('state') == 'fired') or bool(rec.get('fired'))
+    ml, ms = _vsv_f(rec.get('move_long_pct')), _vsv_f(rec.get('move_short_pct'))
+    amps = [abs(x) for x in (ml, ms) if x is not None]
+    amp = round(sum(amps) / len(amps), 2) if amps else None
+    notes = []
+    if impulse:
+        notes.append('💥 вихід із діапазону вже почався (expansion)')
+    if ch >= 80:
+        notes.append(f'висока енергія стиснення ({ch:.0f})')
+    elif ch >= VSV_MIN_CHARGE:
+        notes.append(f'накопичення завершується ({ch:.0f})')
+    if sq_b >= 12:
+        notes.append(f'squeeze {sq_b} год')
+    if rank is not None and rank <= 25:
+        notes.append(f'ATR у нижніх {rank:.0f}% історії')
+    if vr is not None and vr <= 0.75:
+        notes.append(f'обсяг висох ×{vr:.2f}')
+    if ai_ready:
+        notes.append('🤖 VSV·AI бачить сетап' + (f' · {a.get("scenario_name")}' if a.get('scenario_name') else ''))
+    return {'score': score, 'grade': g, 'grade_ua': gw,
+            'parts': {k: round(v * 100.0, 1) for k, v in parts.items()},
+            'amp_pct': amp, 'impulse': impulse, 'ai_ready': ai_ready,
+            'ai_scenario': a.get('scenario_name') if ai_ready else None,
+            'notes': notes}
+
+
+def vsv_signal_rows(wl_recs, scan_rows, ai_map=None, scan_ex=None, limit=VSV_SHOW):
+    """ЧИСТА: монети ОБОХ Пружин → відбір «VSV SIGNALS» (найвищий VSV Score).
+
+    Береться монета, яка «🌀 заряджена» (заряд ≥ `VSV_MIN_CHARGE`) або вже
+    почала імпульс, або в якій VSV·AI бачить сетап. Дубль (є в обох) —
+    один раз, WATCHLIST сильніший. Напрямку в рядку НЕМАЄ."""
+    ai_map = ai_map or {}
+    sx = str(scan_ex or 'binance').lower()
+    out, seen = [], set()
+
+    def _take(S, rec, src, extra=None):
+        S = str(S or '').upper()
+        if not S or S in seen:
+            return
+        v = vsv_signal_view(rec, ai_map.get(S))
+        if v is None:
+            return
+        if not (_vsv_f(rec.get('charge'), 0.0) >= VSV_MIN_CHARGE or v['impulse'] or v['ai_ready']):
+            return
+        row = {k: rec.get(k) for k in VSV_ROW_KEYS}
+        row.update(v)
+        row.update({'symbol': S, 'src': src, 'ex': 'bybit' if src == 'wl' else sx})
+        row.update(extra or {})
+        out.append(row)
+        seen.add(S)
+
+    for S, rec in (wl_recs or {}).items():
+        _take(S, rec, 'wl')
+    for r in scan_rows or []:
+        _take((r or {}).get('symbol'), r or {}, 'scan',
+              {'vol_usd': (r or {}).get('vol_usd'), 'bybit': (r or {}).get('bybit'),
+               'added_at': (r or {}).get('added_at')})
+    out.sort(key=lambda x: (-(x.get('score') or 0), -(_vsv_f(x.get('charge'), 0.0)), x['symbol']))
+    total = len(out)
+    out = out[:max(1, int(limit or VSV_SHOW))]
+    return out, {'total': total, 'shown': len(out),
+                 'impulse': sum(1 for r in out if r.get('impulse')),
+                 'ai': sum(1 for r in out if r.get('ai_ready')),
+                 'charged': sum(1 for r in out if not r.get('impulse'))}
+
+
 # ─── 🛑 SL рекомендованих монет — СХОДИ ORDER BLOCK 1H → 15m → 5m (10.11) ──
 # Вимога: «пріоритет 1Н за напрямком, а якщо немає — шукаємо OB на меншому
 # таймфреймі… визначати з алгоритму OB, а не з VOB». Блоки — ТІ САМІ, що бокси
@@ -2378,12 +2500,11 @@ def recommended_payload(now=None):
     if hit and now - hit[0] < REC_TTL:
         return hit[1]
     sc = _scanner()
-    wl_recs, wl_pass, scan_rows, scan_meta = {}, {}, [], {}
+    wl_recs, scan_rows, scan_meta = {}, [], {}
     eng = None
     try:
         if sc is not None and hasattr(sc, 'spring_for'):
             wl_recs = sc.spring_for() or {}
-            wl_pass = sc.spring_pass_map() if hasattr(sc, 'spring_pass_map') else {}
     except Exception:
         pass
     try:
@@ -2395,59 +2516,28 @@ def recommended_payload(now=None):
             scan_meta = {'ts': st.get('ts'), 'exchange': st.get('exchange')}
     except Exception:
         pass
-    rows = recommended_rows(wl_recs, wl_pass, scan_rows)
-    # 🤖 ШІ підбирає найкращі угоди (22.11) — ті самі рішення, що відкривають
-    # його власні угоди; лише памʼять рушія.
-    ai_n = 0
+    # 🛰 VSV SIGNALS (24.11): обидві Пружини, відбір за VSV Score, БЕЗ напрямку.
+    # 🤖 ВИБІР ШІ лише підсилює оцінку (бік сетапу на сторінку не йде).
+    amap = {}
     try:
         from detection.ai_signals import get_ai_engine
         _ai = get_ai_engine()
-        if _ai is not None:
-            amap = _ai.recommend() or {}
-            ai_recs = {}
-            try:
-                miss = [S for S, a in amap.items() if a.get('ready')]
-                ai_recs = sc.spring_for(miss) if (miss and sc is not None) else {}
-            except Exception:
-                ai_recs = {}
-            rows = rec_ai_merge(rows, amap, ai_recs)
-            ai_n = sum(1 for r in rows if (r.get('ai') or {}).get('ready'))
-        else:
-            rows = []
+        amap = (_ai.recommend() or {}) if _ai is not None else {}
     except Exception:
-        rows = []
-    rows = rec_ai_only(rows, scan_meta.get('exchange'))
-    ffs = {}
+        amap = {}
     try:
-        from detection.fuel_filter import get_fuel_filter
-        _ff = get_fuel_filter()
-        ffs = _ff.get_settings() if _ff else {}
+        from detection import funding_spring as _fs
+        wl_shaped = {S: dict(_fs.shape_row(rec), charge_in=(rec or {}).get('charge_in'))
+                     for S, rec in (wl_recs or {}).items()}
     except Exception:
-        ffs = {}
-    for r in rows:
-        if r.get('side') in ('LONG', 'SHORT'):
-            try:
-                h = rec_sl_get(sc, r['symbol'], r['side'], r.get('price'), ffs,
-                               REC_GROUP_TFS['1h'])
-            except Exception as e:
-                h = {'sl': None, 'label': f'помилка: {str(e)[:60]}'}
-            r.update(rec_levels(r, h))
-            r['sl_wait'] = bool(h.get('wait'))
-            # 📊 Група 15m: SL з OB 15m → 5m, TP — СПІЛЬНИЙ (той самий, що 1H).
-            try:
-                h15 = rec_sl_get(sc, r['symbol'], r['side'], r.get('price'), ffs,
-                                 REC_GROUP_TFS['15m'])
-                m15 = rec_levels(r, h15)
-                m15['sl_wait'] = bool(h15.get('wait'))
-                m15['price'] = r.get('price')
-                r['m15'] = m15
-            except Exception as e:
-                r['m15'] = {'err': str(e)[:80]}
+        wl_shaped = dict(wl_recs or {})
+    rows, counts = vsv_signal_rows(wl_shaped, scan_rows, amap, scan_meta.get('exchange'))
+    ai_n = counts.get('ai', 0)
     try:
         banners = spring_banners(sc, eng, now)
     except Exception:
         banners = []
-    p = {'ok': True, 'rows': rows, 'banners': banners,
+    p = {'ok': True, 'rows': rows, 'banners': banners, 'counts': counts,
          'scan': scan_meta, 'wl_n': len(wl_recs), 'ai_ready': ai_n, 'ts': now}
     _rec_cache['p'] = (now, p)
     return p
