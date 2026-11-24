@@ -56,9 +56,11 @@ def _engine(direction=1, **settings):
     engine._refresh_cal = lambda now: None
     engine._fetch_live = lambda S, now: (dict(L._REC), dict(L._VW_UP))
     # 23.11: E2 — лише з підтвердженим розрядом (тут перевіряється мозок графіка)
-    engine.discharge_for = lambda S, side, now=None, live_price=None: {'state': 'confirmed', 'edge': 100.0}
+    engine.discharge_for = lambda S, side, now=None, live_price=None: {'state': 'confirmed', 'edge': 100.0,
+                                                                       'vob1h': {'ok': True, 'side': side}}
     engine.discharge_both = lambda S, side, now=None, live_price=None: {
-        '1h': {'state': 'confirmed', 'edge': 100.0, 'tf': '1h'}, '15m': {'state': 'confirmed', 'edge': 100.0, 'tf': '15m'}}
+        '1h': {'state': 'confirmed', 'edge': 100.0, 'tf': '1h'}, '15m': {'state': 'confirmed', 'edge': 100.0, 'tf': '15m'},
+        'vob1h': {'ok': True, 'side': side}}
     engine.rdy_view = lambda S: None
     engine._ai_s = L.A.ai_settings_norm({'enabled': True, 'scenarios': ['E1', 'E2', 'E3', 'E4']})
     engine._ai_s_at = 1e15

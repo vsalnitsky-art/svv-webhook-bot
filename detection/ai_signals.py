@@ -73,6 +73,10 @@ AI_DEFAULTS = {
     'discharge_bars': 1,
     'discharge_tf': '1h',       # TF підтвердження розряду: '1h' | '15m' (рівень — коробка 1h)
     'discharge_bars_15m': 2,    # для 15m: закритих 15m-свічок утримали ціну за межею
+    # 📦 Друге підтвердження розряду (24.11): САМИЙ ОСТАННІЙ VOB 1H на графіку
+    # (той самий детектор і параметри «📦 Volumized OB Trend») мусить бути в бік,
+    # куди стартував розряд, і не зламаний. Немає / проти / breaker → не відкриваємо.
+    'discharge_vob1h': True,
     'false_start_exit': True,   # угода ШІ з E2: ціна повернулась у коробку → вихід
     # 🎯 Вихід на кульмінації (Виснаження) для угод ШІ (24.11): той самий
     # алгоритм і пороги, що в Exit Rules TM (`exh_exit_*`), незалежно від
@@ -149,7 +153,7 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
     r = raw if isinstance(raw, dict) else {}
     for k in ('enabled', 'exit_enabled', 'allow_long', 'allow_short', 'learning_enabled',
               'etalon_enabled', 'cleanup_enabled', 'sl_enabled', 'discharge_confirm',
-              'false_start_exit', 'exh_exit'):
+              'false_start_exit', 'exh_exit', 'discharge_vob1h'):
         if k in r:
             s[k] = bool(r[k])
     if r.get('exit_mode') in ('confirmed', 'all'):
@@ -215,6 +219,10 @@ def ai_entry_block(ep: Optional[Dict], side: str, s: Dict, brain: Optional[Dict]
         if ds.get('state') != 'confirmed':
             return '💥 розряд не підтверджено: ' + (ds.get('note') or
                                                    DISCHARGE_STATE_UA.get(ds.get('state'), 'немає даних'))
+        if s.get('discharge_vob1h', True):
+            v1 = ds.get('vob1h') or {}
+            if not v1.get('ok'):
+                return '📦 VOB 1H: ' + (v1.get('note') or 'останній VOB 1H не перевірено (немає даних)')
     rb = rdy_block(sd, rdy, s.get('rdy_filter') or 'off')
     if rb:
         return rb
@@ -505,9 +513,12 @@ def discharge_state_ltf(closed_1h: List[Dict], closed_ltf: List[Dict], side: str
 
 
 def dis_pick(both: Dict, tf: str) -> Dict:
-    """Стан розряду ОБРАНОГО TF + `alts` (інші TF — для показу й тіні). ЧИСТА."""
+    """Стан розряду ОБРАНОГО TF + `alts` (інші TF — для показу й тіні) + `vob1h`
+    (друге підтвердження — останній VOB 1H). ЧИСТА."""
     tf = tf if tf in DISCHARGE_TFS else '1h'
     out = dict((both or {}).get(tf) or (both or {}).get('1h') or {})
+    if (both or {}).get('vob1h') is not None:
+        out['vob1h'] = both['vob1h']
     out['alts'] = [{k: ((both or {}).get(a) or {}).get(k) for k in ('state', 'tf', 'held', 'need', 't', 'note')}
                    for a in DIS_SHADOW_TFS if a != tf and (both or {}).get(a)]
     return out
@@ -626,6 +637,39 @@ def vob_detect(closed_5m: List[Dict], params: Optional[Dict] = None) -> Optional
                                 max_atr_mult=float(p['max_atr_mult']),
                                 zone_count=str(p.get('zone_count') or 'High'),
                                 combine_obs=bool(p.get('combine_obs', False)))
+
+
+def vob1h_check(obs: Optional[Dict], side: str) -> Dict:
+    """📦 Друге підтвердження розряду (24.11). ЧИСТА.
+    `obs` — результат детектора Volumized OB над 1h-свічками (з ЖИВОЮ, як на
+    графіку). Береться РІВНО `latest_ob` — самий останній блок, що бот малює
+    останнім; старіший блок у бік НЕ підставляється.
+    → {ok, side, t, top, bottom, breaker, note}: ok лише коли останній VOB 1H
+    у бік `side` і не зламаний (breaker)."""
+    sd = str(side).upper()
+    out = {'ok': False, 'side': None, 't': None, 'top': None, 'bottom': None,
+           'breaker': False, 'note': ''}
+    if obs is None:
+        out['note'] = 'VOB 1H не порахувався (немає закритих свічок 1h)'
+        return out
+    lo = (obs or {}).get('latest_ob')
+    if not lo:
+        out['note'] = 'останнього VOB 1H на графіку немає'
+        return out
+    vs = 'LONG' if lo.get('type') == 'Bull' else 'SHORT'
+    try:
+        out.update(top=float(lo.get('top')), bottom=float(lo.get('bottom')))
+    except (TypeError, ValueError):
+        pass
+    out.update(side=vs, t=_bar_sec({'t': lo.get('formation_time') or lo.get('start_time')}),
+               breaker=bool(lo.get('breaker')))
+    if vs != sd:
+        out['note'] = f'останній VOB 1H — {vs}, проти розряду {sd}'
+    elif lo.get('breaker'):
+        out['note'] = f'останній VOB 1H ({vs}) зламано — breaker'
+    else:
+        out.update(ok=True, note=f'останній VOB 1H — {vs}, у бік розряду')
+    return out
 
 
 def discharge_state_vob(closed_1h: List[Dict], closed_5m: List[Dict], side: str,
@@ -2275,6 +2319,10 @@ def _spring_rows():
 # немає. Ворота бота (МММ, Пружини…) тут НЕ діють: це підказка людині.
 ANOM_SUB_COOLDOWN = 3600       # одна монета й бік — не частіше раз на годину
 ANOM_SENT_KEEP = 48 * 3600
+# ⚠ позначки сигналів «Аномалії обсягу» на графіку кабінету (вимога 24.11)
+ANOM_MARK_KEEP = 7 * 86400     # скільки днів тримаємо позначки
+ANOM_MARK_MAX = 80             # позначок на монету
+ANOM_MARK_COINS = 400          # монет у памʼяті
 
 
 def anom_pick(rl: Dict, rs: Dict, adir: Optional[Dict] = None):
@@ -2312,6 +2360,26 @@ def anom_tg_text(symbol: str, side: str, r: Dict, price=None, adir: Optional[Dic
     return '\n'.join(out)
 
 
+def anom_tg_short(symbol: str, side: str, r: Dict, price=None) -> str:
+    """⚠ КОРОТКЕ повідомлення (вимога 24.11, деф. у кабінеті): лише головне —
+    бік, монета, ціна, назва сценарію. Без етапів і пояснень."""
+    sc = (r or {}).get('scenario') or {}
+    emo = '🟢' if side == 'LONG' else '🔴'
+    px = ''
+    try:
+        if price:
+            from detection.sbr_signals import fmt_price
+            px = f" · 💵 <code>{fmt_price(float(price))}</code>"
+    except Exception:
+        px = ''
+    out = [f"⚠️ {emo} <b>{side}</b> · <b>#{symbol}</b>{px}"]
+    if sc.get('name'):
+        out.append(f"{sc['name']} · 🤖 <b>VSV·AI</b>")
+    else:
+        out.append('🤖 <b>VSV·AI</b>')
+    return '\n'.join(out)
+
+
 def _alarm_engine():
     import sys
     m = sys.modules.get('detection.sbr_signals')
@@ -2339,6 +2407,14 @@ def anom_watch_symbols() -> List[str]:
         a = None
     if a and a not in out:
         out.append(a)
+    # 📈 графіки кабінету з увімкненим шаром ⚠ (24.11) — рахуємо, поки дивляться
+    try:
+        for S in (ip.anom_chart_symbols() or []) if ip is not None else []:
+            S = str(S).upper()
+            if S not in out:
+                out.append(S)
+    except Exception:
+        pass
     # 🤖 монети торгівлі з кабінету (24.11) — сигнал рахується й без ⚠ підписки
     ut = sys.modules.get('web.user_trading')
     try:
@@ -2386,6 +2462,7 @@ class AiEngine:
         self._anom_send = anom_send or _anom_send_default
         self._anom_alarm = anom_alarm or _anom_alarm_default
         self._anom_sent: Dict[str, float] = {}   # 'S|side|key|last_t' → коли надіслано
+        self._anom_marks: Dict[str, List[Dict]] = {}   # ⚠ позначки на графіку (24.11)
         self._anom_last: Dict[str, float] = {}   # 'S|side' → останнє надсилання
         self.db = db
         self._md = md
@@ -2588,7 +2665,23 @@ class AiEngine:
         except Exception as e:
             for k in ('vob', 'vobl'):
                 out.setdefault(k, {'state': 'none', 'tf': k, 'note': f'помилка VOB: {e}'[:120]})
+        try:        # 📦 друге підтвердження: самий останній VOB 1H у бік розряду
+            out['vob1h'] = vob1h_check(self._vob1h_obs(symbol), side)
+        except Exception as e:
+            out['vob1h'] = {'ok': False, 'note': f'помилка VOB 1H: {e}'[:120]}
         return out
+
+    def _vob1h_obs(self, symbol: str) -> Optional[Dict]:
+        """VOB 1H «як на графіку»: 1h-свічки кешу рушія РАЗОМ із живою, параметри
+        «📦 Volumized OB Trend» разом із Zone Count / Combine. Без мережі."""
+        vp = self._vob_params()
+        with self._pro_lock:
+            hit = (self._pro_bars.get(str(symbol or '').upper()) or {}).get('1h')
+        rows = list(hit[1]) if hit else []
+        if len(rows) < int(vp['swing_length']) + 5:
+            return None
+        return vob_detect(rows, dict(vp, zone_count=vp.get('chart_zone_count') or 'Low',
+                                     combine_obs=vp.get('chart_combine', True)))
 
     def _vob_chart(self, symbol: str, vp: Dict) -> Optional[Dict]:
         """«Самий останній» VOB 5m — як на графіку бота: ті самі параметри разом із
@@ -3503,7 +3596,11 @@ class AiEngine:
         sent = 0
         for k in [k for k, t in self._anom_sent.items() if now - t > ANOM_SENT_KEEP]:
             self._anom_sent.pop(k, None)
-        for S in subs:
+        subset = set(subs)
+        # ⚠ позначки на графіку (24.11): той самий сигнал фіксуємо для ВСІХ
+        # монет, які веде рушій (Пружини + підписки + графіки кабінету),
+        # а надсилаємо / будимо / торгуємо — лише по монетах підписок.
+        for S in list(dict.fromkeys(list(subs) + list(scored))):
             if S in scored:
                 el, es, rec, vw = scored[S]
             else:
@@ -3521,12 +3618,18 @@ class AiEngine:
             if not side:
                 continue
             sc = r.get('scenario') or {}
+            px = _px(vw, rec)
+            try:
+                self._anom_mark(S, side, r, px, adir, now)
+            except Exception as e:
+                self._stat['last_err'] = f'⚠ позначка {S}: {e}'[:200]
+            if S not in subset:
+                continue
             key = f"{S}|{side}|{sc.get('key')}|{int(float(sc.get('last_t') or 0))}"
             if key in self._anom_sent:
                 continue
             self._anom_sent[key] = now
             self._dirty = True
-            px = _px(vw, rec)
             # ⏰ будильник (вимога 18.11): той самий сигнал — на КОЖЕН новий
             # сценарій (дія ідемпотентна: усе вже в потрібному стані → тиша).
             try:
@@ -3542,7 +3645,9 @@ class AiEngine:
                 self._stat['last_err'] = f'🤖 торгівля {S}: {e}'[:200]
             if now - self._anom_last.get(f'{S}|{side}', 0) < ANOM_SUB_COOLDOWN:
                 continue
-            text = anom_tg_text(S, side, r, px, adir)
+            # два формати (24.11): кожен підписник отримує обраний у кабінеті
+            text = {'short': anom_tg_short(S, side, r, px),
+                    'full': anom_tg_text(S, side, r, px, adir)}
             try:
                 ok, bad = self._anom_send(S, text)
             except Exception as e:
@@ -3562,6 +3667,36 @@ class AiEngine:
             except Exception:
                 pass
         return sent
+
+    def _anom_mark(self, S, side, r, px, adir, now) -> bool:
+        """⚠ Запамʼятати сигнал «Аномалії обсягу» для графіка кабінету (24.11).
+        Один запис на сценарій (бік · ключ · час останньої реакції)."""
+        sc = (r or {}).get('scenario') or {}
+        t = int(float(sc.get('last_t') or now))
+        key = f"{side}|{sc.get('key')}|{t}"
+        lst = self._anom_marks.setdefault(S, [])
+        if any(m.get('k') == key for m in lst):
+            return False
+        lst.append({'k': key, 't': t, 'at': int(now), 'side': side, 'key': sc.get('key'),
+                    'name': sc.get('name') or '', 'px': px, 'score': (r or {}).get('score'),
+                    'stages': [str(x.get('label') or '') for x in (sc.get('stages') or [])
+                               if x.get('done')][:6],
+                    'adir': (adir or {}).get('dir') if (adir or {}).get('state') == 'dir' else None})
+        lst.sort(key=lambda m: m.get('t') or 0)
+        cut = now - ANOM_MARK_KEEP
+        self._anom_marks[S] = [m for m in lst if (m.get('t') or 0) >= cut][-ANOM_MARK_MAX:]
+        if len(self._anom_marks) > ANOM_MARK_COINS:
+            old = sorted(self._anom_marks, key=lambda k: max([m.get('t') or 0 for m in self._anom_marks[k]] or [0]))
+            for k in old[:len(self._anom_marks) - ANOM_MARK_COINS]:
+                self._anom_marks.pop(k, None)
+        self._dirty = True
+        return True
+
+    def anom_marks(self, symbol: str) -> List[Dict]:
+        """⚠ Позначки сигналів по монеті (лише памʼять, для графіка кабінету)."""
+        cut = self._clock() - ANOM_MARK_KEEP
+        return [dict(m) for m in (self._anom_marks.get(str(symbol or '').upper()) or [])
+                if (m.get('t') or 0) >= cut]
 
     def _close_episode(self, S, ep, now, why):
         self._eps.pop(S, None)
@@ -3583,6 +3718,7 @@ class AiEngine:
             return
         try:
             self.db.set_setting(DB_STATE, {'eps': self._eps, 'anom_sent': self._anom_sent,
+                                           'anom_marks': self._anom_marks,
                                            'anom_last': self._anom_last,
                                            'ai_opens': self._ai_opens[-50:],
                                            'ai_last': self._ai_last,
@@ -3615,6 +3751,10 @@ class AiEngine:
                 self._cleanup_at = float(st.get('cleanup_at') or 0)
             except (TypeError, ValueError):
                 self._cleanup_at = 0.0
+            am = st.get('anom_marks')
+            if isinstance(am, dict):
+                self._anom_marks = {str(k).upper(): [m for m in v if isinstance(m, dict)]
+                                    for k, v in am.items() if isinstance(v, list)}
             for k, attr in (('anom_sent', '_anom_sent'), ('anom_last', '_anom_last')):
                 v = st.get(k)
                 if isinstance(v, dict):

@@ -299,9 +299,11 @@ def _engine(ok=True):
     e._professional_snapshot = lambda S, now: pro_ok()
     # 23.11: E2 лише з ПІДТВЕРДЖЕНИМ розрядом (пробій утримано закритою свічкою)
     e.discharge_for = lambda S, side, now=None, live_price=None: {
-        'state': 'confirmed', 'edge': 100.0, 't': int(NOW - 7200), 'held': 1, 'need': 1}
+        'state': 'confirmed', 'edge': 100.0, 't': int(NOW - 7200), 'held': 1, 'need': 1,
+        'vob1h': {'ok': True, 'side': side}}          # 24.11: + останній VOB 1H у бік
     e.discharge_both = lambda S, side, now=None, live_price=None: {
-        '1h': {'state': 'confirmed', 'edge': 100.0, 'tf': '1h'}, '15m': {'state': 'confirmed', 'edge': 100.0, 'tf': '15m'}}
+        '1h': {'state': 'confirmed', 'edge': 100.0, 'tf': '1h'}, '15m': {'state': 'confirmed', 'edge': 100.0, 'tf': '15m'},
+        'vob1h': {'ok': True, 'side': side}}
     e.rdy_view = lambda S: None
     e._ai_s = A.ai_settings_norm({'enabled': True, 'scenarios': ['E1', 'E2', 'E3', 'E4']})
     e._ai_s_at = 1e15

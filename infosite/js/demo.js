@@ -7,7 +7,7 @@
   var previewDirection=new URLSearchParams(location.search).get("direction")==="long"?"LONG":"SHORT";
   try{localStorage.setItem("vsv_pp_amt","1")}catch(e){}
   var nativeFetch=window.fetch.bind(window),now=function(){return Math.floor(Date.now()/1000)};
-  var state={wl:["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","DOGEUSDT"],max:20,sel:"BTCUSDT",tf:"15m",ob_tf:"1h",vob_tf:"5m",poc_days:7,poc_tf:"1h",show_imb:true,show_sbr:true,show_shl:true,sbr:{BTCUSDT:["1h","4h"]},tg_linked:true};
+  var state={wl:["BTCUSDT","ETHUSDT","SOLUSDT","XRPUSDT","DOGEUSDT"],max:20,sel:"BTCUSDT",tf:"15m",ob_tf:"1h",vob_tf:"5m",poc_days:7,poc_tf:"1h",show_imb:true,show_sbr:true,show_shl:true,shl_tf:"1h",show_anom:true,sbr:{BTCUSDT:["1h","4h"]},tg_linked:true};
   var market={BTCUSDT:[104382.65,1.84],ETHUSDT:[3521.42,2.37],SOLUSDT:[168.74,-1.26],XRPUSDT:[2.1842,.64],DOGEUSDT:[.16842,-2.13]};
   function hash(s){var h=2166136261;for(var i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return Math.abs(h)}
   function candles(sym,tf){
@@ -33,7 +33,7 @@
       vob:[{start:o[62].time,top:last*1.008,bottom:last*.994,side:"LONG",breaker:false,volume:1845230,hi_pct:64,lo_pct:36,tf:q.get("vob_tf")||"5m"},{start:o[139].time,top:last*1.023,bottom:last*1.014,side:"SHORT",breaker:false,volume:982400,hi_pct:71,lo_pct:29,tf:q.get("vob_tf")||"5m"}],
       ob:[{start:o[88].time,top:last*.997,bottom:last*.988,side:"LONG",fam:"swing",tag:"confirmed"},{start:o[170].time,top:last*1.017,bottom:last*1.009,side:"SHORT",fam:"int",tag:"fresh"}],
       imb:[{start:o[185].time,top:last*1.005,bottom:last*1.001,side:"LONG",vol:734200,sell_pct:38,buy_pct:62}],events:[{from:o[105].time,to:o[148].time,level:last*1.012,dir:"bear",tag:"CHoCH"},{from:o[156].time,to:o[204].time,level:last*.997,dir:"bull",tag:"BOS"}],
-      sbr:[{t:o[196].time,side:"LONG",n:18,tf:"1H",trigger:last*.992,sl:last*.974,score:87.4,risk:"Помірний",ct:o[196].time}],sbr_last:{"1h":{side:"LONG",n:18,trigger:last*.992,score:87.4,ct:o[196].time},"4h":{side:"LONG",n:7,trigger:last*.981,score:79.2,ct:o[126].time}},shl:{tf:"4H",high:{price:last*1.028,label:"High"},low:{price:last*.968,label:"Low"}}};
+      sbr:[{t:o[196].time,side:"LONG",n:18,tf:"1H",trigger:last*.992,sl:last*.974,score:87.4,risk:"Помірний",ct:o[196].time}],anom_sig:[{t:o[178].time,ct:o[179].time,side:"SHORT",name:"🔁 Розворот після виснаження",px:last*1.01,stages:["🔥 кульмінація вгору","🧽 поглинання на рівні","підтвердження"],adir:"SHORT"},{t:o[188].time,ct:o[189].time,side:"LONG",name:"💥 Старт розряду",px:last*.996,stages:["🌀 пружина заряджена","⚡ імпульс за коробку"]}],sbr_last:{"1h":{side:"LONG",n:18,trigger:last*.992,score:87.4,ct:o[196].time},"4h":{side:"LONG",n:7,trigger:last*.981,score:79.2,ct:o[126].time}},shl:{tf:"4H",high:{price:last*1.028,label:"High"},low:{price:last*.968,label:"Low"}}};
   }
   function paper(){
     var t=now();return{ok:true,account:{equity:1038.90,balance:1038.90,closed_balance:1038.90,deposit:1000,available:906.32,margin_usd:125.50,margin_pct:12,leverage:5,fee_pct:.055,mode:"pct"},stats:{total_pnl_usd:3.01,pnl_since_from_usd:3.01,gross_profit_usd:3.01,gross_loss_usd:0,total_closed:2,wins:2,losses:0,win_rate:100,profit_factor:null,avg_win_usd:1.50,avg_loss_usd:0,best_usd:2.59,worst_usd:0,avg_pnl_pct:.36,total_fees_usd:1.33,entry_score_breakdown:{good:{count:1,win_rate:100,avg_pnl_pct:.55},marginal:{count:1,win_rate:100,avg_pnl_pct:.18}}},
@@ -46,7 +46,7 @@
     var method=(init&&init.method||"GET").toUpperCase(),body={};if(init&&init.body){try{body=JSON.parse(init.body)}catch(e){}}
     if(path==="/api/me")return{ok:true,email:"demo@vsv.terminal"};
     if(path==="/api/me/watchlist"){
-      if(method==="POST"){if(body.add){var s=String(body.add).toUpperCase().replace(/[^A-Z0-9]/g,"");if(s&&!/USDT$/.test(s))s+="USDT";if(state.wl.indexOf(s)<0)state.wl.push(s)}if(body.remove)state.wl=state.wl.filter(function(x){return x!==body.remove});["sel","tf","ob_tf","vob_tf","poc_days","poc_tf","show_imb","show_sbr","show_shl"].forEach(function(k){if(body[k]!==undefined)state[k]=body[k]});if(body.sbr)state.sbr[body.sbr.symbol]=body.sbr.tfs}return state;
+      if(method==="POST"){if(body.add){var s=String(body.add).toUpperCase().replace(/[^A-Z0-9]/g,"");if(s&&!/USDT$/.test(s))s+="USDT";if(state.wl.indexOf(s)<0)state.wl.push(s)}if(body.remove)state.wl=state.wl.filter(function(x){return x!==body.remove});["sel","tf","ob_tf","vob_tf","poc_days","poc_tf","show_imb","show_sbr","show_shl","shl_tf","show_anom"].forEach(function(k){if(body[k]!==undefined)state[k]=body[k]});if(body.sbr)state.sbr[body.sbr.symbol]=body.sbr.tfs}return state;
     }
     if(path==="/api/info/rows")return{rows:Object.keys(market).map(function(s){return{symbol:s,price:market[s][0],chg24:market[s][1],mm:s==="BTCUSDT"?{dir:"SHORT",str:77}:null}})};
     if(path==="/api/info/universe")return{symbols:Object.keys(market).concat(["ADAUSDT","LINKUSDT","AVAXUSDT","TONUSDT"])};

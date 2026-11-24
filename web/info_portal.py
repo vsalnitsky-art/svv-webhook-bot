@@ -617,7 +617,9 @@ def sig_of(payload):
         ((payload.get('shl') or {}).get('high') or {}).get('price'),
         ((payload.get('shl') or {}).get('low') or {}).get('price'),
         *[((payload.get('sbr_last') or {}).get(t) or {}).get('t') for t in SBR_TFS],
-        len((payload.get('vsplit') or {}).get('m') or []) if payload.get('vsplit') else '-'))
+        len((payload.get('vsplit') or {}).get('m') or []) if payload.get('vsplit') else '-',
+        payload.get('shl_tf'), len(payload.get('anom_sig') or []),
+        ((payload.get('anom_sig') or [{}])[-1]).get('t')))
 
 
 def due(kind, rec, now):
@@ -1203,8 +1205,65 @@ def rows_for(symbols, sc=None):
     return rows
 
 
+# ── ⚠ Сигнали «Аномалії обсягу» на графіку кабінету (вимога 24.11) ───────
+# Той самий сигнал, що йде в Telegram (готовий сценарій входу ШІ). Рушій ШІ
+# фіксує його по кожній монеті, яку веде (Пружини · підписки · графіки з
+# увімкненим шаром ⚠). Монета з відкритого графіка ведеться ANOM_CHART_IDLE
+# після останнього запиту; позначки зʼявляються з моменту, як її почали вести.
+ANOM_CHART_IDLE = IDLE_SEC
+ANOM_CHART_MAX = 60
+_anom_chart = {}
+
+
+def anom_chart_want(sym, now=None):
+    now = time.time() if now is None else now
+    S = norm_symbol(sym)
+    if not valid_symbol(S):
+        return
+    with _lock:
+        _anom_chart[S] = now
+        if len(_anom_chart) > ANOM_CHART_MAX * 2:
+            for k, _t in sorted(_anom_chart.items(), key=lambda x: x[1])[:len(_anom_chart) - ANOM_CHART_MAX]:
+                _anom_chart.pop(k, None)
+
+
+def anom_chart_symbols(now=None):
+    """[SYM…] графіків кабінету з увімкненим шаром ⚠ (останні ANOM_CHART_IDLE)."""
+    now = time.time() if now is None else now
+    with _lock:
+        live = [(k, t) for k, t in _anom_chart.items() if now - t <= ANOM_CHART_IDLE]
+    live.sort(key=lambda x: -x[1])
+    return [k for k, _t in live[:ANOM_CHART_MAX]]
+
+
+def anom_marks_of(sym, ohlc=None):
+    """⚠ позначки монети з рушія ШІ (памʼять), лише в межах графіка."""
+    import sys
+    m = sys.modules.get('detection.ai_signals')
+    try:
+        eng = m.get_ai_engine() if m is not None else None
+        marks = eng.anom_marks(sym) if eng is not None else []
+    except Exception:
+        marks = []
+    t0 = (ohlc or [{}])[0].get('time') if ohlc else None
+    out = []
+    for x in marks or []:
+        try:
+            t = int(x.get('t') or 0)
+        except (TypeError, ValueError):
+            continue
+        if t0 is not None and int(x.get('at') or t) < t0:
+            continue
+        # ct — момент СПРАЦЮВАННЯ (коли рушій побачив готовий сценарій): позначка
+        # стоїть на свічці графіка, де сигнал спрацював (як SBR, правило 10.11)
+        out.append({'t': t, 'ct': int(x.get('at') or t), 'side': x.get('side'), 'name': x.get('name') or '',
+                    'key': x.get('key') or '', 'px': x.get('px'), 'score': x.get('score'),
+                    'stages': list(x.get('stages') or [])[:6], 'adir': x.get('adir')})
+    return out
+
+
 def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, poc_tf=None,
-                 hl_tf=None, vol=False, sbr_tf=None):
+                 hl_tf=None, vol=False, sbr_tf=None, shl_tfv=None, anom=False):
     sc = sc or _scanner()
     sym = norm_symbol(sym)
     if not sc:
@@ -1222,14 +1281,22 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
     vol = bool(vol)
     sbr_tf = sbr_tf_norm(sbr_tf)
     sbr_eff = tf if sbr_tf == SBR_CHART else sbr_tf       # TF, на якому рахуємо SBR
-    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf, hl_tf, _vp['on'], _vp['pk'], vol, sbr_eff)
+    # 🏁 High/Low — свій TF кабінету (24.11); без вибору — як у боті
+    _shl_tf = norm_tf(shl_tfv, HL_TFS, shl_tf(sc))
+    # ⚠ сигнали «Аномалії обсягу» на графіку (24.11): монету веде рушій ШІ, поки
+    # графік відкрито з увімкненим шаром
+    anom = bool(anom)
+    if anom:
+        anom_chart_want(sym)
+    ck = (sym, tf, ob_tf, vob_tf, poc_days, poc_tf, hl_tf, _vp['on'], _vp['pk'], vol, sbr_eff,
+          _shl_tf, anom)
     now = time.time()
     with _lock:
         hit = _coin_cache.get(ck)
     if hit and now - hit[0] < COIN_TTL:
         # частини все одно «просимо», інакше кеш потоку їх забуде
         for k, t in (('bars', tf), ('ob', ob_tf), ('vob', vob_tf if _vp['on'] else OFF),
-                     ('shl', shl_tf(sc)), ('imb', tf),
+                     ('shl', _shl_tf), ('imb', tf),
                      ('hl', hl_tf), ('vol', tf if vol else OFF),
                      ('sbr', sbr_eff if sbr_eff != tf else OFF)):
             if t != OFF and _bot_part(sc, k, sym, t) is None:
@@ -1279,7 +1346,6 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         reason = '⏳ завантаження барів ' + tf.upper()
     else:
         reason = '⏳ монети немає в боті — рахуємо окремо, кілька секунд'
-    _shl_tf = shl_tf(sc)
     _shd, _e = part(sc, 'shl', sym, _shl_tf)
     shl = shl_view((_shd or {}).get('levels'), _shl_tf)
     sbr_last = {}
@@ -1302,7 +1368,8 @@ def coin_payload(sym, sc=None, tf=None, ob_tf=None, vob_tf=None, poc_days=None, 
         'sbr_last': sbr_last,
         'ob': ob, 'vob': vob, 'ob_wait': ob_wait, 'vob_wait': vob_wait,
         'pd': _pd(sc, sym), 'poc': poc, 'poc_state': _st, 'shl': shl, 'ts': now,
-        'vsplit': vsplit, 'vol_wait': vol_wait,
+        'vsplit': vsplit, 'vol_wait': vol_wait, 'shl_tf': _shl_tf,
+        'anom_sig': anom_marks_of(sym, ohlc) if anom else [],
     }
     payload['sig'] = sig_of(payload)
     if not ohlc or ob_wait or vob_wait or hl_wait or vol_wait or sbr_wait:
@@ -1361,13 +1428,27 @@ def user_info(prefs, uni, dfl=None):
             'show_imb': bool(info.get('show_imb', True)),
             'show_sbr': bool(info.get('show_sbr', True)),
             'show_shl': bool(info.get('show_shl', True)),
+            'shl_tf': norm_tf(info.get('shl_tf'), HL_TFS, '1h'),
+            # ⚠ сигнали «Аномалії обсягу» на графіку (24.11, деф. вимк.)
+            'show_anom': bool(info.get('show_anom', False)),
             # ⚪ POC: вікно (днів) і TF — свої для кабінету (деф. 7 днів · 1H)
             'poc_days': poc_norm(info.get('poc_days'), info.get('poc_tf'))[0],
             'poc_tf': poc_norm(info.get('poc_days'), info.get('poc_tf'))[1],
             # 🔔 особисті SBR-сповіщення в Telegram (вимога 09.11)
             'sbr': sbr_norm(info.get('sbr'), wl),
             # ⚠ особисті сповіщення «Аномалії обсягу» (вимога 18.11)
-            'anom': anom_norm(info.get('anom'), wl)}
+            'anom': anom_norm(info.get('anom'), wl),
+            # ⚠ вигляд повідомлення: коротке (деф.) | повне (вимога 24.11)
+            'anom_fmt': anom_fmt_norm(info.get('anom_fmt'))}
+
+
+ANOM_FMTS = ('short', 'full')
+
+
+def anom_fmt_norm(v):
+    """ЧИСТА: формат ⚠ сповіщення — 'short' (деф., лише головне) | 'full'."""
+    v = str(v or '').strip().lower()
+    return v if v in ANOM_FMTS else 'short'
 
 
 def apply_change(cur, body, uni):
@@ -1407,7 +1488,9 @@ def apply_change(cur, body, uni):
         out['hl_tf'] = norm_tf(body.get('hl_tf'), HL_TFS, cur.get('hl_tf') or OFF, allow_off=True)
     if 'sbr_tf' in body:
         out['sbr_tf'] = sbr_tf_norm(body.get('sbr_tf'))
-    for k in ('show_imb', 'show_sbr', 'show_shl'):
+    if 'shl_tf' in body:
+        out['shl_tf'] = norm_tf(body.get('shl_tf'), HL_TFS, cur.get('shl_tf') or '1h')
+    for k in ('show_imb', 'show_sbr', 'show_shl', 'show_anom'):
         if k in body:
             out[k] = bool(body.get(k))
     if 'poc_days' in body or 'poc_tf' in body:
@@ -1429,6 +1512,8 @@ def apply_change(cur, body, uni):
         if S in wl:
             anom = [x for x in anom if x != S] + ([S] if body['anom'].get('on') else [])
     out['anom'] = anom_norm(anom, wl)
+    if 'anom_fmt' in body:
+        out['anom_fmt'] = anom_fmt_norm(body.get('anom_fmt'))
     out['wl'], out['sel'] = wl, sel
     return out, err
 
@@ -1570,8 +1655,8 @@ def anom_subs_invalidate():
 def anom_symbols(subs=None):
     """ЧИСТА над підписками: монети ⚠ сповіщень (без дублів, стеля)."""
     out = []
-    for _c, sub in (anom_subs() if subs is None else subs) or []:
-        for S in anom_norm(sub):
+    for x in (anom_subs() if subs is None else subs) or []:
+        for S in anom_norm(x[1]):
             if S not in out:
                 out.append(S)
     return out[:ANOM_SUB_MAX]
@@ -1579,13 +1664,35 @@ def anom_symbols(subs=None):
 
 def anom_recipients(subs, symbol):
     """ЧИСТА: [chat_id…] — хто підписаний на ⚠ по цій монеті."""
+    return [c for c, _f in anom_recipients_fmt(subs, symbol)]
+
+
+def anom_recipients_fmt(subs, symbol):
+    """ЧИСТА: [(chat_id, формат)…] — підписники монети з їхнім форматом
+    повідомлення (запис без формату = коротке)."""
     S = norm_symbol(symbol)
-    return [str(c) for c, sub in (subs or []) if S in anom_norm(sub)]
+    out = []
+    for x in subs or []:
+        c, sub = x[0], x[1]
+        if S in anom_norm(sub):
+            out.append((str(c), anom_fmt_norm(x[2] if len(x) > 2 else None)))
+    return out
+
+
+def anom_text_for(text, fmt):
+    """ЧИСТА: текст під формат: `text` — рядок (один на всіх) або
+    {'short': …, 'full': …}. Повне несе підпис «з кабінету»."""
+    if isinstance(text, dict):
+        if fmt == 'full':
+            return '👤 <i>Ваш сигнал з кабінету</i>\n' + (text.get('full') or text.get('short') or '')
+        return text.get('short') or text.get('full') or ''
+    return '👤 <i>Ваш сигнал з кабінету</i>\n' + str(text or '')
 
 
 def anom_personal_send(symbol, text):
-    """Розіслати ⚠ сигнал монети підписникам. → (надіслано, помилок)."""
-    rc = anom_recipients(anom_subs(), symbol)
+    """Розіслати ⚠ сигнал монети підписникам (кожному — у його форматі).
+    → (надіслано, помилок)."""
+    rc = anom_recipients_fmt(anom_subs(), symbol)
     if not rc:
         return 0, 0
     try:
@@ -1593,9 +1700,9 @@ def anom_personal_send(symbol, text):
     except Exception:
         return 0, len(rc)
     ok = bad = 0
-    for chat in rc:
+    for chat, fmt in rc:
         try:
-            if tg_send(chat, '👤 <i>Ваш сигнал з кабінету</i>\n' + text):
+            if tg_send(chat, anom_text_for(text, fmt)):
                 ok += 1
             else:
                 bad += 1
@@ -2411,6 +2518,8 @@ def register_info_portal(app):
         p = coin_payload(a.get('symbol') or '', tf=a.get('tf'), ob_tf=a.get('ob_tf'),
                          vob_tf=a.get('vob_tf'), poc_days=a.get('poc_days'),
                          poc_tf=a.get('poc_tf'), hl_tf=a.get('hl_tf'), sbr_tf=a.get('sbr_tf'),
+                         shl_tfv=a.get('shl_tf'),
+                         anom=str(a.get('anom') or '') in ('1', 'true') and bool(pm.get('ly_anom')),
                          vol=str(a.get('vol') or '') in ('1', 'true') and bool(pm.get('ly_vol')))
         # 🛡 заборонені шари не віддаємо (кеш спільний — ріжемо копію); набір прав
         # входить у сигнатуру, щоб зміна прав одразу перемалювала графік

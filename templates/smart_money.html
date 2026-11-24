@@ -5012,6 +5012,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
             <label class="sm-checkbox" title="💥 «Старт розряду» (E2) — лише ПІДТВЕРДЖЕНИЙ: пробій 24-год коробки має закритись 1h-свічкою, і ще N закритих свічок мусять утримати ціну за межею. Пробій лише на живій (незакритій) свічці або повернення в коробку = хибний старт, угоду не відкриваємо."><input type="checkbox" id="aip-dis-on" onchange="aipSave()"> 💥 розряд лише підтверджений</label>
+            <label class="sm-checkbox" title="📦 Друге підтвердження розряду: самий ОСТАННІЙ Volumized OB на 1H (той самий детектор і параметри «📦 Volumized OB Trend», свічки з живою — як на графіку) мусить бути в бік, куди стартував розряд, і не зламаний. Останнього VOB 1H немає, він проти розряду або став breaker → угоду не відкриваємо."><input type="checkbox" id="aip-dis-vob1h" onchange="aipSave()"> 📦 + останній VOB 1H у бік розряду</label>
             <label title="TF, закриттям свічок якого підтверджується розряд. Рівень пробою — завжди межа 24-год коробки 1h (як і сама Пружина). 1H — надійніше, вхід до ~1-2 год пізніше; 15m — вхід на 30-45 хв раніше, але більше хибних стартів; 5m CHoCH+BOS — напрямок і сигнал дає внутрішня структура 5m: CHoCH у бік розряду, далі BOS, і свічка BOS закрилась за межею коробки 1h (CHoCH усередині коробки — шум, не сигнал); структура розвернулась після BOS — хибний старт. Вихід на хибному старті — завжди за закриттям 1h. Обидва варіанти бот веде в тіньовій статистиці нижче.">підтвердження <select id="aip-dis-tf" onchange="aipSave()"><option value="1h">1H (закриття)</option><option value="15m">15m (закриття)</option><option value="5m">5m CHoCH+BOS (структура)</option></select></label>
             <label id="aip-dis-bars-l" title="Скільки закритих 1h-свічок після пробою мусять утримати ціну за межею коробки">утримати ≥ <input type="number" id="aip-dis-bars" min="1" max="4" step="1" style="width:42px" onchange="aipSave()"> св. 1H</label>
             <label id="aip-dis-bars15-l" title="Скільки закритих 15m-свічок після пробою мусять утримати ціну за межею коробки 1h">утримати ≥ <input type="number" id="aip-dis-bars15" min="1" max="8" step="1" style="width:42px" onchange="aipSave()"> св. 15m</label>
@@ -7007,7 +7008,10 @@ function _aiDisLine(c) {
         + alts.map(a => '\n' + nm(a.tf) + ' (тінь): ' + ((_AI_DIS[a.state] || [a.state])[0]) + (a.note ? ' — ' + a.note : '')).join('');
     const altTxt = alts.filter(a => _AI_DIS[a.state]).map(a => ` <span style="color:#6b7280">· ${a.tf === '5m' ? '5M' : (a.tf === 'vob' ? 'VOB' : (a.tf === 'vobl' ? 'VOB↻' : String(a.tf).toUpperCase()))}:${a.state === 'confirmed' ? '✓' : (a.state === 'false' ? '🪤' : '⏳')}</span>`).join('');
     const pend = ds.state === 'pending' && ds.tf !== '5m' ? ' ' + (ds.held || 0) + '/' + (ds.need || 1) : '';
-    return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t} <b>${nm(ds.tf || '1h')}</b>${pend}${altTxt}</div>`;
+    // 📦 друге підтвердження — самий останній VOB 1H у бік розряду
+    const v1 = ds.vob1h;
+    const v1Txt = v1 ? ` <span style="color:${v1.ok ? '#4ade80' : '#f87171'}" title="📦 ${String(v1.note || '').replace(/"/g, '&quot;')}">· VOB1H:${v1.ok ? '✓' : (v1.side ? (v1.breaker ? '✕' : (v1.side === 'LONG' ? '▲' : '▼')) : '—')}</span>` : '';
+    return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t} <b>${nm(ds.tf || '1h')}</b>${pend}${v1Txt}${altTxt}</div>`;
 }
 // 🏆🧠 Вердикт ГОЛОВНОГО МОЗКУ (база еталонів) для монети.
 function _aiEtalonCell(e) {
@@ -7111,7 +7115,7 @@ function aipApply(d) {
         vl('aip-min-charge', a.min_charge); vl('aip-book', a.book); vl('aip-max-open', a.max_open);
         vl('aip-max-30', a.max_per_30m); vl('aip-flip', a.flip_cooldown_min); vl('aip-slfb', a.sl_fallback_pct);
         vl('aip-exit-mode', a.exit_mode); vl('aip-hold', a.hold_pot); vl('aip-et-r', a.etalon_min_r);
-        ck('aip-sl-on', a.sl_enabled); ck('aip-dis-on', a.discharge_confirm !== false); ck('aip-fs-exit', a.false_start_exit !== false); ck('aip-exh-exit', a.exh_exit !== false);
+        ck('aip-sl-on', a.sl_enabled); ck('aip-dis-on', a.discharge_confirm !== false); ck('aip-dis-vob1h', a.discharge_vob1h !== false); ck('aip-fs-exit', a.false_start_exit !== false); ck('aip-exh-exit', a.exh_exit !== false);
         vl('aip-dis-bars', a.discharge_bars); vl('aip-dis-bars15', a.discharge_bars_15m);
         vl('aip-dis-tf', a.discharge_tf || '1h'); vl('aip-rdy', a.rdy_filter || 'off');
         vl('aip-sl-src', a.sl_source); vl('aip-sl-min', a.sl_min_pct); vl('aip-sl-max', a.sl_max_pct); vl('aip-min-conf', a.min_conf);
@@ -7172,7 +7176,7 @@ function _aipSlSync() {
     const l1 = document.getElementById('aip-dis-bars-l'), l15 = document.getElementById('aip-dis-bars15-l');
     if (l1) l1.style.display = tf === '1h' ? '' : 'none';
     if (l15) l15.style.display = tf === '15m' ? '' : 'none';
-    ['aip-dis-bars', 'aip-dis-bars15', 'aip-dis-tf'].forEach(id => {
+    ['aip-dis-bars', 'aip-dis-bars15', 'aip-dis-tf', 'aip-dis-vob1h'].forEach(id => {
         const e = document.getElementById(id);
         if (e) { e.disabled = !dc; e.style.opacity = dc ? '' : '0.4'; }
     });
@@ -7228,7 +7232,7 @@ async function aipSave() {
         book: (g('aip-book') || {}).value || 'auto', max_open: n('aip-max-open', 5),
         max_per_30m: n('aip-max-30', 3), flip_cooldown_min: n('aip-flip', 180), hold_pot: n('aip-hold', 40),
         sl_fallback_pct: n('aip-slfb', 2), sl_source: (g('aip-sl-src') || {}).value || 'ob',
-        sl_enabled: !!(g('aip-sl-on') || {}).checked, discharge_confirm: !!(g('aip-dis-on') || {}).checked,
+        sl_enabled: !!(g('aip-sl-on') || {}).checked, discharge_confirm: !!(g('aip-dis-on') || {}).checked, discharge_vob1h: !!(g('aip-dis-vob1h') || {}).checked,
         discharge_bars: n('aip-dis-bars', 1), false_start_exit: !!(g('aip-fs-exit') || {}).checked,
         exh_exit: !!(g('aip-exh-exit') || {}).checked,
         discharge_tf: (g('aip-dis-tf') || {}).value || '1h', discharge_bars_15m: n('aip-dis-bars15', 2),

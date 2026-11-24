@@ -226,7 +226,7 @@
      кожне право сам; тут лише ховаємо розділи / кнопки без доступу.
      Поки права ще не прийшли — нічого не ховаємо (PERMS = null). */
   var PERMS = null;
-  var PERM_KEYS = ["sec_terminal", "sec_signals", "sec_paper", "ly_struct", "ly_ob", "ly_vob", "ly_imb", "ly_sbr", "ly_hl",
+  var PERM_KEYS = ["sec_terminal", "sec_signals", "sec_paper", "ly_struct", "ly_ob", "ly_vob", "ly_imb", "ly_sbr", "ly_anom", "ly_hl",
                    "ly_poc", "ly_shl", "ly_pd", "ly_vol", "ly_liq", "ntf_sbr", "ntf_anom", "trade_paper", "trade_real"];
   function pOk(k) { return !PERMS || PERMS[k] !== false; }
   function permSig(p) { return PERM_KEYS.map(function (k) { return p && p[k] === false ? "0" : "1"; }).join(""); }
@@ -466,13 +466,13 @@
   var POC_TFS = ["15m", "1h", "4h"];
   var IW = { wl: [], sel: "", rows: {}, max: 20, sig: "", coin: null, chart: null, series: null,
              prim: null, pocLine: null, chartKey: "", universe: [],
-             tf: "15m", ob_tf: "1h", vob_tf: "5m", hl_tf: "off", sbr_tf: "chart", poc_days: 7, poc_tf: "1h", show_imb: true, show_sbr: true, show_shl: true,
+             tf: "15m", ob_tf: "1h", vob_tf: "5m", hl_tf: "off", sbr_tf: "chart", poc_days: 7, poc_tf: "1h", show_imb: true, show_sbr: true, show_shl: true, shl_tf: "1h", show_anom: false,
              sbr: {}, anom: [], tg_linked: true, bellOpen: "" };
   var SBR_TFS = ["15m", "30m", "45m", "1h", "4h", "1d"];   // TF особистих 🔔 підписок (17.11: усі TF рушія; сервер шле sbr_tfs)
   var SBR_MARK_PX = 14;                 // розмір позначки S/B на графіку (css px)
   /* 🔔 SBR на графіку — на ВСІХ TF графіка (вимога 16.11): «chart» = TF графіка. */
   var SBR_CHART_TFS = ["15m", "30m", "1h", "4h", "1d"];
-  function iwKey(o) { o = o || IW; return [o.sel, o.tf, o.ob_tf, o.vob_tf, o.poc_days, o.poc_tf, o.hl_tf, o.sbr_tf].join("|"); }
+  function iwKey(o) { o = o || IW; return [o.sel, o.tf, o.ob_tf, o.vob_tf, o.poc_days, o.poc_tf, o.hl_tf, o.sbr_tf, o.shl_tf, o.show_anom ? 1 : 0].join("|"); }
   function sbrTfOk(tf) { return SBR_TFS.indexOf(String(tf || "").toLowerCase()) >= 0; }
   function sbrEff() { return IW.sbr_tf && IW.sbr_tf !== "chart" ? IW.sbr_tf : IW.tf; }
   function sbrCtl() {
@@ -692,7 +692,11 @@
             return '<label><input type="checkbox" data-belltf="' + tf + '"' + (tfs.indexOf(tf) >= 0 ? " checked" : "") + "> " + tf.toUpperCase() + "</label>";
           }).join("") + "</div>" : "") +
           (okA ? '<div class="t t2">⚠ Аномалії обсягу</div>' +
-          '<label class="iw-bell-anom" title="Сигнал, найближчий до моменту входу: по монеті склався сценарій входу ШІ (комплекс реакцій обсягу — виснаження/поглинання/продовження — підтверджено, точка свіжа ≤ 2 свічки, а напрямок аномалій за 6 год не проти)."><input type="checkbox" data-bellanom="1"' + (an ? " checked" : "") + "> сценарій входу (LONG / SHORT)</label>" : "") +
+          '<label class="iw-bell-anom" title="Сигнал, найближчий до моменту входу: по монеті склався сценарій входу ШІ (комплекс реакцій обсягу — виснаження/поглинання/продовження — підтверджено, точка свіжа ≤ 2 свічки, а напрямок аномалій за 6 год не проти)."><input type="checkbox" data-bellanom="1"' + (an ? " checked" : "") + '><span class="iw-bell-anom-t">сценарій входу<small>LONG / SHORT</small></span></label>' +
+          (an ? '<div class="iw-bell-fmt" title="Вигляд повідомлення в Telegram (для всіх монет): коротке — лише бік, монета, ціна й сценарій; повне — ще й етапи сценарію та напрямок аномалій за 6 год.">' +
+            ["short", "full"].map(function (f) {
+              return '<button type="button" data-bellanomfmt="' + f + '" class="' + ((IW.anom_fmt || "short") === f ? "on" : "") + '">' + (f === "short" ? "коротке" : "повне") + "</button>";
+            }).join("") + "</div>" : "") : "") +
           (okT
             ? '<div class="t t2">🤖 Торгівля за сигналом ⚠</div><div class="iw-bell-trade"><label title="Новий сценарій входу ⚠ → угода: немає угоди — відкрити · той самий бік — нічого · протилежний — закрити поточну і відкрити нову"><input type="checkbox" data-belltrade="1"' + (trd ? " checked" : "") + "> торгувати</label>" +
                 (trd ? trBookSel(sym, "data-belltradebook") : "") + "</div>" +
@@ -741,8 +745,17 @@
       (pOk("ly_imb") ? '<button type="button" data-layer="show_imb" class="ly-imb ' + (IW.show_imb ? "on" : "") + '" title="IMB">IMB</button>' : "") +
       (pOk("ly_hl") ? hlCtl() : "") +
       (pOk("ly_sbr") ? sbrCtl() : "") +
-      (pOk("ly_shl") ? '<button type="button" data-layer="show_shl" class="ly-shl ' + (IW.show_shl ? "on" : "") + '" title="High/Low">High/Low</button>' : "");
+      (pOk("ly_shl") ? shlCtl() : "") +
+      (pOk("ly_anom") ? '<button type="button" data-layer="show_anom" class="ly-anom ' + (IW.show_anom ? "on" : "") + '" title="⚠ Аномалії обсягу — сигнали входу (той самий сигнал, що в Telegram): B — LONG, S — SHORT. Позначки зʼявляються з моменту, як монету почали вести (графік відкрито з цим шаром, або монета в Пружинах / підписках).">⚠ Сигнали</button>' : "");
     liqUi();
+  }
+
+  // 🏁 High/Low + вибір TF (24.11, як у HH/HL і SBR).
+  function shlCtl() {
+    var on = !!IW.show_shl;
+    return '<span class="iw-sel s-shl"><button type="button" data-layer="show_shl" class="ly-shl ' + (on ? "on" : "") + '" title="High/Low — Strong/Weak High і Low дилінг-діапазону">High/Low</button>' +
+      '<select id="iw-shl-tf" title="Таймфрейм High/Low" aria-label="Таймфрейм High/Low"' + (on ? "" : " disabled") + ">" +
+      HL_TFS.map(function (tf) { return '<option value="' + tf + '"' + (tf === IW.shl_tf ? " selected" : "") + ">" + tfLbl(tf) + "</option>"; }).join("") + "</select></span>";
   }
 
   // 📈 Кнопка HH/HL + вибір TF (поруч з IMB). Вимкнено = hl_tf "off" (сервер не рахує).
@@ -757,7 +770,7 @@
   function applyMine(d) {
     if (!d) return;
     IW.wl = d.wl || []; IW.max = d.max || IW.max;
-    var changed = iwKey({ sel: d.sel, tf: d.tf || IW.tf, ob_tf: d.ob_tf || IW.ob_tf, vob_tf: d.vob_tf || IW.vob_tf, poc_days: d.poc_days || IW.poc_days, poc_tf: d.poc_tf || IW.poc_tf, hl_tf: d.hl_tf || IW.hl_tf, sbr_tf: d.sbr_tf || IW.sbr_tf }) !== iwKey();
+    var changed = iwKey({ sel: d.sel, tf: d.tf || IW.tf, ob_tf: d.ob_tf || IW.ob_tf, vob_tf: d.vob_tf || IW.vob_tf, poc_days: d.poc_days || IW.poc_days, poc_tf: d.poc_tf || IW.poc_tf, hl_tf: d.hl_tf || IW.hl_tf, sbr_tf: d.sbr_tf || IW.sbr_tf, shl_tf: d.shl_tf || IW.shl_tf, show_anom: typeof d.show_anom === "boolean" ? d.show_anom : IW.show_anom }) !== iwKey();
     IW.sel = d.sel || "";
     if (d.tf) IW.tf = d.tf;
     if (d.ob_tf) IW.ob_tf = d.ob_tf;
@@ -769,8 +782,11 @@
     if (typeof d.show_imb === "boolean") IW.show_imb = d.show_imb;
     if (typeof d.show_sbr === "boolean") IW.show_sbr = d.show_sbr;
     if (typeof d.show_shl === "boolean") IW.show_shl = d.show_shl;
+    if (d.shl_tf) IW.shl_tf = d.shl_tf;
+    if (typeof d.show_anom === "boolean") IW.show_anom = d.show_anom;
     if (d.sbr && typeof d.sbr === "object") IW.sbr = d.sbr;
     if (Array.isArray(d.anom)) IW.anom = d.anom.slice();
+    if (d.anom_fmt) IW.anom_fmt = d.anom_fmt;
     if (Array.isArray(d.sbr_tfs) && d.sbr_tfs.length) SBR_TFS = d.sbr_tfs.slice();
     if (typeof d.tg_linked === "boolean") IW.tg_linked = d.tg_linked;
     if (d.perms) applyPerms(d.perms);
@@ -820,6 +836,15 @@
       IW.bellOpen = IW.bellOpen === bs ? "" : bs;
       renderList(); return;
     }
+    var fb = e.target.closest("[data-bellanomfmt]");
+    if (fb) {
+      e.stopPropagation();
+      var fsym = fb.closest("[data-bellmenu]").getAttribute("data-bellmenu");
+      IW.anom_fmt = fb.getAttribute("data-bellanomfmt");
+      renderList();
+      saveMine({ anom_fmt: IW.anom_fmt }).then(function () { IW.bellOpen = fsym; renderList(); });
+      return;
+    }
     if (e.target.closest("[data-bellmenu]")) { e.stopPropagation(); return; }
     if (IW.bellOpen) { IW.bellOpen = ""; renderList(); }
   }, true);
@@ -860,7 +885,8 @@
     if (lyr) {
       var k = lyr.getAttribute("data-layer");
       IW[k] = !IW[k]; renderTfBar();
-      if (IW.coin) drawCoin(IW.coin, false);
+      if (k === "show_anom") { IW.sig = ""; loadCoin(false, true); }   // сигнали ⚠ просимо в сервера лише з увімкненим шаром
+      else if (IW.coin) drawCoin(IW.coin, false);
       var b = {}; b[k] = IW[k]; saveMine(b); return;
     }
     var del = e.target.closest ? e.target.closest("[data-del]") : null;
@@ -876,7 +902,7 @@
 
   document.addEventListener("change", function (e) {
     var id = e.target && e.target.id;
-    var MAP = { "iw-ob-tf": "ob_tf", "iw-vob-tf": "vob_tf", "iw-hl-tf": "hl_tf", "iw-sbr-tf": "sbr_tf", "iw-poc-days": "poc_days", "iw-poc-tf": "poc_tf" };
+    var MAP = { "iw-ob-tf": "ob_tf", "iw-vob-tf": "vob_tf", "iw-hl-tf": "hl_tf", "iw-sbr-tf": "sbr_tf", "iw-shl-tf": "shl_tf", "iw-poc-days": "poc_days", "iw-poc-tf": "poc_tf" };
     var k = MAP[id]; if (!k) return;
     IW[k] = k === "poc_days" ? Number(e.target.value) : e.target.value; IW.sig = "";
     if (k === "ob_tf" || k === "vob_tf" || k === "hl_tf") tfLastSet(k, e.target.value);
@@ -1322,7 +1348,7 @@
         });
         ctx.textAlign = "left"; ctx.textBaseline = "alphabetic"; self._hits = [];
         marks.forEach(function (m) {
-          var s = m.s, x = m.x, cy = m.cy, x0 = m.x0, y0 = m.y0, col = s.side === "SHORT" ? "#f23645" : "#22c55e";
+          var s = m.s, x = m.x, cy = m.cy, x0 = m.x0, y0 = m.y0, col = s.kind === "anom" ? (s.side === "SHORT" ? ANOM_SHORT : ANOM_LONG) : (s.side === "SHORT" ? "#f23645" : "#22c55e");
           _rrect(ctx, x0 * hr, y0 * vr, bs * hr, bs * vr, 3 * vr); ctx.fillStyle = col; ctx.fill();
           ctx.strokeStyle = dark ? "rgba(255,255,255,.35)" : "rgba(0,0,0,.25)"; ctx.lineWidth = Math.max(1, Math.round(hr)); ctx.stroke();
           ctx.beginPath();
@@ -1526,12 +1552,29 @@
     return out;
   }
 
+  /* ⚠ 24.11: сигнали «Аномалії обсягу» — та сама позначка B/S, що SBR, лише
+     ІНШОГО кольору; стоїть на свічці графіка, де сигнал спрацював (ct). */
+  var ANOM_LONG = "#38bdf8", ANOM_SHORT = "#f59e0b";
+  function anomOf(c) {
+    if (!IW.show_anom) return [];
+    var o = c.ohlc || [], byT = {}, out = [];
+    if (!o.length) return [];
+    o.forEach(function (b) { byT[b.time] = b; });
+    (c.anom_sig || []).forEach(function (s) {
+      var ct = s.ct || s.t; if (ct < o[0].time) return;
+      var t = snapSec(ct, o), bar = byT[t]; if (!bar) return;
+      out.push(Object.assign({ hi: bar.high, lo: bar.low, close: bar.close }, s, { t: t, kind: "anom" }));
+    });
+    return out;
+  }
+
   function sigCard(s, x, y) {
     var box = $("#iw-box"), el = $("#iw-sig");
     if (!box) return;
     if (!el) { el = document.createElement("div"); el.id = "iw-sig"; el.className = "iw-sig"; box.appendChild(el); sigDragInit(el, box); }
     if (!s) { el.style.display = "none"; IW.sigSel = null; sigArrow(); return; }
-    IW.sigSel = { t: s.t, side: s.side };
+    IW.sigSel = { t: s.t, side: s.side, kind: s.kind || "" };
+    if (s.kind === "anom") { anomCard(el, box, s, x, y); return; }
     var S = s.side === "SHORT", ct = sct(s), dd = ct ? locDM(ct) : "", slPct = s.sl && s.close ? Math.abs(s.sl / s.close - 1) * 100 : null;
     var row = function (k, v, cls) { return '<div class="r"><span>' + k + '</span><b class="' + (cls || "") + '">' + v + "</b></div>"; };
     var sc = s.score != null ? Number(s.score) : null, scCls = sc == null ? "" : (sc >= 85 ? "v-hi" : (sc >= 65 ? "v-mid" : "v-lo"));
@@ -1543,7 +1586,24 @@
       '<div class="r"><span>Score<small>(сила)</small></span><b class="' + scCls + '">' + (sc != null ? sc.toFixed(2) + "%" : "—") + "</b></div>" +
       row("Ризик", esc(s.risk || "—"), "v-risk") +
       row("SL", fmtPrice(s.sl) + (slPct != null ? ' <i>' + slPct.toFixed(2) + "%</i>" : ""), "v-sl");
-    el.classList.toggle("is-short", S); el.classList.toggle("is-long", !S); el.style.display = "block";
+    el.classList.toggle("is-short", S); el.classList.toggle("is-long", !S); el.classList.remove("is-anom"); el.style.display = "block";
+    var bw = box.clientWidth, bh = box.clientHeight, ew = el.offsetWidth, eh = el.offsetHeight;
+    var left = Math.min(Math.max(8, x + 14), bw - ew - 8), top = Math.min(Math.max(8, y - eh / 2), bh - eh - 8);
+    el.style.left = left + "px"; el.style.top = top + "px"; sigArrowLoop();
+  }
+
+  function anomCard(el, box, s, x, y) {
+    var S = s.side === "SHORT", ct = s.ct || s.t;
+    var row = function (k, v, cls) { return '<div class="r"><span>' + k + '</span><b class="' + (cls || "") + '">' + v + "</b></div>"; };
+    el.innerHTML =
+      '<div class="h ' + (S ? "short" : "long") + '"><span class="tag">' + (S ? "S" : "B") + "</span>" + (S ? "SHORT" : "LONG") +
+      '<span class="tf">⚠ Аномалії · ' + esc(locDM(ct)) + " " + esc(locHM(ct)) + "</span>" +
+      '<button class="x" aria-label="Закрити">×</button></div>' +
+      row("Сценарій", esc(s.name || "—")) +
+      row("Ціна", s.px ? fmtPrice(s.px) : "—", "v-trg") +
+      (s.adir ? row("Аномалії 6 год", (s.adir === "LONG" ? "▲ " : "▼ ") + esc(s.adir)) : "") +
+      ((s.stages || []).length ? '<div class="r st"><span>Етапи</span><b>' + s.stages.map(function (x) { return "✓ " + esc(x); }).join("<br>") + "</b></div>" : "");
+    el.classList.toggle("is-short", S); el.classList.toggle("is-long", !S); el.classList.add("is-anom"); el.style.display = "block";
     var bw = box.clientWidth, bh = box.clientHeight, ew = el.offsetWidth, eh = el.offsetHeight;
     var left = Math.min(Math.max(8, x + 14), bw - ew - 8), top = Math.min(Math.max(8, y - eh / 2), bh - eh - 8);
     el.style.left = left + "px"; el.style.top = top + "px"; sigArrowLoop();
@@ -1553,7 +1613,7 @@
     var sel = IW.sigSel, hits = (IW.prim && IW.prim._hits) || []; if (!sel) return null;
     for (var i = 0; i < hits.length; i++) {
       var h = hits[i], g = h.sig || {};
-      if (g.t === sel.t && g.side === sel.side) return { x: (h.x0 + h.x1) / 2, y: (h.y0 + h.y1) / 2, r: (h.x1 - h.x0) / 2 };
+      if (g.t === sel.t && g.side === sel.side && (g.kind || "") === (sel.kind || "")) return { x: (h.x0 + h.x1) / 2, y: (h.y0 + h.y1) / 2, r: (h.x1 - h.x0) / 2 };
     }
     return null;
   }
@@ -1593,7 +1653,7 @@
     edge.setAttribute("d", "M" + A + " Q" + c1x + "," + c1y + " " + P + " Q" + c2x + "," + c2y + " " + B);
     
     ring.setAttribute("cx", a.x); ring.setAttribute("cy", a.y); ring.setAttribute("r", a.r + 3);
-    var S = IW.sigSel && IW.sigSel.side === "SHORT"; svg.classList.toggle("short", S); svg.classList.toggle("long", !S);
+    var S = IW.sigSel && IW.sigSel.side === "SHORT"; svg.classList.toggle("short", S); svg.classList.toggle("long", !S); svg.classList.toggle("anom", !!(IW.sigSel && IW.sigSel.kind === "anom"));
     return true;
   }
 
@@ -1840,7 +1900,8 @@
      Малює РІДНА серія графіка (custom series): прокрутка, масштаб, зміна
      розміру й автошкала — тим самим проходом, що й свічки. */
   var VOL_UP = "0,187,127", VOL_DN = "251,44,54", VOL_NA = "128,138,157", VOL_TOP = 0.82;
-  function volInd(k) { try { return JSON.parse(localStorage.getItem("vsv_chart_indicators") || "{}")[k] !== false; } catch (e) { return true; } }
+  /* 24.11: «Обсяг» / «Аномалії обсягу» на відкритті сторінки ЗАВЖДИ вимкнені (вибір не памʼятаємо — діє, поки вікно відкрите). */
+  function volInd(k) { return false; }
   function volOn() { return volInd("volume"); }
   var VOL = { on: volOn(), anom: volInd("volanom"), chart: null, series: null, plain: false, key: "", srv: {}, sub: 0, fill: false, wait: false, base: null, tape: null, rows: [], idx: {}, hover: null, html: "", sel: null, tm: null };
 
@@ -2323,7 +2384,7 @@
     var lv = [];
     if (c.poc && c.poc.poc) lv.push({ price: Number(c.poc.poc), title: "POC", color: "#f5f5f5" });
     if (c.shl && IW.show_shl) ["high", "low"].forEach(function (k) { var v = c.shl[k]; if (v && v.price > 0) lv.push({ price: Number(v.price), title: (v.label || "") + " " + (c.shl.tf || ""), color: k === "high" ? "#f87171" : "#4ade80" }); });
-    IW.prim.setHl(st.hl); IW.prim.set(boxesOf(c), st.lines, sbrOf(c), lv); setPoc(c.poc); setShl(c.shl);
+    IW.prim.setHl(st.hl); IW.prim.set(boxesOf(c), st.lines, sbrOf(c).concat(anomOf(c)), lv); setPoc(c.poc); setShl(c.shl);
     if (fit || IW.chartKey !== key) { setAutoScale(true); IW.chart.timeScale().fitContent(); IW.chartKey = key; }
     /* Єдиний вигляд завантаження на графіку: будь-який текстовий варіант
        (зокрема reason із бекенду на кшталт «завантаження барів 1H»)
@@ -2353,7 +2414,7 @@
       IW.liveBar = null;
     }
     var want = iwKey();
-    var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf + "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf + "&poc_days=" + IW.poc_days + "&poc_tf=" + IW.poc_tf + "&hl_tf=" + IW.hl_tf + "&sbr_tf=" + IW.sbr_tf + (VOL.on ? "&vol=1" : "") + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
+    var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf + "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf + "&poc_days=" + IW.poc_days + "&poc_tf=" + IW.poc_tf + "&hl_tf=" + IW.hl_tf + "&sbr_tf=" + IW.sbr_tf + "&shl_tf=" + IW.shl_tf + (IW.show_anom ? "&anom=1" : "") + (VOL.on ? "&vol=1" : "") + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
     api(q).then(function (c) {
       if (want !== iwKey() || c.same) return;
       IW.coin = c; IW.sig = c.sig || "";

@@ -1,7 +1,7 @@
 /* TradingView-style indicators and fully editable chart drawings for VSV. */
 (function(){
   "use strict";
-  var T={tool:"cursor",drawings:[],draft:null,svg:null,hint:null,selected:null,edit:null,ind:{ema20:false,ema50:false,ema200:false,volume:true,volanom:true},series:{}};
+  var T={tool:"cursor",drawings:[],draft:null,svg:null,hint:null,selected:null,edit:null,ind:{ema20:false,ema50:false,ema200:false,volume:false,volanom:false},series:{}};
   var STORE="vsv_chart_drawings";
   function clone(v){return JSON.parse(JSON.stringify(v))}
   function esc(s){return String(s).replace(/[&<>"']/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})}
@@ -10,6 +10,8 @@
   function save(){try{localStorage.setItem(STORE,JSON.stringify(T.drawings))}catch(e){}}
   function load(){try{var d=JSON.parse(localStorage.getItem(STORE)||"[]");if(Array.isArray(d))T.drawings=d.filter(function(x){return x&&x.id&&x.symbol&&x.type})}catch(e){}}
   try{var saved=JSON.parse(localStorage.getItem("vsv_chart_indicators")||"null");if(saved)Object.assign(T.ind,saved)}catch(e){}
+  /* 24.11: «Обсяг» і «Аномалії обсягу» — завжди ВИМКНЕНІ на відкритті сторінки, діють лише поки вікно відкрите (вибір не запамʼятовується). */
+  T.ind.volume=false;T.ind.volanom=false;
   load();
   function priceFmt(v){var iw=currentIW(),d=iw&&iw.prec!=null?iw.prec:4;return Number(v).toFixed(Math.min(d,6))}
   function point(iw,e){
@@ -153,7 +155,7 @@
     T.selected=null;activate(T.tool);render();
   }
   function ema(data,n){var out=[],k=2/(n+1),prev=null;data.forEach(function(b,i){var v=i?b.close*k+prev*(1-k):b.close;prev=v;if(i>=n-1)out.push({time:b.time,value:v})});return out}
-  function saveInd(){try{localStorage.setItem("vsv_chart_indicators",JSON.stringify(T.ind))}catch(e){}}
+  function saveInd(){try{var o=Object.assign({},T.ind);delete o.volume;delete o.volanom;localStorage.setItem("vsv_chart_indicators",JSON.stringify(o))}catch(e){}}
   function ensureIndicatorSeries(iw){
     if(T.seriesIW===iw.chart){Object.keys(T.series).forEach(function(k){try{iw.chart.removeSeries(T.series[k])}catch(e){}})}
     T.seriesIW=iw.chart;T.series={};var opts={lastValueVisible:false,priceLineVisible:false,crosshairMarkerVisible:false,lineWidth:1};

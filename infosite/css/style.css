@@ -515,3 +515,8 @@ body{font-size:15px}
 /* 🛡 Права інфосайту (24.11): розділ / кнопка без доступу не показується */
 body.perm-no-sec_terminal .pm-sec_terminal,body.perm-no-sec_signals .pm-sec_signals,body.perm-no-sec_paper .pm-sec_paper,body.perm-no-ly_ob .pm-ly_ob,body.perm-no-ly_vob .pm-ly_vob,body.perm-no-ly_poc .pm-ly_poc,body.perm-no-ly_liq .pm-ly_liq,body.perm-no-ly_vol .pm-ly_vol,body.perm-no-trade .pm-trade{display:none!important}
 .perm-note{margin:14px 0;padding:12px 16px;border:1px solid rgba(250,204,21,.35);border-radius:10px;background:rgba(250,204,21,.06);color:#fbbf24;font-size:.85rem}
+.iw-bell-menu label.iw-bell-anom{align-items:flex-start}.iw-bell-anom input{margin-top:2px}.iw-bell-anom-t{display:flex;flex-direction:column;line-height:1.25}.iw-bell-anom-t small{font:600 11px var(--mono);color:var(--muted);letter-spacing:.02em}
+.iw-bell-fmt{display:inline-flex;margin-top:8px;border:1px solid var(--line);border-radius:6px;overflow:hidden}.iw-bell-fmt button{background:transparent;border:0;color:var(--muted);font:500 11px var(--font);padding:4px 10px;cursor:pointer}.iw-bell-fmt button+button{border-left:1px solid var(--line)}.iw-bell-fmt button.on{background:var(--accent-soft,rgba(91,140,255,.16));color:var(--txt);font-weight:600}
+.iw-sig.is-anom.is-long .tag{background:#38bdf8}.iw-sig.is-anom.is-short .tag{background:#f59e0b}.iw-sig .r.st b{text-align:right;font:500 11px var(--font);line-height:1.45}
+.iw-sig-arrow.anom.long .ring,.iw-sig-arrow.anom.long .edge{stroke:#38bdf8}.iw-sig-arrow.anom.short .ring,.iw-sig-arrow.anom.short .edge{stroke:#f59e0b}
+.iw-layers button.ly-anom.on{color:#f59e0b}
