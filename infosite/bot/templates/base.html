@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="uk" data-theme="dark" data-boot-required="{% if request.endpoint == 'index' %}page,terminal,liqmap{% else %}page{% endif %}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#000000">
+    <title>{% block title %}VSV Trading Intelligence{% endblock %}</title>
+    <link rel="icon" type="image/png" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/favicon.ico">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='info/css/style.css') }}?v=260">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/vsv-theme.css') }}?v=260">
+    <script src="{{ url_for('static', filename='js/vsv-boot.js') }}?v=1"></script>
+    {% block head %}{% endblock %}
+</head>
+<body class="vsv-bot-body">
+    <div class="vsv-boot-loader" aria-label="Loading terminal">
+        <span class="boot-mark"><img src="/static/info/img/logo-loading.svg" alt="VSV"></span>
+        <b>LOADING</b><span class="boot-spin" aria-hidden="true"></span>
+    </div>
+    <svg width="0" height="0" style="position:absolute;overflow:hidden" aria-hidden="true"><defs>
+        <symbol id="vsv-i-terminal" viewBox="0 0 24 24"><path d="M3 3v18h18M6 15l4-5 4 3 6-8"/></symbol>
+        <symbol id="vsv-i-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></symbol>
+        <symbol id="vsv-i-tickr" viewBox="0 0 24 24"><path d="M4 17V7m5 14V3m6 14V7m5 10V7"/></symbol>
+        <symbol id="vsv-i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-5 4-7 8-7s7 2 8 7"/></symbol>
+        <symbol id="vsv-i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></symbol>
+        <symbol id="vsv-i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 2 4 3 8 3s8-1 8-3V5M4 12v7c0 2 4 3 8 3s8-1 8-3v-7"/></symbol>
+    </defs></svg>
+
+    <nav class="navbar vsv-navbar">
+        <div class="nav-main">
+            <a class="nav-brand" href="{{ url_for('index') }}" aria-label="VSV — Dashboard">
+                <span class="brand-mark"><img src="/static/info/img/logo.png" alt="VSV"></span>
+                <span class="brand-copy"><b>VSV</b><small>TRADING INTELLIGENCE</small></span>
+            </a>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}"><svg><use href="#vsv-i-terminal"/></svg>Terminal</a>
+                <a href="{{ url_for('smart_money_page') }}" class="nav-link {% if request.endpoint == 'smart_money_page' %}active{% endif %}"><svg><use href="#vsv-i-sm"/></svg>Smart Money</a>
+                <a href="{{ url_for('tickr_page') }}" class="nav-link {% if request.endpoint == 'tickr_page' %}active{% endif %}"><svg><use href="#vsv-i-tickr"/></svg>Tickr</a>
+                <a href="/cabinet" class="nav-link"><svg><use href="#vsv-i-user"/></svg>Кабінет</a>
+                {% if auth_user and auth_user.is_admin %}<a href="/admin/users" class="nav-link">🛡 Користувачі{% if users_pending and users_pending > 0 %} <span title="Нові користувачі очікують схвалення" style="background:#b42b3c;color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;font-weight:800">{{ users_pending }}</span>{% endif %}</a>{% endif %}
+                <a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}" title="Налаштування"><svg><use href="#vsv-i-settings"/></svg><span>Налаштування</span></a>
+                <a href="{{ url_for('database_admin') }}" class="nav-link {% if request.endpoint == 'database_admin' %}active{% endif %}"><svg><use href="#vsv-i-db"/></svg>DB</a>
+            </div>
+            <div class="nav-spacer"></div>
+            <div id="top-language" class="language-slot"></div>
+            {% if auth_user %}
+            <div id="nav-user-chip">
+                <span title="{{ auth_user.email }}" class="nav-user-email">👤 {{ auth_user.email }}</span>
+                <span style="color:#929aa8">· {{ 'адмін' if auth_user.is_admin else 'перегляд' }}</span>
+                {% if auth_user.is_admin %}<a href="/admin/users" title="Керування користувачами">🛡</a>{% endif %}
+                <a href="/cabinet">кабінет</a>
+                <a href="/logout" style="color:#ff8c95">вийти</a>
+            </div>
+            {% endif %}
+            <div class="nav-status">
+                <span class="status-badge {% if paper_trading %}paper{% else %}live{% endif %}">{{ 'PAPER' if paper_trading else 'LIVE' }}</span>
+            </div>
+        </div>
+        <div class="spb-mm4 market-menu" id="spb-mm4" hidden aria-label="Чотири банери VSV бота"></div>
+    </nav>
+
+    <main class="container vsv-container">{% block content %}{% endblock %}</main>
+    <footer class="footer vsv-footer"><span>VSV TRADING INTELLIGENCE</span><span id="current-time">…</span><span>SERVER · SECURE CONNECTION</span></footer>
+
+    <script src="{{ url_for('static', filename='info/js/demo.js') }}?v=11"></script>
+    <script src="{{ url_for('static', filename='info/js/config.js') }}?v=77"></script>
+    <script src="{{ url_for('static', filename='info/js/i18n-dictionaries.js') }}?v=260"></script>
+    <script src="{{ url_for('static', filename='info/js/i18n-patterns.js') }}?v=260"></script>
+    <script src="{{ url_for('static', filename='info/js/i18n.js') }}?v=260"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

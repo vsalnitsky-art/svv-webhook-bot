@@ -1,0 +1,2335 @@
+"""
+Database Operations - CRUD operations for Sleeper OB Bot
+"""
+import json
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from sqlalchemy import desc, and_, or_
+from storage.db_models import (
+    get_session, init_db,
+    SleeperCandidate, OrderBlock, Trade, PerformanceStats, BotSetting, EventLog,
+    ReadinessLog,
+    SymbolBlacklist, SMCOBState,
+    Top100OBSnapshot, Top100OBHistory,
+    VolumizedRadarMetadata, VolumizedRadarStat, VolumizedRadarSnapshot,
+    LiquidationBucket, LiquidationOISnapshot, LiquidationEvent,
+    LiqHeatmapProfile, TradeArchive, VolAnomaly, TradeResearch, AiEpisode
+)
+from config import DEFAULT_SETTINGS
+
+class DBOperations:
+    """Database operations handler"""
+    
+    def __init__(self):
+        init_db()
+        self._init_default_settings()
+    
+    def _init_default_settings(self):
+        """Initialize default settings if not present"""
+        session = get_session()
+        try:
+            for key, value in DEFAULT_SETTINGS.items():
+                existing = session.query(BotSetting).filter_by(key=key).first()
+                if not existing:
+                    setting = BotSetting(
+                        key=key,
+                        value=json.dumps(value) if not isinstance(value, str) else value
+                    )
+                    session.add(setting)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"Error initializing settings: {e}")
+        finally:
+            session.close()
+    
+    # === SETTINGS ===
+    
+    def get_setting(self, key: str, default=None):
+        """Get a setting value"""
+        session = get_session()
+        try:
+            setting = session.query(BotSetting).filter_by(key=key).first()
+            if setting:
+                try:
+                    return json.loads(setting.value)
+                except:
+                    return setting.value
+            return default
+        finally:
+            session.close()
+    
+    def set_setting(self, key: str, value):
+        """Set a setting value"""
+        session = get_session()
+        try:
+            setting = session.query(BotSetting).filter_by(key=key).first()
+            # Always use json.dumps for consistency
+            str_value = json.dumps(value)
+            
+            if setting:
+                setting.value = str_value
+            else:
+                setting = BotSetting(key=key, value=str_value)
+                session.add(setting)
+            
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"Error setting {key}: {e}")
+            return False
+        finally:
+            session.close()
+
+    # === TRADE ARCHIVE (permanent, append-only — for backtesting) ===
+
+    def archive_trade(self, trade: Dict, entry_snapshot: Optional[Dict] = None,
+                      is_paper: bool = False) -> bool:
+        """Append one closed trade to the permanent archive. Never trimmed.
+
+        `trade` is the closed-trade dict; `entry_snapshot` is the pre-trade
+        analysis captured at OPEN time (decision/move/hold). Failures here
+        must never break trading, so everything is guarded.
+        """
+        session = get_session()
+        try:
+            opened = trade.get('opened_at') or 0
+            closed = trade.get('closed_at') or 0
+            row = TradeArchive(
+                is_paper=bool(is_paper),
+                symbol=trade.get('symbol'),
+                side=trade.get('side'),
+                entry_price=trade.get('entry_price'),
+                exit_price=trade.get('exit_price'),
+                qty=trade.get('qty', 0) or 0,
+                pnl_pct=trade.get('pnl_pct'),
+                pnl_usd=trade.get('pnl_usd', 0) or 0,
+                reason=(trade.get('reason') or '')[:40],
+                reason_detail=trade.get('reason_detail'),
+                opened_by=(trade.get('opened_by') or '')[:80],
+                opened_at=opened,
+                closed_at=closed,
+                duration_secs=max(0, (closed - opened)) if (opened and closed) else 0,
+                entry_snapshot=json.dumps(entry_snapshot) if entry_snapshot else None,
+            )
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[Archive] trade archive error: {e}")
+            return False
+        finally:
+            session.close()
+
+    def update_archive_trade(self, trade: Dict, is_paper: bool = False) -> bool:
+        """Переписати ціни/кількість/PnL уже заархівованої угоди фактом біржі.
+        Рядок шукаємо за (is_paper, symbol, closed_at ± 1с) — closed_at угоди
+        при ресинку не змінюється."""
+        session = get_session()
+        try:
+            ca = float(trade.get('closed_at') or 0)
+            row = (session.query(TradeArchive)
+                   .filter(TradeArchive.is_paper == bool(is_paper),
+                           TradeArchive.symbol == trade.get('symbol'),
+                           TradeArchive.closed_at >= ca - 1,
+                           TradeArchive.closed_at <= ca + 1)
+                   .order_by(TradeArchive.id.desc()).first())
+            if not row:
+                return False
+            row.entry_price = trade.get('entry_price')
+            row.exit_price = trade.get('exit_price')
+            row.qty = trade.get('qty', 0) or 0
+            row.pnl_pct = trade.get('pnl_pct')
+            row.pnl_usd = trade.get('pnl_usd', 0) or 0
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[Archive] trade archive update error: {e}")
+            return False
+        finally:
+            session.close()
+
+    def get_trade_archive(self, limit: int = 1000, is_paper: Optional[bool] = None,
+                          symbol: Optional[str] = None) -> List[Dict]:
+        """Read archived trades (newest first). `limit` caps the result for
+        memory safety; pass a large value for full backtest pulls."""
+        session = get_session()
+        try:
+            q = session.query(TradeArchive)
+            if is_paper is not None:
+                q = q.filter(TradeArchive.is_paper == is_paper)
+            if symbol:
+                q = q.filter(TradeArchive.symbol == symbol)
+            q = q.order_by(desc(TradeArchive.closed_at)).limit(limit)
+            out = []
+            for r in q.all():
+                snap = None
+                if r.entry_snapshot:
+                    try:
+                        snap = json.loads(r.entry_snapshot)
+                    except Exception:
+                        snap = None
+                out.append({
+                    'id': r.id, 'is_paper': r.is_paper, 'symbol': r.symbol,
+                    'side': r.side, 'entry_price': r.entry_price,
+                    'exit_price': r.exit_price, 'qty': r.qty,
+                    'pnl_pct': r.pnl_pct, 'pnl_usd': r.pnl_usd,
+                    'reason': r.reason, 'reason_detail': r.reason_detail,
+                    'opened_by': r.opened_by, 'opened_at': r.opened_at,
+                    'closed_at': r.closed_at, 'duration_secs': r.duration_secs,
+                    'entry_snapshot': snap,
+                })
+            return out
+        except Exception as e:
+            print(f"[Archive] read error: {e}")
+            return []
+        finally:
+            session.close()
+
+    def count_trade_archive(self, is_paper: Optional[bool] = None) -> int:
+        """Total archived trades (for the UI counter)."""
+        session = get_session()
+        try:
+            q = session.query(TradeArchive)
+            if is_paper is not None:
+                q = q.filter(TradeArchive.is_paper == is_paper)
+            return q.count()
+        except Exception:
+            return 0
+        finally:
+            session.close()
+
+    def clear_trade_archive(self, is_paper: Optional[bool] = None) -> int:
+        """Delete archived trades and return how many were removed.
+
+        DESTRUCTIVE — this is the backtest dataset. Only called from an
+        explicit, confirmed UI action. `is_paper=None` clears everything;
+        pass True/False to clear only paper or only real trades.
+        """
+        session = get_session()
+        try:
+            q = session.query(TradeArchive)
+            if is_paper is not None:
+                q = q.filter(TradeArchive.is_paper == is_paper)
+            n = q.count()
+            q.delete(synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[Archive] clear error: {e}")
+            return 0
+        finally:
+            session.close()
+
+    def get_all_settings(self) -> Dict:
+        """Get all settings"""
+        session = get_session()
+        try:
+            settings = session.query(BotSetting).all()
+            result = {}
+            for s in settings:
+                try:
+                    result[s.key] = json.loads(s.value)
+                except:
+                    result[s.key] = s.value
+            return result
+        finally:
+            session.close()
+    
+    # === SLEEPER CANDIDATES ===
+    
+    def upsert_sleeper(self, data: Dict) -> Optional[SleeperCandidate]:
+        """Insert or update sleeper candidate"""
+        # Convert numpy types to Python native types
+        clean_data = {}
+        for key, value in data.items():
+            if hasattr(value, 'item'):  # numpy scalar
+                clean_data[key] = value.item()
+            elif isinstance(value, (int, float, str, bool, type(None), datetime)):
+                clean_data[key] = value
+            else:
+                try:
+                    clean_data[key] = float(value)
+                except (TypeError, ValueError):
+                    clean_data[key] = str(value)
+        
+        # Get valid column names from model
+        valid_columns = {c.name for c in SleeperCandidate.__table__.columns}
+        
+        # Filter to only valid columns (prevents "invalid keyword argument" errors)
+        filtered_data = {k: v for k, v in clean_data.items() if k in valid_columns}
+        
+        session = get_session()
+        try:
+            sleeper = session.query(SleeperCandidate).filter_by(
+                symbol=filtered_data['symbol']
+            ).first()
+            
+            if sleeper:
+                for key, value in filtered_data.items():
+                    if hasattr(sleeper, key):
+                        setattr(sleeper, key, value)
+                sleeper.checks_count += 1
+            else:
+                sleeper = SleeperCandidate(**filtered_data)
+                session.add(sleeper)
+            
+            session.commit()
+            session.refresh(sleeper)
+            return sleeper
+        except Exception as e:
+            session.rollback()
+            print(f"Error upserting sleeper: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def get_sleepers(self, state: str = None, min_score: float = None, 
+                     limit: int = 100) -> List[Dict]:
+        """Get sleeper candidates"""
+        session = get_session()
+        try:
+            query = session.query(SleeperCandidate)
+            
+            if state:
+                query = query.filter(SleeperCandidate.state == state)
+            if min_score:
+                query = query.filter(SleeperCandidate.total_score >= min_score)
+            
+            query = query.order_by(desc(SleeperCandidate.total_score))
+            sleepers = query.limit(limit).all()
+            return [s.to_dict() for s in sleepers]
+        finally:
+            session.close()
+    
+    def get_ready_sleepers(self, min_score: float = 80) -> List[Dict]:
+        """Get sleepers ready for OB scan"""
+        return self.get_sleepers(state='READY', min_score=min_score)
+    
+    def update_sleeper_state(self, symbol: str, state: str, 
+                             direction: str = None, hp_change: int = 0) -> bool:
+        """Update sleeper state"""
+        session = get_session()
+        try:
+            sleeper = session.query(SleeperCandidate).filter_by(symbol=symbol).first()
+            if sleeper:
+                sleeper.state = state
+                if direction:
+                    sleeper.direction = direction
+                if hp_change:
+                    sleeper.hp = max(0, min(10, sleeper.hp + hp_change))
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            print(f"Error updating sleeper state: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def remove_dead_sleepers(self) -> int:
+        """Remove sleepers with HP = 0"""
+        session = get_session()
+        try:
+            count = session.query(SleeperCandidate).filter(
+                SleeperCandidate.hp <= 0
+            ).delete()
+            session.commit()
+            return count
+        except Exception as e:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+    
+    def clear_all_sleepers(self) -> int:
+        """Remove ALL sleepers (for fresh scan)"""
+        session = get_session()
+        try:
+            count = session.query(SleeperCandidate).delete()
+            session.commit()
+            print(f"[DB] Cleared {count} sleepers")
+            return count
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] Error clearing sleepers: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def remove_low_quality_sleepers(self) -> int:
+        """Remove sleepers with poor data quality (funding=0, oi=0, bb=0)"""
+        session = get_session()
+        try:
+            from sqlalchemy import and_
+            count = session.query(SleeperCandidate).filter(
+                and_(
+                    SleeperCandidate.funding_rate == 0,
+                    SleeperCandidate.oi_change_4h == 0,
+                    SleeperCandidate.bb_width == 0
+                )
+            ).delete()
+            session.commit()
+            print(f"[DB] Removed {count} low-quality sleepers")
+            return count
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] Error removing low-quality sleepers: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    # === ORDER BLOCKS ===
+    
+    def add_orderblock(self, data: Dict) -> Optional[OrderBlock]:
+        """Add new order block"""
+        # Convert numpy types and map fields
+        clean_data = {}
+        
+        # Field mapping from new OB scanner format to DB model
+        field_map = {
+            'symbol': 'symbol',
+            'timeframe': 'timeframe',
+            'ob_type': 'ob_type',
+            'top': 'ob_high',
+            'bottom': 'ob_low',
+            'quality': 'quality_score',
+            'volume_ratio': 'volume_ratio',   # Правильне відношення (1.5x, 2.3x)
+            'impulse_pct': 'impulse_pct',     # Відсоток імпульсного руху
+        }
+        
+        for src, dst in field_map.items():
+            if src in data:
+                value = data[src]
+                # Convert numpy types
+                if hasattr(value, 'item'):
+                    clean_data[dst] = value.item()
+                else:
+                    clean_data[dst] = value
+        
+        # Calculate mid point
+        if 'ob_high' in clean_data and 'ob_low' in clean_data:
+            clean_data['ob_mid'] = (clean_data['ob_high'] + clean_data['ob_low']) / 2
+        
+        # ob_type is already LONG or SHORT from scanner
+        # (Legacy support: Bull -> LONG, Bear -> SHORT)
+        if 'ob_type' in clean_data:
+            ob_type = clean_data['ob_type']
+            if ob_type == 'Bull':
+                clean_data['ob_type'] = 'LONG'
+            elif ob_type == 'Bear':
+                clean_data['ob_type'] = 'SHORT'
+            # LONG and SHORT pass through as-is
+        
+        # Status based on breaker
+        clean_data['status'] = 'MITIGATED' if data.get('breaker', False) else 'ACTIVE'
+        
+        # Expiration
+        clean_data['expires_at'] = datetime.utcnow() + timedelta(hours=48)
+        
+        session = get_session()
+        try:
+            # Check for duplicate - similar zone
+            if all(k in clean_data for k in ['symbol', 'timeframe', 'ob_type', 'ob_mid']):
+                zone_tolerance = abs(clean_data.get('ob_high', 0) - clean_data.get('ob_low', 0)) * 0.5
+                existing = session.query(OrderBlock).filter(
+                    and_(
+                        OrderBlock.symbol == clean_data['symbol'],
+                        OrderBlock.timeframe == clean_data['timeframe'],
+                        OrderBlock.status == 'ACTIVE',
+                        OrderBlock.ob_type == clean_data['ob_type'],
+                        OrderBlock.ob_mid.between(
+                            clean_data['ob_mid'] - zone_tolerance,
+                            clean_data['ob_mid'] + zone_tolerance
+                        )
+                    )
+                ).first()
+                
+                if existing:
+                    return existing
+            
+            ob = OrderBlock(**clean_data)
+            session.add(ob)
+            session.commit()
+            session.refresh(ob)
+            return ob
+        except Exception as e:
+            session.rollback()
+            print(f"Error adding OB: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def get_orderblocks(self, symbol: str = None, status: str = 'ACTIVE', 
+                        timeframe: str = None, limit: int = 50) -> List[Dict]:
+        """Get order blocks"""
+        session = get_session()
+        try:
+            query = session.query(OrderBlock)
+            
+            if symbol:
+                query = query.filter(OrderBlock.symbol == symbol)
+            if status:
+                query = query.filter(OrderBlock.status == status)
+            if timeframe:
+                query = query.filter(OrderBlock.timeframe == timeframe)
+            
+            query = query.order_by(desc(OrderBlock.quality_score))
+            obs = query.limit(limit).all()
+            return [ob.to_dict() for ob in obs]
+        finally:
+            session.close()
+    
+    def update_ob_status(self, ob_id: int, status: str, touch_count: int = None) -> bool:
+        """Update order block status"""
+        session = get_session()
+        try:
+            ob = session.query(OrderBlock).filter_by(id=ob_id).first()
+            if ob:
+                ob.status = status
+                if status == 'TOUCHED':
+                    ob.touched_at = datetime.utcnow()
+                if touch_count is not None:
+                    ob.touch_count = touch_count
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+    
+    def expire_old_orderblocks(self, max_age_minutes: int = 60) -> int:
+        """Expire old order blocks"""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+            count = session.query(OrderBlock).filter(
+                and_(
+                    OrderBlock.status == 'ACTIVE',
+                    OrderBlock.created_at < cutoff
+                )
+            ).update({'status': 'EXPIRED'})
+            session.commit()
+            return count
+        except Exception as e:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+    
+    # === TRADES ===
+    
+    def add_trade(self, data: Dict) -> Optional[Trade]:
+        """Add new trade"""
+        session = get_session()
+        try:
+            trade = Trade(**data)
+            session.add(trade)
+            session.commit()
+            session.refresh(trade)
+            return trade
+        except Exception as e:
+            session.rollback()
+            print(f"Error adding trade: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def get_trades(self, status: str = None, symbol: str = None, 
+                   limit: int = 50) -> List[Dict]:
+        """Get trades"""
+        session = get_session()
+        try:
+            query = session.query(Trade)
+            
+            if status:
+                query = query.filter(Trade.status == status)
+            if symbol:
+                query = query.filter(Trade.symbol == symbol)
+            
+            query = query.order_by(desc(Trade.entry_time))
+            trades = query.limit(limit).all()
+            return [t.to_dict() for t in trades]
+        finally:
+            session.close()
+    
+    def get_open_trades(self) -> List[Dict]:
+        """Get open trades"""
+        return self.get_trades(status='OPEN')
+    
+    def update_trade(self, trade_id: int, data: Dict) -> bool:
+        """Update trade fields"""
+        session = get_session()
+        try:
+            trade = session.query(Trade).filter_by(id=trade_id).first()
+            if trade:
+                for key, value in data.items():
+                    if hasattr(trade, key):
+                        setattr(trade, key, value)
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            print(f"Error updating trade: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def close_trade(self, trade_id: int, exit_price: float, exit_reason: str,
+                    pnl_usdt: float, pnl_percent: float, fees: float = 0) -> bool:
+        """Close a trade"""
+        session = get_session()
+        try:
+            trade = session.query(Trade).filter_by(id=trade_id).first()
+            if trade:
+                trade.exit_price = exit_price
+                trade.exit_time = datetime.utcnow()
+                trade.exit_reason = exit_reason
+                trade.pnl_usdt = pnl_usdt
+                trade.pnl_percent = pnl_percent
+                trade.fees_paid = fees
+                trade.status = 'CLOSED'
+                session.commit()
+                return True
+            return False
+        except Exception as e:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+    
+    def get_trade_stats(self, days: int = 30) -> Dict:
+        """Get trade statistics"""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=days)
+            trades = session.query(Trade).filter(
+                and_(
+                    Trade.status == 'CLOSED',
+                    Trade.entry_time >= cutoff
+                )
+            ).all()
+            
+            if not trades:
+                return {
+                    'total_trades': 0, 'winning_trades': 0, 'losing_trades': 0,
+                    'win_rate': 0, 'total_pnl': 0, 'avg_win': 0, 'avg_loss': 0,
+                    'profit_factor': 0
+                }
+            
+            winners = [t for t in trades if t.pnl_usdt > 0]
+            losers = [t for t in trades if t.pnl_usdt <= 0]
+            
+            total_wins = sum(t.pnl_usdt for t in winners)
+            total_losses = abs(sum(t.pnl_usdt for t in losers))
+            
+            return {
+                'total_trades': len(trades),
+                'winning_trades': len(winners),
+                'losing_trades': len(losers),
+                'win_rate': (len(winners) / len(trades) * 100) if trades else 0,
+                'total_pnl': sum(t.pnl_usdt for t in trades),
+                'avg_win': total_wins / len(winners) if winners else 0,
+                'avg_loss': total_losses / len(losers) if losers else 0,
+                'profit_factor': total_wins / total_losses if total_losses > 0 else 0
+            }
+        finally:
+            session.close()
+    
+    # === EVENT LOG ===
+    
+    def log_event(self, message: str, level: str = 'INFO', 
+                  category: str = 'SYSTEM', symbol: str = None):
+        """Log an event"""
+        session = get_session()
+        try:
+            event = EventLog(
+                message=message,
+                level=level,
+                category=category,
+                symbol=symbol
+            )
+            session.add(event)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+        finally:
+            session.close()
+    
+    def get_recent_events(self, limit: int = 50, level: str = None, category: str = None) -> List[Dict]:
+        """Get recent events"""
+        session = get_session()
+        try:
+            query = session.query(EventLog)
+            if level:
+                query = query.filter(EventLog.level == level)
+            if category:
+                query = query.filter(EventLog.category == category)
+            
+            events = query.order_by(desc(EventLog.timestamp)).limit(limit).all()
+            return [e.to_dict() for e in events]
+        finally:
+            session.close()
+    
+    def clear_old_events(self, days: int = 7) -> int:
+        """Clear old events"""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=days)
+            count = session.query(EventLog).filter(
+                EventLog.timestamp < cutoff
+            ).delete()
+            session.commit()
+            return count
+        except:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+
+    # === ⚠ АНОМАЛІЇ ОБСЯГУ + 🔬 АРХІВ ДОСЛІДЖЕННЯ УГОД (16.11) ===
+
+    _VA_COLS = ('ts', 'symbol', 'tf', 'bar_t', 'kind', 'hint', 'bar_dir', 'rv',
+                'buy_share', 'vol', 'med', 'price', 'bar_chg', 'pre_chg')
+
+    def add_vol_anomaly(self, rec: Dict) -> bool:
+        """Записати аномалію (дубль монета·TF·бар — пропускається)."""
+        session = get_session()
+        try:
+            ex = session.query(VolAnomaly.id).filter(
+                VolAnomaly.symbol == rec.get('symbol'), VolAnomaly.tf == rec.get('tf'),
+                VolAnomaly.bar_t == int(rec.get('bar_t') or 0)).first()
+            if ex:
+                return False
+            row = VolAnomaly(**{k: rec.get(k) for k in self._VA_COLS})
+            row.ctx = json.dumps(rec.get('ctx')) if rec.get('ctx') else None
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] add_vol_anomaly: {e}")
+            return False
+        finally:
+            session.close()
+
+    def update_vol_anomaly(self, row_id: int, fields: Dict) -> bool:
+        session = get_session()
+        try:
+            row = session.get(VolAnomaly, int(row_id))
+            if not row:
+                return False
+            for k in ('o1', 'o4', 'o8', 'hi', 'lo', 'done'):
+                if k in fields:
+                    setattr(row, k, fields[k])
+            session.commit()
+            return True
+        except Exception:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+
+    def get_vol_anomalies(self, symbol: str = None, tf: str = None, since: float = None,
+                          until: float = None, undone: bool = None, kind: str = None,
+                          limit: int = 2000) -> List[Dict]:
+        """Аномалії (найновіші першими). `since/until` — за `ts` (закриття
+        свічки), для `undone` — за відкриттям свічки `bar_t`."""
+        session = get_session()
+        try:
+            q = session.query(VolAnomaly)
+            if symbol:
+                q = q.filter(VolAnomaly.symbol == symbol.upper())
+            if tf:
+                q = q.filter(VolAnomaly.tf == tf)
+            if kind:
+                q = q.filter(VolAnomaly.kind == kind)
+            if undone:
+                q = q.filter(VolAnomaly.done.isnot(True))
+                if since is not None:
+                    q = q.filter(VolAnomaly.bar_t >= int(since))
+            else:
+                if since is not None:
+                    q = q.filter(VolAnomaly.ts >= float(since))
+            if until is not None:
+                q = q.filter(VolAnomaly.ts <= float(until))
+            rows = q.order_by(desc(VolAnomaly.ts)).limit(int(limit or 2000)).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] get_vol_anomalies: {e}")
+            return []
+        finally:
+            session.close()
+
+    def clear_vol_anomalies(self, days: int = None, raise_errors: bool = False) -> int:
+        """🗑 Очистити аномалії обсягу: days=None — УСІ, інакше старші за N днів.
+        raise_errors=True — помилку БД віддати викликачу (кнопка мусить казати
+        правду, а не «видалено 0»)."""
+        import time as _t
+        session = get_session()
+        try:
+            q = session.query(VolAnomaly)
+            if days is not None:
+                q = q.filter(VolAnomaly.ts < _t.time() - max(0, int(days)) * 86400)
+            n = q.delete(synchronize_session=False)
+            session.commit()
+            return int(n or 0)
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] clear_vol_anomalies: {e}")
+            if raise_errors:
+                raise
+            return 0
+        finally:
+            session.close()
+
+    def count_vol_anomalies(self) -> int:
+        session = get_session()
+        try:
+            return int(session.query(VolAnomaly).count())
+        finally:
+            session.close()
+
+    def purge_vol_anomalies(self, days: int = 365) -> int:
+        import time as _t
+        session = get_session()
+        try:
+            n = session.query(VolAnomaly).filter(
+                VolAnomaly.ts < _t.time() - int(days) * 86400).delete()
+            session.commit()
+            return n
+        except Exception:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+
+    def archive_research(self, rec: Dict, is_paper: bool = False) -> bool:
+        """🔬 Один рядок дослідження закритої угоди (ніколи не чиститься)."""
+        session = get_session()
+        try:
+            def _j(v):
+                return json.dumps(v, ensure_ascii=False, default=str) if v is not None else None
+            row = TradeResearch(
+                is_paper=bool(is_paper), symbol=rec.get('symbol'), side=rec.get('side'),
+                opened_by=(rec.get('opened_by') or '')[:80],
+                opened_at=rec.get('opened_at'), closed_at=rec.get('closed_at'),
+                entry_price=rec.get('entry_price'), exit_price=rec.get('exit_price'),
+                pnl_pct=rec.get('pnl_pct'), peak_pnl_pct=rec.get('peak_pnl_pct'),
+                mae_pnl_pct=rec.get('mae_pnl_pct'), reason=(rec.get('reason') or '')[:40],
+                entry_ctx=_j(rec.get('entry_ctx')), events=_j(rec.get('events')),
+                samples=_j(rec.get('samples')), anomalies=_j(rec.get('anomalies')),
+                summary=_j(rec.get('summary')))
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] archive_research: {e}")
+            return False
+        finally:
+            session.close()
+
+    def get_research(self, is_paper: bool = None, since: float = None,
+                     symbol: str = None, limit: int = 5000) -> List[Dict]:
+        session = get_session()
+        try:
+            q = session.query(TradeResearch)
+            if is_paper is not None:
+                q = q.filter(TradeResearch.is_paper == bool(is_paper))
+            if since is not None:
+                q = q.filter(TradeResearch.closed_at >= float(since))
+            if symbol:
+                q = q.filter(TradeResearch.symbol == symbol.upper())
+            rows = q.order_by(desc(TradeResearch.closed_at)).limit(int(limit or 5000)).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] get_research: {e}")
+            return []
+        finally:
+            session.close()
+
+    # === 🤖 ЕПІЗОДИ «ПРУЖИНИ» (ШІ, 17.11) ===
+
+    def archive_ai_episode(self, ep: Dict, out: Dict = None) -> bool:
+        """🤖 Закритий епізод зарядженої монети (ніколи не чиститься автоматично)."""
+        session = get_session()
+        try:
+            out = out or {}
+            fire = ep.get('fire') or {}
+            sig = ep.get('signal') or {}
+
+            def _j(v):
+                return json.dumps(v, ensure_ascii=False, default=str) if v else None
+
+            def _f(v):
+                try:
+                    return float(v) if v is not None else None
+                except (TypeError, ValueError):
+                    return None
+            row = AiEpisode(
+                symbol=ep.get('symbol'), src=ep.get('src'), started_at=_f(ep.get('started_at')),
+                ended_at=_f(ep.get('ended_at')), end_reason=(ep.get('end_reason') or '')[:12],
+                charge0=_f(ep.get('charge0')), charge_max=_f(ep.get('charge_max')),
+                price0=_f(ep.get('price0')), lean0=ep.get('lean0'), prob0=_f(ep.get('prob0')),
+                fire_side=fire.get('side'), fire_at=_f(fire.get('t')),
+                signal_side=sig.get('side'), signal_at=_f(sig.get('t')),
+                signal_score=_f(sig.get('score')),
+                move_pct=_f(out.get('move_pct')), max_up_pct=_f(out.get('max_up_pct')),
+                max_dn_pct=_f(out.get('max_dn_pct')), discharge=out.get('discharge'),
+                sig_best_pct=_f(out.get('sig_best_pct')), sig_worst_pct=_f(out.get('sig_worst_pct')),
+                sig_end_pct=_f(out.get('sig_end_pct')),
+                events=_j(ep.get('ev')), samples=_j(ep.get('s')), signal=_j(sig or None))
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] archive_ai_episode: {e}")
+            return False
+        finally:
+            session.close()
+
+    def get_ai_episodes(self, since: float = None, symbol: str = None,
+                        limit: int = 5000) -> List[Dict]:
+        session = get_session()
+        try:
+            q = session.query(AiEpisode)
+            if since is not None:
+                q = q.filter(AiEpisode.ended_at >= float(since))
+            if symbol:
+                q = q.filter(AiEpisode.symbol == symbol.upper())
+            rows = q.order_by(desc(AiEpisode.ended_at)).limit(int(limit or 5000)).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] get_ai_episodes: {e}")
+            return []
+        finally:
+            session.close()
+
+    def cleanup_ai_learning(self, now: float = None, episode_nosignal_days: int = 7,
+                            episode_days: int = 45, anom_aux_days: int = 2,
+                            research_other_days: int = 30, research_ai_days: int = 60,
+                            anom_done_days: int = 60, dry: bool = False) -> Dict:
+        """🧹 Автоочистка таблиць навчання ШІ (вимоги 22.11) — прибирає те, що
+        не вчить і лише заважає, а також ВІДПРАЦЬОВАНИЙ матеріал:
+          • епізоди ШІ БЕЗ сигналу > `episode_nosignal_days`;
+          • усі епізоди > `episode_days` (навчання їх уже спожило: модель
+            переучується раз на 15 хв, калібровка дивиться 30 днів);
+          • допоміжні аномалії (роль 🧭 dir / 👤 sub) > `anom_aux_days`;
+          • аномалії з ПОВНИМ наслідком (done) > `anom_done_days`;
+          • дослідження ЧУЖИХ (не ШІ) угод > `research_other_days`;
+          • дослідження угод ШІ > `research_ai_days` (стислий запис —
+            момент входу, план, шлях, вихід, події, уроки — уже в базі еталонів).
+        `dry=True` — лише ПОЗНАЧИТИ (порахувати, що буде видалено), нічого не
+        видаляючи. Кожне правило — у СВОЇЙ транзакції."""
+        import time as _t
+        now = float(now or _t.time())
+        out = {'episodes': 0, 'anomalies': 0, 'research': 0}
+
+        def _run(key, q):
+            session = get_session()
+            try:
+                qq = q(session)
+                out[key] += int((qq.count() if dry else qq.delete(synchronize_session=False)) or 0)
+                if not dry:
+                    session.commit()
+            except Exception as e:
+                session.rollback()
+                print(f"[DB] cleanup_ai_learning {key}: {e}")
+            finally:
+                session.close()
+        d = 86400
+        ep_all = now - int(episode_days) * d
+        # Без сигналу — лише ті, що НЕ підпадуть під загальне правило (без подвійного рахунку)
+        def _nosig(se):
+            q = se.query(AiEpisode).filter(
+                AiEpisode.ended_at < now - int(episode_nosignal_days) * d,
+                AiEpisode.signal_side.is_(None))
+            # нижня межа — лише коли загальне правило за датою діє (0 = вимкнено)
+            return q.filter(AiEpisode.ended_at >= ep_all) if int(episode_days) > 0 else q
+        _run('episodes', _nosig)
+        if int(episode_days) > 0:        # 0 = вимкнено (епізоди із сигналом чистить якість)
+            _run('episodes', lambda se: se.query(AiEpisode).filter(AiEpisode.ended_at < ep_all))
+        done_cut = now - int(anom_done_days) * d
+        for role in ('dir', 'sub'):
+            _run('anomalies', lambda se, r=role: se.query(VolAnomaly).filter(
+                VolAnomaly.ts < now - int(anom_aux_days) * d, VolAnomaly.ts >= done_cut,
+                VolAnomaly.ctx.like(f'%"role": "{r}"%')))
+        _run('anomalies', lambda se: se.query(VolAnomaly).filter(
+            VolAnomaly.ts < done_cut, VolAnomaly.done.is_(True)))
+        _run('research', lambda se: se.query(TradeResearch).filter(
+            TradeResearch.closed_at < now - int(research_other_days) * d,
+            ~TradeResearch.opened_by.like('ai%')))
+        if int(research_ai_days) > 0:    # 0 = вимкнено (угоди ШІ чистить якість)
+            _run('research', lambda se: se.query(TradeResearch).filter(
+                TradeResearch.closed_at < now - int(research_ai_days) * d,
+                TradeResearch.opened_by.like('ai%')))
+        return out
+
+    def ai_learning_brief(self, limit: int = 20000) -> Dict:
+        """Стислий перелік РЕЗУЛЬТАТІВ навчання ШІ для відбору найгірших (22.11):
+        дослідження угод ШІ і епізоди із сигналом — лише числа, без JSON."""
+        out = {'research': [], 'episodes': []}
+        session = get_session()
+        try:
+            for r in (session.query(TradeResearch.id, TradeResearch.symbol, TradeResearch.closed_at,
+                                    TradeResearch.pnl_pct, TradeResearch.peak_pnl_pct,
+                                    TradeResearch.mae_pnl_pct)
+                      .filter(TradeResearch.opened_by.like('ai%'))
+                      .order_by(TradeResearch.closed_at.desc()).limit(int(limit))):
+                out['research'].append({'id': r[0], 'sym': r[1], 't': r[2], 'pnl': r[3],
+                                        'peak': r[4], 'mae': r[5]})
+            for r in (session.query(AiEpisode.id, AiEpisode.symbol, AiEpisode.ended_at,
+                                    AiEpisode.signal_side, AiEpisode.sig_best_pct,
+                                    AiEpisode.sig_worst_pct, AiEpisode.sig_end_pct)
+                      .filter(AiEpisode.signal_side.isnot(None))
+                      .order_by(AiEpisode.ended_at.desc()).limit(int(limit))):
+                out['episodes'].append({'id': r[0], 'sym': r[1], 't': r[2], 'side': r[3],
+                                        'best': r[4], 'worst': r[5], 'end': r[6]})
+        except Exception as e:
+            print(f"[DB] ai_learning_brief: {e}")
+        finally:
+            session.close()
+        return out
+
+    def delete_learning_ids(self, research_ids=(), episode_ids=()) -> Dict:
+        """Видалити позначені записи навчання за id (кожна таблиця — своя транзакція)."""
+        out = {'research': 0, 'episodes': 0}
+        for key, model, ids in (('research', TradeResearch, list(research_ids or ())),
+                                ('episodes', AiEpisode, list(episode_ids or ()))):
+            if not ids:
+                continue
+            session = get_session()
+            try:
+                for i in range(0, len(ids), 500):
+                    out[key] += int(session.query(model).filter(model.id.in_(ids[i:i + 500]))
+                                    .delete(synchronize_session=False) or 0)
+                session.commit()
+            except Exception as e:
+                session.rollback()
+                print(f"[DB] delete_learning_ids {key}: {e}")
+            finally:
+                session.close()
+        return out
+
+    # === READINESS STRATEGY LOG (Готовність) ===
+
+    def log_readiness(self, symbol: str, signal_dir: str = None,
+                      score: int = None, grade: str = None, hot: bool = False,
+                      score_dir: str = None, blocks: Dict = None,
+                      exhaustion: float = None, move_pct: float = None,
+                      vetoes: str = None,
+                      outcome: str = None, reason: str = None) -> None:
+        """Insert one decision row for the «Готовність» strategy. Best-effort;
+        never raises into the engine loop."""
+        session = get_session()
+        try:
+            b = blocks or {}
+            row = ReadinessLog(
+                symbol=symbol, signal_dir=signal_dir, score=score, grade=grade,
+                hot=bool(hot), score_dir=score_dir,
+                b_structure=b.get('structure'), b_poi=b.get('poi'),
+                b_zone=b.get('zone'), b_liquidity=b.get('liquidity'),
+                b_mm=b.get('mm'), b_timing=b.get('timing'),
+                b_context=b.get('context'),
+                exhaustion=exhaustion, move_pct=move_pct, vetoes=(vetoes or None),
+                outcome=outcome, reason=reason)
+            session.add(row)
+            session.commit()
+        except Exception:
+            session.rollback()
+        finally:
+            session.close()
+
+    def get_readiness_log(self, limit: int = 200, symbol: str = None,
+                          outcome: str = None) -> List[Dict]:
+        """Recent «Готовність» decisions, newest first (for analysis / UI)."""
+        session = get_session()
+        try:
+            query = session.query(ReadinessLog)
+            if symbol:
+                query = query.filter(ReadinessLog.symbol == symbol.upper())
+            if outcome:
+                query = query.filter(ReadinessLog.outcome == outcome)
+            rows = query.order_by(desc(ReadinessLog.timestamp)).limit(limit).all()
+            return [r.to_dict() for r in rows]
+        finally:
+            session.close()
+
+    def clear_old_readiness(self, days: int = 14) -> int:
+        """Purge «Готовність» log rows older than `days`."""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=days)
+            count = session.query(ReadinessLog).filter(
+                ReadinessLog.timestamp < cutoff
+            ).delete()
+            session.commit()
+            return count
+        except:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+
+    # ==========================================
+    # BLACKLIST OPERATIONS (v8.2.2)
+    # ==========================================
+    
+    def add_to_blacklist(self, symbol: str, reason: str = 'MANUAL', 
+                         volatility: float = 0, note: str = None) -> bool:
+        """
+        Додає монету в чорний список
+        
+        Args:
+            symbol: Торгова пара (BTCUSDT)
+            reason: LOW_VOLATILITY / STABLECOIN / MANUAL / DELISTED
+            volatility: Поточна волатильність (%) коли додавали
+            note: Нотатка
+        """
+        session = get_session()
+        try:
+            existing = session.query(SymbolBlacklist).filter_by(symbol=symbol).first()
+            if existing:
+                return False  # Already in blacklist
+            
+            entry = SymbolBlacklist(
+                symbol=symbol,
+                reason=reason,
+                volatility_24h=volatility,
+                note=note
+            )
+            session.add(entry)
+            session.commit()
+            print(f"[BLACKLIST] Added {symbol} ({reason})")
+            
+            # v8.2.3: Auto-remove from sleepers when added to blacklist
+            self.remove_sleeper(symbol)
+            
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[BLACKLIST] Error adding {symbol}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def remove_sleeper(self, symbol: str) -> bool:
+        """Видаляє sleeper за символом"""
+        session = get_session()
+        try:
+            deleted = session.query(SleeperCandidate).filter_by(symbol=symbol).delete()
+            session.commit()
+            if deleted:
+                print(f"[DB] Removed sleeper: {symbol}")
+            return deleted > 0
+        except:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+    
+    def remove_blacklisted_sleepers(self) -> int:
+        """Видаляє всі sleepers які є в blacklist"""
+        blacklist = self.get_blacklist()
+        removed = 0
+        for symbol in blacklist:
+            if self.remove_sleeper(symbol):
+                removed += 1
+        if removed > 0:
+            print(f"[DB] Removed {removed} blacklisted sleepers")
+        return removed
+    
+    def remove_duplicate_sleepers(self) -> int:
+        """Видаляє дублікати sleepers (залишає найновіший)"""
+        session = get_session()
+        try:
+            # Знаходимо дублікати
+            from sqlalchemy import func
+            duplicates = session.query(
+                SleeperCandidate.symbol,
+                func.count(SleeperCandidate.id).label('count')
+            ).group_by(SleeperCandidate.symbol).having(func.count(SleeperCandidate.id) > 1).all()
+            
+            removed = 0
+            for symbol, count in duplicates:
+                # Залишаємо найновіший (найбільший id)
+                sleepers = session.query(SleeperCandidate).filter_by(
+                    symbol=symbol
+                ).order_by(SleeperCandidate.id.desc()).all()
+                
+                # Видаляємо всі крім першого (найновішого)
+                for s in sleepers[1:]:
+                    session.delete(s)
+                    removed += 1
+            
+            session.commit()
+            if removed > 0:
+                print(f"[DB] Removed {removed} duplicate sleepers")
+            return removed
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] Error removing duplicates: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def remove_from_blacklist(self, symbol: str) -> bool:
+        """Видаляє монету з чорного списку"""
+        session = get_session()
+        try:
+            deleted = session.query(SymbolBlacklist).filter_by(symbol=symbol).delete()
+            session.commit()
+            if deleted:
+                print(f"[BLACKLIST] Removed {symbol}")
+            return deleted > 0
+        except:
+            session.rollback()
+            return False
+        finally:
+            session.close()
+    
+    def get_blacklist(self) -> List[str]:
+        """Повертає список заблокованих символів"""
+        session = get_session()
+        try:
+            entries = session.query(SymbolBlacklist).all()
+            return [e.symbol for e in entries]
+        except Exception as e:
+            # Table might not exist yet
+            print(f"[BLACKLIST] Warning: Could not get blacklist: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def get_blacklist_full(self) -> List[Dict]:
+        """Повертає повний список з деталями"""
+        session = get_session()
+        try:
+            entries = session.query(SymbolBlacklist).order_by(
+                SymbolBlacklist.added_at.desc()
+            ).all()
+            return [e.to_dict() for e in entries]
+        except Exception as e:
+            print(f"[BLACKLIST] Warning: Could not get blacklist: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def is_blacklisted(self, symbol: str) -> bool:
+        """Перевіряє чи монета в чорному списку"""
+        session = get_session()
+        try:
+            exists = session.query(SymbolBlacklist).filter_by(symbol=symbol).first()
+            return exists is not None
+        finally:
+            session.close()
+    
+    def clear_blacklist(self) -> int:
+        """Очищає весь чорний список"""
+        session = get_session()
+        try:
+            count = session.query(SymbolBlacklist).delete()
+            session.commit()
+            print(f"[BLACKLIST] Cleared {count} entries")
+            return count
+        except:
+            session.rollback()
+            return 0
+        finally:
+            session.close()
+    
+    def auto_blacklist_low_volatility(self, symbols: List[str], 
+                                       volatility_data: Dict[str, float],
+                                       min_volatility: float = 3.0) -> int:
+        """
+        Автоматично додає "важкі" монети в blacklist
+        
+        Args:
+            symbols: Список символів для перевірки
+            volatility_data: {symbol: volatility_24h_pct}
+            min_volatility: Мінімальна волатильність (%) щоб НЕ потрапити в blacklist
+        
+        Returns:
+            Кількість доданих в blacklist
+        """
+        added = 0
+        for symbol in symbols:
+            vol = volatility_data.get(symbol, 0)
+            if vol < min_volatility and vol > 0:  # Exclude zero (no data)
+                if self.add_to_blacklist(
+                    symbol=symbol,
+                    reason='LOW_VOLATILITY',
+                    volatility=vol,
+                    note=f'Auto-blacklisted: {vol:.1f}% < {min_volatility}%'
+                ):
+                    added += 1
+        return added
+    
+    # ============================================================
+    # SMC Order Block State (Pine SMC_PRO_BOT__47_)
+    # ============================================================
+    # Single-row-per-(symbol,timeframe) cache. Updated on every scan tick
+    # for every watchlist symbol. Used by:
+    #   1) Chart panel — to render the OB badge without re-running detection
+    #   2) Signal gate — to block opens that don't match the OB direction
+    #
+    # Both readers and writers share this table so there's no race between
+    # "what the user sees" and "what the gate checks".
+    
+    def upsert_smc_ob_state(self, symbol: str, timeframe: str,
+                              ob_data: Optional[Dict]) -> bool:
+        """Update (or insert) the SMC OB state for a symbol+timeframe.
+        
+        Pass ob_data=None when the detector found no valid OB — we still
+        write a row with bias=None so the gate sees "we computed and
+        nothing exists" (different from "we never computed").
+        
+        Returns True on successful write, False on DB error.
+        """
+        session = get_session()
+        try:
+            row = session.query(SMCOBState).filter_by(
+                symbol=symbol, timeframe=timeframe).first()
+            if row is None:
+                row = SMCOBState(symbol=symbol, timeframe=timeframe)
+                session.add(row)
+            
+            if ob_data:
+                row.bias = ob_data.get('bias')
+                row.bar_high = ob_data.get('bar_high')
+                row.bar_low = ob_data.get('bar_low')
+                row.bar_time_ms = ob_data.get('bar_time')
+                row.bar_idx = ob_data.get('bar_idx')
+                row.created_at_idx = ob_data.get('created_at_idx')
+                row.created_at_t = ob_data.get('created_at_t')
+                row.created_by_tag = ob_data.get('created_by_tag')
+            else:
+                # Explicitly clear when no OB exists — important for the gate.
+                row.bias = None
+                row.bar_high = None
+                row.bar_low = None
+                row.bar_time_ms = None
+                row.bar_idx = None
+                row.created_at_idx = None
+                row.created_at_t = None
+                row.created_by_tag = None
+            
+            row.computed_at = datetime.utcnow()
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] upsert_smc_ob_state error for {symbol}@{timeframe}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def get_smc_ob_state(self, symbol: str,
+                          timeframe: str) -> Optional[Dict]:
+        """Fetch the cached OB state. Returns None if no row exists yet
+        (i.e. scanner hasn't computed for this symbol+TF), or a dict with
+        `bias=None` when scanner ran but found no valid OB.
+        
+        The distinction matters: 'never computed' is reasonable to
+        wait-and-retry, while 'computed and empty' is a definitive signal
+        for the gate to block.
+        """
+        session = get_session()
+        try:
+            row = session.query(SMCOBState).filter_by(
+                symbol=symbol, timeframe=timeframe).first()
+            if row is None:
+                return None
+            return row.to_dict()
+        except Exception as e:
+            print(f"[DB] get_smc_ob_state error for {symbol}@{timeframe}: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def get_smc_ob_states_bulk(self, symbols: List[str],
+                                timeframe: str) -> Dict[str, Dict]:
+        """Batch fetcher: returns dict {symbol → ob_state_dict} for all
+        rows matching the requested symbols at the given timeframe.
+        Symbols with no row are simply absent from the returned dict
+        (caller can treat absence as "not yet computed").
+        
+        Used by SMCScanner.get_state() to efficiently populate per-symbol
+        OB markers in the watchlist UI without doing one DB roundtrip
+        per symbol (would be 20+ queries on every /api/smc/state poll).
+        """
+        if not symbols:
+            return {}
+        session = get_session()
+        try:
+            rows = session.query(SMCOBState).filter(
+                SMCOBState.timeframe == timeframe,
+                SMCOBState.symbol.in_(symbols)
+            ).all()
+            return {r.symbol: r.to_dict() for r in rows}
+        except Exception as e:
+            print(f"[DB] get_smc_ob_states_bulk error: {e}")
+            return {}
+        finally:
+            session.close()
+    
+    def delete_smc_ob_state_for_symbol(self, symbol: str) -> int:
+        """Wipe all OB state rows for a symbol — called when symbol is
+        removed from watchlist so we don't accumulate stale data.
+        Returns count of rows deleted.
+        """
+        session = get_session()
+        try:
+            n = session.query(SMCOBState).filter_by(symbol=symbol).delete()
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] delete_smc_ob_state_for_symbol error for {symbol}: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    # ============================================================
+    # TOP-100 4H OB Radar — snapshot + history
+    # ============================================================
+    
+    def upsert_top100_ob_snapshot(self, symbol: str, market_ctx: Dict,
+                                    ob_data: Optional[Dict],
+                                    is_fresh_for_symbol: bool = False) -> bool:
+        """Upsert a TOP-100 OB snapshot row.
+        
+        Args:
+            symbol: e.g. 'BTCUSDT'
+            market_ctx: dict with 'quote_volume_24h', 'last_price',
+                'price_change_24h' from the ticker fetch.
+            ob_data: dict from ob_detector.detect_last_order_block (may be
+                None if no valid OB exists for this symbol right now).
+            is_fresh_for_symbol: True if this OB is different from the
+                previous snapshot (created_at_t differs). When True,
+                discovered_at is set to now; when False, only last_seen_at
+                advances. Caller should compute this by comparing with the
+                prior snapshot before calling.
+        
+        Returns True on successful write.
+        """
+        session = get_session()
+        try:
+            row = session.query(Top100OBSnapshot).filter_by(symbol=symbol).first()
+            now = datetime.utcnow()
+            if row is None:
+                row = Top100OBSnapshot(symbol=symbol)
+                session.add(row)
+                # First time we've seen this symbol — if it has an OB now,
+                # treat it as freshly discovered.
+                if ob_data:
+                    row.discovered_at = now
+            
+            row.quote_volume_24h = market_ctx.get('quote_volume_24h')
+            row.last_price = market_ctx.get('last_price')
+            row.price_change_24h = market_ctx.get('price_change_24h')
+            
+            if ob_data:
+                row.bias = ob_data.get('bias')
+                row.bar_high = ob_data.get('bar_high')
+                row.bar_low = ob_data.get('bar_low')
+                row.bar_time_ms = ob_data.get('bar_time')
+                row.created_at_t = ob_data.get('created_at_t')
+                row.created_by_tag = ob_data.get('created_by_tag')
+                # Zone fields supplied by scanner via ob_data extension
+                row.zone = ob_data.get('zone')
+                row.zone_correct = ob_data.get('zone_correct')
+                row.zone_pct = ob_data.get('zone_pct')
+                if is_fresh_for_symbol:
+                    # Caller indicated this is a different OB than before
+                    row.discovered_at = now
+                row.last_seen_at = now
+            else:
+                # No valid OB — clear OB fields but keep symbol row alive
+                # so we still have market_ctx tracking.
+                row.bias = None
+                row.bar_high = None
+                row.bar_low = None
+                row.bar_time_ms = None
+                row.created_at_t = None
+                row.created_by_tag = None
+                row.zone = None
+                row.zone_correct = None
+                row.zone_pct = None
+                # Don't touch discovered_at — preserve "we last saw this
+                # OB at X" history. last_seen_at also preserved for the
+                # same reason — UI can show "OB lost N hours ago".
+            
+            row.scanned_at = now
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] upsert_top100_ob_snapshot error for {symbol}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def clear_top100_ob_snapshots(self) -> int:
+        """Remove ALL Top100 OB snapshot rows. Returns row count cleared.
+        
+        Used when the scanner timeframe changes — OBs computed on different
+        TFs aren't comparable, so a clean slate is the only safe option.
+        We DON'T touch the history table (sob_top100_ob_history); it's
+        an audit log of past events and stays intact for analytics.
+        """
+        session = get_session()
+        try:
+            count = session.query(Top100OBSnapshot).delete(synchronize_session=False)
+            session.commit()
+            return int(count or 0)
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] clear_top100_ob_snapshots error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def get_top100_ob_snapshot(self, symbol: str) -> Optional[Dict]:
+        """Get a single symbol's current snapshot row, or None."""
+        session = get_session()
+        try:
+            row = session.query(Top100OBSnapshot).filter_by(symbol=symbol).first()
+            return row.to_dict() if row else None
+        except Exception as e:
+            print(f"[DB] get_top100_ob_snapshot error for {symbol}: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def list_top100_ob_snapshots(self, only_with_ob: bool = False,
+                                   min_quote_volume: float = 0.0
+                                   ) -> List[Dict]:
+        """Return all current snapshots (optionally filtered).
+        
+        Args:
+            only_with_ob: if True, return only rows where bias is set
+                (i.e. an OB currently exists). Default False — UI may
+                want to show "no OB" symbols too.
+            min_quote_volume: filter out symbols with 24h vol below this.
+        """
+        session = get_session()
+        try:
+            q = session.query(Top100OBSnapshot)
+            if only_with_ob:
+                q = q.filter(Top100OBSnapshot.bias.isnot(None))
+            if min_quote_volume > 0:
+                q = q.filter(Top100OBSnapshot.quote_volume_24h >= min_quote_volume)
+            # Sort by quote_volume descending — most-traded first
+            q = q.order_by(Top100OBSnapshot.quote_volume_24h.desc())
+            return [r.to_dict() for r in q.all()]
+        except Exception as e:
+            print(f"[DB] list_top100_ob_snapshots error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def add_top100_ob_history(self, symbol: str, event_type: str,
+                                ob_data: Optional[Dict],
+                                price_at_event: Optional[float],
+                                quote_volume_24h: Optional[float]) -> bool:
+        """Append a history row. event_type: 'created' | 'mitigated' | 'replaced'.
+        
+        For 'mitigated' events ob_data should be the OB that was mitigated
+        (snapshot from the previous scan). For 'created' / 'replaced' it's
+        the new OB. Caller is responsible for providing the right snapshot.
+        """
+        if event_type not in ('created', 'mitigated', 'replaced'):
+            print(f"[DB] add_top100_ob_history: invalid event_type {event_type!r}")
+            return False
+        session = get_session()
+        try:
+            h = Top100OBHistory(
+                symbol=symbol,
+                event_type=event_type,
+                bias=ob_data.get('bias') if ob_data else None,
+                bar_high=ob_data.get('bar_high') if ob_data else None,
+                bar_low=ob_data.get('bar_low') if ob_data else None,
+                bar_time_ms=ob_data.get('bar_time') if ob_data else None,
+                created_by_tag=ob_data.get('created_by_tag') if ob_data else None,
+                price_at_event=price_at_event,
+                quote_volume_24h=quote_volume_24h,
+            )
+            session.add(h)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] add_top100_ob_history error for {symbol}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def list_top100_ob_history(self, hours: int = 24,
+                                 event_types: Optional[List[str]] = None,
+                                 limit: int = 100) -> List[Dict]:
+        """Return recent history events.
+        
+        Args:
+            hours: how far back to look (default 24h for the "Recent
+                Discoveries" feed).
+            event_types: optional filter to specific event types.
+            limit: cap result count.
+        """
+        from datetime import timedelta
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            q = session.query(Top100OBHistory).filter(
+                Top100OBHistory.created_at >= cutoff)
+            if event_types:
+                q = q.filter(Top100OBHistory.event_type.in_(event_types))
+            q = q.order_by(Top100OBHistory.created_at.desc()).limit(limit)
+            return [r.to_dict() for r in q.all()]
+        except Exception as e:
+            print(f"[DB] list_top100_ob_history error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def cleanup_top100_ob_history(self, retention_days: int = 30) -> int:
+        """Delete history rows older than `retention_days`. Called daily by
+        the scanner. Returns rows deleted.
+        """
+        from datetime import timedelta
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=retention_days)
+            n = session.query(Top100OBHistory).filter(
+                Top100OBHistory.created_at < cutoff).delete()
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] cleanup_top100_ob_history error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    # ============================================================
+    # Volumized OB Radar — metadata / stats / snapshots
+    # ============================================================
+    
+    def volradar_get_metadata(self, symbol: str) -> Optional[Dict]:
+        """Return active radar metadata for a symbol, or None if not tracked."""
+        session = get_session()
+        try:
+            row = session.query(VolumizedRadarMetadata).filter_by(symbol=symbol).first()
+            return row.to_dict() if row else None
+        except Exception as e:
+            print(f"[DB] volradar_get_metadata error: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def volradar_list_metadata(self) -> List[Dict]:
+        """All currently tracked radar items (for dashboard view)."""
+        session = get_session()
+        try:
+            rows = session.query(VolumizedRadarMetadata).order_by(
+                VolumizedRadarMetadata.added_at.desc()).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] volradar_list_metadata error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def volradar_add(self, symbol: str, ob_direction: str,
+                    ob_top: float, ob_bottom: float, ob_volume: float,
+                    pd_zone_pct: float, scan_tf: str,
+                    ttl_hours: int = 24) -> bool:
+        """Insert metadata row + bump stats. Returns True if new add, False
+        if a row already existed (radar shouldn't re-add the same symbol).
+        
+        Stats: times_added++, last_added_at=now.
+        """
+        session = get_session()
+        try:
+            # Idempotency: refuse to insert if metadata already present.
+            existing = session.query(VolumizedRadarMetadata).filter_by(symbol=symbol).first()
+            if existing:
+                return False
+            
+            now = datetime.utcnow()
+            session.add(VolumizedRadarMetadata(
+                symbol=symbol,
+                added_at=now,
+                expires_at=now + timedelta(hours=ttl_hours),
+                ob_direction=ob_direction,
+                ob_top=ob_top,
+                ob_bottom=ob_bottom,
+                ob_volume=ob_volume,
+                pd_zone_pct=pd_zone_pct,
+                scan_tf=scan_tf,
+            ))
+            
+            # Stats upsert
+            stat = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            if stat is None:
+                stat = VolumizedRadarStat(symbol=symbol, times_added=1, last_added_at=now)
+                session.add(stat)
+            else:
+                stat.times_added = (stat.times_added or 0) + 1
+                stat.last_added_at = now
+            
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_add error for {symbol}: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def volradar_mark_signal_fired(self, symbol: str) -> bool:
+        """Called from smc_scanner._send_alert hook. If symbol is tracked by
+        radar, latch signal_fired_at and bump times_signal_fired. Deletes
+        the metadata row (symbol "graduates" to normal watchlist flow).
+        
+        Returns True if a row was removed; False if symbol wasn't tracked
+        (which is the normal case for most alerts).
+        """
+        session = get_session()
+        try:
+            row = session.query(VolumizedRadarMetadata).filter_by(symbol=symbol).first()
+            if row is None:
+                return False
+            
+            stat = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            if stat is not None:
+                stat.times_signal_fired = (stat.times_signal_fired or 0) + 1
+            
+            session.delete(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_mark_signal_fired error: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def volradar_remove(self, symbol: str, reason: str,
+                       cooldown_hours: int = 6) -> bool:
+        """Delete metadata row + bump correct removal counter + set cooldown.
+        
+        Args:
+            reason: 'auto_ttl' | 'manual' — drives which counter ++
+            cooldown_hours: future re-adds blocked until now+cooldown
+        """
+        session = get_session()
+        try:
+            row = session.query(VolumizedRadarMetadata).filter_by(symbol=symbol).first()
+            if row is None:
+                return False
+            
+            stat = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            if stat is not None:
+                if reason == 'auto_ttl':
+                    stat.times_auto_removed = (stat.times_auto_removed or 0) + 1
+                elif reason == 'manual':
+                    stat.times_manual_removed = (stat.times_manual_removed or 0) + 1
+                stat.last_cooldown_until = datetime.utcnow() + timedelta(hours=cooldown_hours)
+            
+            session.delete(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_remove error: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def volradar_find_expired(self) -> List[str]:
+        """Return symbols whose TTL has elapsed (cleanup daemon's worklist)."""
+        session = get_session()
+        try:
+            rows = session.query(VolumizedRadarMetadata.symbol).filter(
+                VolumizedRadarMetadata.expires_at < datetime.utcnow()).all()
+            return [r[0] for r in rows]
+        except Exception as e:
+            print(f"[DB] volradar_find_expired error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def volradar_get_stat(self, symbol: str) -> Optional[Dict]:
+        """Lifetime counters for a symbol. None if never tracked."""
+        session = get_session()
+        try:
+            row = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            return row.to_dict() if row else None
+        except Exception as e:
+            print(f"[DB] volradar_get_stat error: {e}")
+            return None
+        finally:
+            session.close()
+    
+    def volradar_list_stats(self, limit: int = 100) -> List[Dict]:
+        """All stats rows sorted by times_added desc (top-performers first)."""
+        session = get_session()
+        try:
+            rows = session.query(VolumizedRadarStat).order_by(
+                VolumizedRadarStat.times_added.desc()).limit(limit).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] volradar_list_stats error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def volradar_is_on_cooldown(self, symbol: str) -> bool:
+        """True if symbol is still inside its post-removal cooldown window."""
+        session = get_session()
+        try:
+            stat = session.query(VolumizedRadarStat).filter_by(symbol=symbol).first()
+            if stat is None or stat.last_cooldown_until is None:
+                return False
+            return stat.last_cooldown_until > datetime.utcnow()
+        except Exception as e:
+            print(f"[DB] volradar_is_on_cooldown error: {e}")
+            return False
+        finally:
+            session.close()
+    
+    def volradar_log_snapshot(self, symbol: str, qualified: bool, action: str,
+                              ob_direction: Optional[str] = None,
+                              ob_top: Optional[float] = None,
+                              ob_bottom: Optional[float] = None,
+                              pd_zone_pct: Optional[float] = None,
+                              error_msg: Optional[str] = None) -> None:
+        """Append one audit-log entry per (scan, symbol). Cheap & idempotent."""
+        session = get_session()
+        try:
+            session.add(VolumizedRadarSnapshot(
+                scan_time=datetime.utcnow(),
+                symbol=symbol,
+                ob_direction=ob_direction,
+                ob_top=ob_top,
+                ob_bottom=ob_bottom,
+                pd_zone_pct=pd_zone_pct,
+                qualified=qualified,
+                action=action,
+                error_msg=error_msg,
+            ))
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_log_snapshot error: {e}")
+        finally:
+            session.close()
+    
+    def volradar_list_snapshots(self, hours: int = 24, limit: int = 500) -> List[Dict]:
+        """Recent audit log entries (default last 24h, capped at 500 rows)."""
+        session = get_session()
+        try:
+            since = datetime.utcnow() - timedelta(hours=hours)
+            rows = session.query(VolumizedRadarSnapshot).filter(
+                VolumizedRadarSnapshot.scan_time >= since
+            ).order_by(VolumizedRadarSnapshot.scan_time.desc()).limit(limit).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] volradar_list_snapshots error: {e}")
+            return []
+        finally:
+            session.close()
+    
+    def volradar_prune_snapshots(self, retention_days: int = 7) -> int:
+        """Daily cleanup — keep last `retention_days` of audit log."""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=retention_days)
+            n = session.query(VolumizedRadarSnapshot).filter(
+                VolumizedRadarSnapshot.scan_time < cutoff).delete()
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] volradar_prune_snapshots error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    # ========================================================================
+    # === Liquidation Map ====================================================
+    # ========================================================================
+    
+    def liqmap_save_oi_snapshot(self, symbol: str, exchange: str, ts: int,
+                                  oi_usd: float, mark_price: float,
+                                  long_ratio=None) -> None:
+        """Persist one OI snapshot. We keep the LAST 3 snapshots per
+        (symbol, exchange) — enough for delta computation with buffer for
+        a missed tick."""
+        session = get_session()
+        try:
+            row = LiquidationOISnapshot(
+                symbol=symbol, exchange=exchange, ts=ts,
+                open_interest_usd=oi_usd, mark_price=mark_price,
+                long_ratio=long_ratio,
+            )
+            session.add(row)
+            old = session.query(LiquidationOISnapshot).filter_by(
+                symbol=symbol, exchange=exchange
+            ).order_by(LiquidationOISnapshot.ts.desc()).offset(3).all()
+            for r in old:
+                session.delete(r)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_save_oi_snapshot error: {e}")
+        finally:
+            session.close()
+    
+    def liqmap_get_latest_oi(self, symbol: str, exchange: str):
+        """Return most recent (oi_usd, mark_price, long_ratio, ts) dict or None."""
+        session = get_session()
+        try:
+            row = session.query(LiquidationOISnapshot).filter_by(
+                symbol=symbol, exchange=exchange
+            ).order_by(LiquidationOISnapshot.ts.desc()).first()
+            if not row:
+                return None
+            return {
+                'oi_usd': row.open_interest_usd,
+                'mark_price': row.mark_price,
+                'long_ratio': row.long_ratio,
+                'ts': row.ts,
+            }
+        finally:
+            session.close()
+    
+    def liqmap_upsert_bucket(self, symbol: str, bucket_price: float,
+                                side: str, leverage: int, source: str,
+                                added_usd: float, now_ts: int) -> None:
+        """Add `added_usd` to (symbol, bucket_price, side, leverage, source)
+        bucket. Creates row if absent. Skips mitigated buckets — new positions
+        at same price get a fresh bucket."""
+        if added_usd <= 0:
+            return
+        session = get_session()
+        try:
+            existing = session.query(LiquidationBucket).filter_by(
+                symbol=symbol, bucket_price=bucket_price,
+                side=side, leverage=leverage, source=source,
+                mitigated_at_ts=None,
+            ).first()
+            if existing:
+                existing.cumulative_usd += added_usd
+                existing.contribution_count += 1
+                existing.last_updated_ts = now_ts
+            else:
+                row = LiquidationBucket(
+                    symbol=symbol, bucket_price=bucket_price,
+                    side=side, leverage=leverage, source=source,
+                    cumulative_usd=added_usd, contribution_count=1,
+                    first_seen_ts=now_ts, last_updated_ts=now_ts,
+                )
+                session.add(row)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_upsert_bucket error: {e}")
+        finally:
+            session.close()
+    
+    def liqmap_get_active_buckets(self, symbol: str,
+                                     min_price=None, max_price=None,
+                                     include_mitigated: bool = False) -> list:
+        """All active (and optionally mitigated) buckets for symbol, sorted
+        by bucket_price ASC. Filtered to [min_price, max_price] when given."""
+        session = get_session()
+        try:
+            q = session.query(LiquidationBucket).filter_by(symbol=symbol)
+            if not include_mitigated:
+                q = q.filter(LiquidationBucket.mitigated_at_ts.is_(None))
+            if min_price is not None:
+                q = q.filter(LiquidationBucket.bucket_price >= min_price)
+            if max_price is not None:
+                q = q.filter(LiquidationBucket.bucket_price <= max_price)
+            return [b.to_dict() for b in q.order_by(
+                LiquidationBucket.bucket_price.asc()).all()]
+        finally:
+            session.close()
+    
+    def liqmap_mark_mitigated(self, symbol: str, low_price: float,
+                                 high_price: float, now_ts: int) -> int:
+        """Mark active buckets in [low_price, high_price] as mitigated."""
+        session = get_session()
+        try:
+            n = session.query(LiquidationBucket).filter(
+                LiquidationBucket.symbol == symbol,
+                LiquidationBucket.mitigated_at_ts.is_(None),
+                LiquidationBucket.bucket_price >= low_price,
+                LiquidationBucket.bucket_price <= high_price,
+            ).update({'mitigated_at_ts': now_ts}, synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_mark_mitigated error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def liqmap_prune(self, retention_days: int = 30) -> int:
+        """Drop all buckets older than retention_days (by last_updated_ts)."""
+        session = get_session()
+        try:
+            import time as _t
+            cutoff_ts = int(_t.time()) - retention_days * 86400
+            n = session.query(LiquidationBucket).filter(
+                LiquidationBucket.last_updated_ts < cutoff_ts
+            ).delete(synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_prune error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    # === Event-based storage (new) ==========================================
+    
+    def liqmap_save_event(self, symbol: str, ts: int, bucket_price: float,
+                            side: str, leverage: int, usd_added: float,
+                            source: str = 'estimation') -> None:
+        """Append one liquidation event row. Immutable — never updated.
+        Multiple events at the same (price, side, lev) accumulate as
+        separate rows so the chart shows time-distributed dashes."""
+        if usd_added <= 0:
+            return
+        session = get_session()
+        try:
+            row = LiquidationEvent(
+                symbol=symbol, ts=ts, bucket_price=bucket_price,
+                side=side, leverage=leverage, usd_added=usd_added,
+                source=source,
+            )
+            session.add(row)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_save_event error: {e}")
+        finally:
+            session.close()
+    
+    def liqmap_save_events_batch(self, events: list) -> int:
+        """Bulk-insert a list of event dicts in one transaction. Each
+        dict needs: symbol, ts, bucket_price, side, leverage, usd_added,
+        source. Returns the count inserted. Used by the daemon to write
+        all contributions from one OI tick atomically."""
+        if not events:
+            return 0
+        session = get_session()
+        try:
+            objs = [LiquidationEvent(
+                symbol=e['symbol'], ts=e['ts'],
+                bucket_price=e['bucket_price'],
+                side=e['side'], leverage=e['leverage'],
+                usd_added=e['usd_added'],
+                source=e.get('source', 'estimation'),
+            ) for e in events if e.get('usd_added', 0) > 0]
+            if not objs:
+                return 0
+            session.bulk_save_objects(objs)
+            session.commit()
+            return len(objs)
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_save_events_batch error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def liqmap_get_events(self, symbol: str,
+                            lookback_seconds: int = 86400,
+                            min_price=None, max_price=None,
+                            include_mitigated: bool = False,
+                            limit: int = 3000) -> list:
+        """Fetch events in lookback window, filtered to price band.
+        Sorted by ts DESC, limited to `limit` rows so the frontend never
+        chokes on huge result sets.
+        
+        We pick MOST RECENT events when truncating — that's what the user
+        cares about visually (recent texture > old texture)."""
+        import time as _t
+        cutoff = int(_t.time()) - lookback_seconds
+        session = get_session()
+        try:
+            q = session.query(LiquidationEvent).filter(
+                LiquidationEvent.symbol == symbol,
+                LiquidationEvent.ts >= cutoff,
+            )
+            if not include_mitigated:
+                q = q.filter(LiquidationEvent.mitigated_at_ts.is_(None))
+            if min_price is not None:
+                q = q.filter(LiquidationEvent.bucket_price >= min_price)
+            if max_price is not None:
+                q = q.filter(LiquidationEvent.bucket_price <= max_price)
+            return [e.to_dict() for e in q.order_by(
+                LiquidationEvent.ts.desc()).limit(limit).all()]
+        finally:
+            session.close()
+    
+    def liqmap_mark_events_mitigated(self, symbol: str,
+                                        low_price: float, high_price: float,
+                                        now_ts: int) -> int:
+        """Mark all active events in [low_price, high_price] as mitigated.
+        Called by daemon when recent klines wick through a price band."""
+        session = get_session()
+        try:
+            n = session.query(LiquidationEvent).filter(
+                LiquidationEvent.symbol == symbol,
+                LiquidationEvent.mitigated_at_ts.is_(None),
+                LiquidationEvent.bucket_price >= low_price,
+                LiquidationEvent.bucket_price <= high_price,
+            ).update({'mitigated_at_ts': now_ts}, synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_mark_events_mitigated error: {e}")
+            return 0
+        finally:
+            session.close()
+    
+    def liqmap_prune_events(self, retention_days: int = 30) -> int:
+        """Daily cleanup — delete events older than retention_days by ts."""
+        import time as _t
+        cutoff_ts = int(_t.time()) - retention_days * 86400
+        session = get_session()
+        try:
+            n = session.query(LiquidationEvent).filter(
+                LiquidationEvent.ts < cutoff_ts
+            ).delete(synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] liqmap_prune_events error: {e}")
+            return 0
+        finally:
+            session.close()
+
+    # ====================================================================
+    # Liquidity Heatmap profiles — depth snapshots per symbol over time
+    # ====================================================================
+    def add_liq_heatmap_profile(self, symbol: str, ts: datetime, mid_price: float,
+                                  bid_data: str, ask_data: str) -> bool:
+        """Insert one depth-profile row. bid_data/ask_data are pre-serialized
+        JSON strings (callers pre-encode to avoid duplicating json.dumps in DB layer).
+        """
+        session = get_session()
+        try:
+            row = LiqHeatmapProfile(
+                symbol=symbol,
+                ts=ts,
+                mid_price=mid_price,
+                bid_data=bid_data,
+                ask_data=ask_data,
+            )
+            session.add(row)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] add_liq_heatmap_profile error: {e}")
+            return False
+        finally:
+            session.close()
+
+    def get_liq_heatmap_profiles(self, symbol: str, hours: int) -> List[Dict]:
+        """Return all profile rows for a symbol within the last N hours.
+        Returns rows ordered by ts ascending (oldest first).
+        bid_data/ask_data come back as raw JSON strings — caller decodes.
+        """
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            rows = session.query(LiqHeatmapProfile).filter(
+                LiqHeatmapProfile.symbol == symbol,
+                LiqHeatmapProfile.ts >= cutoff
+            ).order_by(LiqHeatmapProfile.ts.asc()).all()
+            return [r.to_dict() for r in rows]
+        except Exception as e:
+            print(f"[DB] get_liq_heatmap_profiles error: {e}")
+            return []
+        finally:
+            session.close()
+
+    def get_liq_heatmap_symbols(self) -> List[str]:
+        """Return distinct symbols that have at least one profile stored."""
+        session = get_session()
+        try:
+            rows = session.query(LiqHeatmapProfile.symbol).distinct().all()
+            return sorted([r[0] for r in rows])
+        except Exception as e:
+            print(f"[DB] get_liq_heatmap_symbols error: {e}")
+            return []
+        finally:
+            session.close()
+
+    def cleanup_liq_heatmap_profiles(self, retention_days: int = 7) -> int:
+        """Delete profiles older than retention_days. Returns rows removed."""
+        session = get_session()
+        try:
+            cutoff = datetime.utcnow() - timedelta(days=retention_days)
+            n = session.query(LiqHeatmapProfile).filter(
+                LiqHeatmapProfile.ts < cutoff
+            ).delete(synchronize_session=False)
+            session.commit()
+            return n
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] cleanup_liq_heatmap_profiles error: {e}")
+            return 0
+        finally:
+            session.close()
+
+    # ================================================================
+    # === Blocked Trades (Quality Gate V2 rejections) ===
+    # ================================================================
+
+    def record_blocked_trade(self, symbol: str, side: str, entry_price: float,
+                             blocked_reason: str, is_paper: bool = True,
+                             snapshot: dict = None, health_score: int = None,
+                             entry_score: int = None):
+        """Record a trade blocked by Quality Gate V2.
+
+        Args:
+            symbol: trading pair
+            side: LONG/SHORT
+            entry_price: would-be entry
+            blocked_reason: 'quality_score_too_low' | 'exhaustion_kill_switch'
+            is_paper: True if test_mode was active
+            snapshot: dict with score/grade/breakdown/reason/metrics (JSON-encoded)
+            health_score: V2 overall score (0-100)
+            entry_score: reserved for future Entry scoring
+        """
+        import json
+        from storage.db_models import BlockedTrade
+        session = self.Session()
+        try:
+            snap_json = json.dumps(snapshot) if snapshot else '{}'
+            record = BlockedTrade(
+                symbol=symbol,
+                side=side,
+                entry_price=entry_price,
+                blocked_reason=blocked_reason,
+                is_paper=is_paper,
+                snapshot=snap_json,
+                health_score=health_score,
+                entry_score=entry_score,
+            )
+            session.add(record)
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] record_blocked_trade error: {e}")
+            raise
+        finally:
+            session.close()
+
+    def get_blocked_trades(self, limit: int = 100, is_paper: bool = None,
+                           symbol: str = None) -> list:
+        """Get blocked trades with optional filters.
+
+        Args:
+            limit: max records
+            is_paper: filter by test_mode (None = all)
+            symbol: filter by symbol (None = all)
+
+        Returns:
+            List of dicts (to_dict() output)
+        """
+        from storage.db_models import BlockedTrade
+        session = self.Session()
+        try:
+            q = session.query(BlockedTrade)
+            if is_paper is not None:
+                q = q.filter(BlockedTrade.is_paper == is_paper)
+            if symbol:
+                q = q.filter(BlockedTrade.symbol == symbol.upper())
+            q = q.order_by(BlockedTrade.blocked_at.desc()).limit(limit)
+            return [r.to_dict() for r in q.all()]
+        except Exception as e:
+            print(f"[DB] get_blocked_trades error: {e}")
+            return []
+        finally:
+            session.close()
+
+    def get_blocked_trades_stats(self) -> dict:
+        """Get aggregate stats about blocked trades.
+
+        Returns:
+            {'ok': bool, 'total': int, 'real': int, 'paper': int}
+        """
+        from storage.db_models import BlockedTrade
+        from sqlalchemy import func
+        session = self.Session()
+        try:
+            total = session.query(func.count(BlockedTrade.id)).scalar() or 0
+            real = session.query(func.count(BlockedTrade.id)).filter(
+                BlockedTrade.is_paper == False).scalar() or 0
+            paper = session.query(func.count(BlockedTrade.id)).filter(
+                BlockedTrade.is_paper == True).scalar() or 0
+            return {'ok': True, 'total': total, 'real': real, 'paper': paper}
+        except Exception as e:
+            print(f"[DB] get_blocked_trades_stats error: {e}")
+            return {'ok': False, 'total': 0, 'real': 0, 'paper': 0}
+        finally:
+            session.close()
+
+    def clear_blocked_trades(self, is_paper: bool = None) -> int:
+        """Clear blocked trades (DESTRUCTIVE).
+
+        Args:
+            is_paper: None = all, True = paper only, False = real only
+
+        Returns:
+            Number of records deleted
+        """
+        from storage.db_models import BlockedTrade
+        session = self.Session()
+        try:
+            q = session.query(BlockedTrade)
+            if is_paper is not None:
+                q = q.filter(BlockedTrade.is_paper == is_paper)
+            removed = q.delete(synchronize_session=False)
+            session.commit()
+            return removed
+        except Exception as e:
+            session.rollback()
+            print(f"[DB] clear_blocked_trades error: {e}")
+            return 0
+        finally:
+            session.close()
+
+
+# Singleton instance
+_db_instance = None
+
+def get_db() -> DBOperations:
+    """Get database operations instance"""
+    global _db_instance
+    if _db_instance is None:
+        _db_instance = DBOperations()
+    return _db_instance

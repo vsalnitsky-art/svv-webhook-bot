@@ -1,0 +1,2154 @@
+{% extends "base.html" %}
+{% block title %}Settings - VSV WebHook BOT{% endblock %}
+
+{% block content %}
+<div class="page settings-page">
+    <div class="page-header">
+        <h1>⚙️ Bot Settings</h1>
+        <div class="header-actions">
+            <button class="btn btn-secondary" onclick="resetDefaults()">🔄 Reset Defaults</button>
+        </div>
+    </div>
+
+    <form id="settings-form" class="settings-form">
+        <!-- Tabs -->
+        <div class="settings-tabs">
+            <button type="button" class="tab-btn active" data-tab="general">General</button>
+            <button type="button" class="tab-btn" data-tab="credentials">🔐 API Credentials</button>
+            <button type="button" class="tab-btn" data-tab="trend">📈 Trend Context</button>
+            <button type="button" class="tab-btn" data-tab="sleeper">Sleeper Detection</button>
+            <button type="button" class="tab-btn" data-tab="orderblock">Order Blocks</button>
+            <button type="button" class="tab-btn" data-tab="trading">Trading</button>
+            <button type="button" class="tab-btn" data-tab="notifications">Notifications</button>
+            <button type="button" class="tab-btn" data-tab="maintenance">🗑️ Maintenance</button>
+        </div>
+
+        <!-- General Tab -->
+        <div class="tab-content active" id="tab-general">
+            <div class="settings-section">
+                <h2>🎮 Execution Mode</h2>
+                
+                <div class="form-group">
+                    <label for="execution_mode">Mode</label>
+                    <select id="execution_mode" name="execution_mode" class="form-control">
+                        {% for mode in execution_modes %}
+                        <option value="{{ mode }}" {% if settings.execution_mode == mode %}selected{% endif %}>
+                            {{ mode }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <small>MANUAL = alerts only | SEMI_AUTO = confirm trades | AUTO = automatic</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="trading_mode">Trading Style</label>
+                    <select id="trading_mode" name="trading_mode" class="form-control">
+                        <option value="SCALPING" {% if settings.trading_mode == 'SCALPING' %}selected{% endif %}>
+                            ⚡ SCALPING - Quick trades, tight stops, frequent
+                        </option>
+                        <option value="SWING" {% if settings.trading_mode == 'SWING' or not settings.trading_mode %}selected{% endif %}>
+                            📊 SWING - Longer holds, wider stops, patient
+                        </option>
+                    </select>
+                    <small>SCALPING: 15m setup, 5m entry, RR 1.5 | SWING: 1H setup, 15m entry, RR 3.0</small>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="paper_trading" name="paper_trading" 
+                                   {% if settings.paper_trading %}checked{% endif %}>
+                            📝 Paper Trading Mode
+                        </label>
+                        <small>Simulate trades without real money</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="paper_balance">Paper Balance ($)</label>
+                        <div class="input-group">
+                            <input type="number" id="paper_balance" name="paper_balance" 
+                                   value="{{ settings.paper_balance | default(10000) | round(2) }}" 
+                                   step="100" min="100" max="1000000" class="form-control">
+                            <button type="button" class="btn btn-secondary" onclick="resetPaperBalance()">Reset to $10K</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 🔐 API Credentials Tab -->
+        <!-- 
+          Three-tier resolver UI:
+            1. DB encrypted (managed here)
+            2. ENV plain (BYBIT_API_KEY)
+            3. ENV encrypted (BYBIT_API_KEY_ENCRYPTED)
+          
+          The UI shows current status, lets user encrypt+save plain keys,
+          import already-encrypted blobs, clear DB to fall back to ENV,
+          test current keys against Bybit's auth, and generate a new
+          master ENCRYPTION_KEY if needed.
+        -->
+        <div class="tab-content" id="tab-credentials">
+            <div class="settings-section">
+                <h2>🔐 Bybit API Credentials</h2>
+                <p class="section-desc">
+                    Стан ключів Bybit, якими торгує бот, і перевірка на біржі. Внесення
+                    й видалення ключів — в особистому кабінеті адміністратора.
+                </p>
+
+                <!-- Current status block — populated by JS from /api/credentials/status -->
+                <div id="creds-status-block" style="background: rgba(255,255,255,0.04); border: 1px solid #444; border-radius: 6px; padding: 16px; margin-bottom: 20px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">Current source</div>
+                            <div style="font-size: 1.1rem; font-weight: 600;" id="creds-status-source">Loading…</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">API Key</div>
+                            <div style="font-family: monospace; font-size: 0.95rem;" id="creds-status-key">…</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">ENCRYPTION_KEY env</div>
+                            <div id="creds-status-master" style="font-size: 0.95rem;">…</div>
+                        </div>
+                        <div>
+                            <button type="button" class="btn btn-secondary" onclick="testCredentials()" id="creds-test-btn">
+                                🧪 Test against Bybit
+                            </button>
+                        </div>
+                    </div>
+                    <div id="creds-test-result" style="margin-top: 10px; padding: 8px 12px; border-radius: 4px; display: none; font-size: 0.9rem;"></div>
+                </div>
+
+                <!-- Master key generation — surfaces only when ENCRYPTION_KEY not set -->
+                <div id="creds-no-master" style="background: rgba(255,193,7,0.1); border: 1px solid rgba(255,193,7,0.4); border-radius: 6px; padding: 14px; margin-bottom: 20px; display: none;">
+                    <div style="font-weight: 600; margin-bottom: 6px; color: #ffc107;">
+                        ⚠️ ENCRYPTION_KEY not set
+                    </div>
+                    <p style="margin: 0 0 10px 0; font-size: 0.9rem;">
+                        To save encrypted keys in DB, you need a master encryption key
+                        in the <code>ENCRYPTION_KEY</code> env var. Click below to generate
+                        one, copy it to Render env vars, redeploy, then come back here.
+                    </p>
+                    <button type="button" class="btn btn-secondary" onclick="generateMasterKey()">
+                        🔑 Generate ENCRYPTION_KEY
+                    </button>
+                    <div id="creds-generated-master" style="margin-top: 10px; display: none;">
+                        <div style="font-size: 0.85rem; color: #888; margin-bottom: 4px;">
+                            Generated key — copy this to Render env var <code>ENCRYPTION_KEY</code>:
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="creds-generated-master-value" readonly
+                                   style="flex: 1; padding: 8px; background: #1a1a1a; border: 1px solid #555; color: #fff; border-radius: 4px; font-family: monospace; font-size: 0.85rem;">
+                            <button type="button" class="btn btn-secondary"
+                                    onclick="copyToClipboard('creds-generated-master-value')">📋 Copy</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 🔐 Введення ключів Bybit ПЕРЕНЕСЕНО в особистий кабінет
+                     адміністратора (вимога 24.11). Тут лишились стан і перевірка;
+                     збереження/видалення — картка «🤖 Торгівля з кабінету». Сховище
+                     те саме (Fernet → БД), реалізація одна: web/exchange_keys.py. -->
+                <div id="creds-moved" style="background: rgba(74,158,255,0.08); border: 1px solid rgba(74,158,255,0.4); border-radius: 6px; padding: 14px;">
+                    <div style="font-weight: 600; margin-bottom: 6px; color: #93c5fd;">
+                        🔐 Ключі Bybit тепер у вашому особистому кабінеті
+                    </div>
+                    <p style="margin: 0 0 10px 0; font-size: 0.9rem;">
+                        Внесення, заміна й видалення ключів — у кабінеті бота, розділ
+                        <b>«🔐 API-ключі біржі»</b> (і на інфосайті, картка «🤖 Торгівля з кабінету»;
+                        лише адміністратор).
+                        Ключі шифруються так само (Fernet, <code>ENCRYPTION_KEY</code>) і зберігаються
+                        в тій самій базі — бот одразу торгує з ними.
+                    </p>
+                    <a class="btn btn-primary" href="/cabinet#keys">👤 Відкрити кабінет · 🔐 ключі</a>
+                </div>
+            </div>
+
+            <!-- 🦎 CoinGecko API key (single key, used for market-cap universe) -->
+            <div class="settings-section">
+                <h2>🦎 CoinGecko API Credentials</h2>
+                <p class="section-desc">
+                    Single API key used by the Volumized OB Radar's "Market Cap"
+                    universe filter. Encrypted with Fernet and stored in DB
+                    (overrides the <code>COINGECKO_API_KEY</code> env var).
+                    CoinGecko works keyless too, but a Demo key is more stable.
+                </p>
+                <div id="cg-status-block" style="background: rgba(255,255,255,0.04); border: 1px solid #444; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">Current source</div>
+                            <div style="font-size: 1.05rem; font-weight: 600;" id="cg-status-source">Loading…</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">API Key</div>
+                            <div style="font-family: monospace;" id="cg-status-key">…</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="cg-key">CoinGecko API Key</label>
+                    <input type="password" id="cg-key" class="form-control" placeholder="CG-xxxxxxxxxxxxxxxxxxxx">
+                    <small>Demo key from coingecko.com → Developer Dashboard.</small>
+                </div>
+                <button type="button" class="btn btn-primary" onclick="saveCoinGeckoKey()">💾 Encrypt &amp; Save to DB</button>
+                <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #333;">
+                    <button type="button" class="btn btn-secondary" onclick="clearCoinGeckoKey()">
+                        🗑️ Clear DB key (fall back to ENV)
+                    </button>
+                </div>
+                <div id="cg-msg" style="margin-top: 10px; padding: 8px 12px; border-radius: 4px; display: none; font-size: 0.9rem;"></div>
+            </div>
+
+            <!-- 🟡 Binance API keys (key+secret; public API works without them) -->
+            <div class="settings-section">
+                <h2>🟡 Binance API Credentials</h2>
+                <p class="section-desc">
+                    Optional. The bot only uses Binance <strong>public</strong>
+                    endpoints (tickers, klines, OI) which need no auth — keys
+                    just raise rate limits. Encrypted with Fernet and stored in
+                    DB (overrides <code>BINANCE_API_KEY</code>/<code>BINANCE_API_SECRET</code>).
+                    Connector picks up new keys on next restart.
+                </p>
+                <div id="bn-status-block" style="background: rgba(255,255,255,0.04); border: 1px solid #444; border-radius: 6px; padding: 16px; margin-bottom: 16px;">
+                    <div style="display: flex; align-items: center; gap: 24px; flex-wrap: wrap;">
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">Current source</div>
+                            <div style="font-size: 1.05rem; font-weight: 600;" id="bn-status-source">Loading…</div>
+                        </div>
+                        <div>
+                            <div style="font-size: 0.85rem; color: #888;">API Key</div>
+                            <div style="font-family: monospace;" id="bn-status-key">…</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="bn-key">Binance API Key</label>
+                    <input type="password" id="bn-key" class="form-control" placeholder="64-character key">
+                </div>
+                <div class="form-group">
+                    <label for="bn-secret">Binance API Secret</label>
+                    <input type="password" id="bn-secret" class="form-control" placeholder="64-character secret">
+                </div>
+                <button type="button" class="btn btn-primary" onclick="saveBinanceKeys()">💾 Encrypt &amp; Save to DB</button>
+                <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid #333;">
+                    <button type="button" class="btn btn-secondary" onclick="clearBinanceKeys()">
+                        🗑️ Clear DB keys (fall back to ENV)
+                    </button>
+                </div>
+                <div id="bn-msg" style="margin-top: 10px; padding: 8px 12px; border-radius: 4px; display: none; font-size: 0.9rem;"></div>
+            </div>
+        </div>
+
+        <!-- Trend Context Tab (NEW) -->
+        <div class="tab-content" id="tab-trend">
+            <div class="settings-section">
+                <h2>📈 4H Trend Context Filter</h2>
+                <p class="section-desc">Professional trend analysis using 4-component TrendScore system</p>
+                
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="use_trend_filter" name="use_trend_filter" 
+                               {% if settings.use_trend_filter or settings.use_trend_filter is not defined %}checked{% endif %}>
+                        🎯 Enable 4H Trend Filter
+                    </label>
+                    <small>Only allow signals aligned with higher timeframe trend</small>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="trend_timeframe">Context Timeframe</label>
+                        <select id="trend_timeframe" name="trend_timeframe" class="form-control">
+                            <option value="60" {% if settings.trend_timeframe == '60' %}selected{% endif %}>1H</option>
+                            <option value="240" {% if settings.trend_timeframe == '240' or not settings.trend_timeframe %}selected{% endif %}>4H (Recommended)</option>
+                            <option value="D" {% if settings.trend_timeframe == 'D' %}selected{% endif %}>Daily</option>
+                        </select>
+                        <small>Timeframe for trend analysis</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="min_trend_score">Min Trend Score</label>
+                        <input type="number" id="min_trend_score" name="min_trend_score" 
+                               value="{{ settings.min_trend_score | default(65) }}" step="5" min="40" max="90" class="form-control">
+                        <small>Score threshold for trending market (65+ recommended)</small>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="allow_signals_without_trend" name="allow_signals_without_trend" 
+                               {% if settings.allow_signals_without_trend %}checked{% endif %}>
+                        ⚠️ Allow Signals Without Trend Data
+                    </label>
+                    <small>If enabled, signals will be allowed when trend analysis fails</small>
+                </div>
+            </div>
+            
+            <div class="settings-section">
+                <h2>📊 TrendScore Components</h2>
+                <p class="section-desc">4-component weighted scoring system</p>
+                
+                <div class="info-box">
+                    <h4>How TrendScore Works:</h4>
+                    <ul>
+                        <li><strong>Market Structure (30%)</strong> - Swing HH/HL detection</li>
+                        <li><strong>Volatility Expansion (25%)</strong> - ATR growth analysis</li>
+                        <li><strong>Acceptance (25%)</strong> - VWAP price position</li>
+                        <li><strong>Momentum Asymmetry (20%)</strong> - Impulse imbalance</li>
+                    </ul>
+                    <p><strong>Regime Classification:</strong></p>
+                    <ul>
+                        <li>🟢 Score > 65 + Bullish direction → <strong>BULLISH</strong> (only LONG allowed)</li>
+                        <li>🔴 Score > 65 + Bearish direction → <strong>BEARISH</strong> (only SHORT allowed)</li>
+                        <li>⚪ Score < 65 or Neutral → <strong>NO_TRADE</strong> (signals blocked)</li>
+                    </ul>
+                </div>
+                
+                <div class="form-row two-col" style="margin-top: 20px;">
+                    <div class="form-group">
+                        <label>Test Trend Analysis</label>
+                        <div class="input-group">
+                            <input type="text" id="test_trend_symbol" placeholder="BTCUSDT" class="form-control">
+                            <button type="button" class="btn btn-primary" onclick="testTrend()">Analyze</button>
+                        </div>
+                    </div>
+                    <div id="trend-result" class="trend-result" style="display: none;">
+                        <!-- Results will be shown here -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Direction Engine Weights (NEW v8.2.6) -->
+            <div class="settings-section">
+                <h2>⚖️ Direction Engine Weights</h2>
+                <p class="section-desc">Configure weights for LONG/SHORT direction detection (must sum to 100%)</p>
+                
+                <div class="form-row four-col">
+                    <div class="form-group">
+                        <label for="dir_weight_smc">SMC (%)</label>
+                        <input type="number" id="dir_weight_smc" name="dir_weight_smc" 
+                               value="{{ settings.dir_weight_smc | default(40) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Market Bias + Price Zone</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="dir_weight_structure">Structure (%)</label>
+                        <input type="number" id="dir_weight_structure" name="dir_weight_structure" 
+                               value="{{ settings.dir_weight_structure | default(20) }}" step="5" min="0" max="100" class="form-control">
+                        <small>HH/HL/LH/LL pattern</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="dir_weight_momentum">Momentum (%)</label>
+                        <input type="number" id="dir_weight_momentum" name="dir_weight_momentum" 
+                               value="{{ settings.dir_weight_momentum | default(20) }}" step="5" min="0" max="100" class="form-control">
+                        <small>RSI + MACD signals</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="dir_weight_derivatives">Derivatives (%)</label>
+                        <input type="number" id="dir_weight_derivatives" name="dir_weight_derivatives" 
+                               value="{{ settings.dir_weight_derivatives | default(20) }}" step="5" min="0" max="100" class="form-control">
+                        <small>OI + Funding + OrderBook</small>
+                    </div>
+                </div>
+                
+                <div class="weight-total-bar" id="dir-weight-total" style="margin-top: 10px; padding: 10px; background: rgba(0, 200, 83, 0.2); border-radius: 8px; text-align: center;">
+                    Total: <span id="dir-total-value">100</span>%
+                </div>
+                
+                <div class="info-box" style="margin-top: 15px;">
+                    <h4>Bias Thresholds:</h4>
+                    <div class="form-row two-col">
+                        <div class="form-group">
+                            <label for="bias_threshold_long">LONG Threshold</label>
+                            <input type="number" id="bias_threshold_long" name="bias_threshold_long" 
+                                   value="{{ settings.bias_threshold_long | default(0.10) }}" step="0.05" min="0" max="0.5" class="form-control">
+                            <small>Bias ≥ this → LONG (default: 0.10)</small>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="bias_threshold_short">SHORT Threshold</label>
+                            <input type="number" id="bias_threshold_short" name="bias_threshold_short" 
+                                   value="{{ settings.bias_threshold_short | default(-0.10) }}" step="0.05" min="-0.5" max="0" class="form-control">
+                            <small>Bias ≤ this → SHORT (default: -0.10)</small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sleeper Detection Tab -->
+        <div class="tab-content" id="tab-sleeper">
+            <div class="settings-section">
+                <h2>🎯 Score Thresholds</h2>
+                <p class="section-desc">Configure minimum scores for each sleeper state</p>
+                
+                <div class="form-row three-col">
+                    <div class="form-group">
+                        <label for="sleeper_min_score">Min Score (WATCHING)</label>
+                        <input type="number" id="sleeper_min_score" name="sleeper_min_score" 
+                               value="{{ settings.sleeper_min_score | default(40) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Minimum to track symbol</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="sleeper_building_score">Building Score</label>
+                        <input type="number" id="sleeper_building_score" name="sleeper_building_score" 
+                               value="{{ settings.sleeper_building_score | default(50) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Score for BUILDING state</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="sleeper_ready_score">Ready Score</label>
+                        <input type="number" id="sleeper_ready_score" name="sleeper_ready_score" 
+                               value="{{ settings.sleeper_ready_score | default(60) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Score for READY state 🔥</small>
+                    </div>
+                </div>
+                
+                <!-- v8.2.8: Additional State Conditions -->
+                <h3 style="margin-top: 20px; font-size: 1em; color: #888;">📊 Additional State Conditions (optional)</h3>
+                <p class="section-desc" style="font-size: 0.85em;">Set to 0 to use only Score for state transitions</p>
+                
+                <div class="form-row three-col">
+                    <div class="form-group">
+                        <label for="compression_ready">BB% for READY</label>
+                        <input type="number" id="compression_ready" name="compression_ready" 
+                               value="{{ settings.compression_ready | default(0) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Min BB compression % (0=disabled)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="compression_building">BB% for BUILDING</label>
+                        <input type="number" id="compression_building" name="compression_building" 
+                               value="{{ settings.compression_building | default(0) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Min BB compression % (0=disabled)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="suppression_building">Vol Supp% for BUILDING</label>
+                        <input type="number" id="suppression_building" name="suppression_building" 
+                               value="{{ settings.suppression_building | default(0) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Min volume suppression % (0=disabled)</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h2>🎛️ Module Control</h2>
+                <p class="section-desc">Enable/disable bot modules to reduce API usage</p>
+                
+                <div class="info-box" style="margin-bottom: 15px; background: rgba(0, 200, 83, 0.1); border-color: rgba(0, 200, 83, 0.3);">
+                    <p style="margin: 0;"><b>💡 Tip:</b> Disable unused modules to reduce API calls and avoid IP bans</p>
+                </div>
+                
+                <div class="module-toggles" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px;">
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">😴 Sleepers</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">Main scanner for sleeping coins</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_sleepers" id="module_sleepers" 
+                                       {% if settings.module_sleepers != '0' and settings.module_sleepers != 'false' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">📦 Order Blocks</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">OB detection for ready sleepers</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_orderblocks" id="module_orderblocks" 
+                                       {% if settings.module_orderblocks == '1' or settings.module_orderblocks == 'true' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">🎯 Signals</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">Trade signal generation</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_signals" id="module_signals" 
+                                       {% if settings.module_signals == '1' or settings.module_signals == 'true' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">📊 Position Monitor</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">Track & manage open positions</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_positions" id="module_positions" 
+                                       {% if settings.module_positions == '1' or settings.module_positions == 'true' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="module-toggle-card" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="font-size: 1.2em;">⚡ Intensive Monitor</span>
+                                <p style="margin: 5px 0 0; font-size: 0.85em; opacity: 0.7;">Real-time READY sleeper tracking</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" name="module_intensive" id="module_intensive" 
+                                       {% if settings.module_intensive == '1' or settings.module_intensive == 'true' %}checked{% endif %}>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h2>🔍 Scan Parameters</h2>
+                
+                <div class="info-box" style="margin-bottom: 15px; background: rgba(255, 193, 7, 0.1); border-color: rgba(255, 193, 7, 0.3);">
+                    <p style="margin: 0;"><b>⚠️ API Limits:</b> Lower values = less API calls = no IP ban risk</p>
+                    <p style="margin: 5px 0 0 0; font-size: 0.85em;">Recommended: 20-30 symbols for stable operation</p>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="sleeper_max_symbols">Max Symbols to Scan</label>
+                        <input type="number" id="sleeper_max_symbols" name="sleeper_max_symbols" 
+                               value="{{ settings.sleeper_max_symbols | default(30) }}" min="10" max="50" class="form-control">
+                        <small>Top N by volume (max 50 to avoid API ban)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="sleeper_min_volume">Min 24h Volume ($M)</label>
+                        <input type="number" id="sleeper_min_volume" name="sleeper_min_volume" 
+                               value="{{ (settings.sleeper_min_volume | default(50000000)) / 1000000 }}" step="1" class="form-control">
+                        <small>In millions (e.g. 50 = $50M)</small>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label for="sleeper_timeframe">Primary Timeframe</label>
+                    <select id="sleeper_timeframe" name="sleeper_timeframe" class="form-control">
+                        <option value="240" {% if settings.sleeper_timeframe == '240' or not settings.sleeper_timeframe %}selected{% endif %}>4H (recommended)</option>
+                        <option value="60" {% if settings.sleeper_timeframe == '60' %}selected{% endif %}>1H</option>
+                        <option value="D" {% if settings.sleeper_timeframe == 'D' %}selected{% endif %}>Daily</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h2>⚖️ Score Weights</h2>
+                <p class="section-desc">Adjust importance of each factor (must sum to 100%)</p>
+                
+                <div class="form-row four-col">
+                    <div class="form-group">
+                        <label for="weight_fuel">Fuel (%)</label>
+                        <input type="number" id="weight_fuel" name="weight_fuel" 
+                               value="{{ settings.weight_fuel | default(30) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Funding + OI</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="weight_volatility">Volatility (%)</label>
+                        <input type="number" id="weight_volatility" name="weight_volatility" 
+                               value="{{ settings.weight_volatility | default(25) }}" step="5" min="0" max="100" class="form-control">
+                        <small>BB Squeeze</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="weight_price">Price (%)</label>
+                        <input type="number" id="weight_price" name="weight_price" 
+                               value="{{ settings.weight_price | default(25) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Range position</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="weight_liquidity">Liquidity (%)</label>
+                        <input type="number" id="weight_liquidity" name="weight_liquidity" 
+                               value="{{ settings.weight_liquidity | default(20) }}" step="5" min="0" max="100" class="form-control">
+                        <small>Volume profile</small>
+                    </div>
+                </div>
+                <div class="weight-total" id="weight-total">Total: <span id="weight-total-value">100</span>%</div>
+            </div>
+        </div>
+
+        <!-- Order Block Tab -->
+        <div class="tab-content" id="tab-orderblock">
+            <div class="settings-section">
+                <h2>📦 Order Block Detection (Pine Script)</h2>
+                <p class="section-desc">Parameters matching "Volumized Order Blocks | VSV Charts" indicator</p>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ob_swing_length">Swing Length</label>
+                        <input type="number" id="ob_swing_length" name="ob_swing_length" 
+                               value="{{ settings.ob_swing_length | default(5) }}" min="3" max="20" class="form-control">
+                        <small>Bars to find swing highs/lows (default: 5)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="ob_max_atr_mult">Max ATR Multiplier</label>
+                        <input type="number" id="ob_max_atr_mult" name="ob_max_atr_mult" 
+                               value="{{ settings.ob_max_atr_mult | default(3.5) }}" step="0.5" min="1" max="10" class="form-control">
+                        <small>Max OB size = ATR × this (default: 3.5)</small>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ob_zone_count">Zone Count</label>
+                        <select id="ob_zone_count" name="ob_zone_count" class="form-control">
+                            <option value="One" {% if settings.ob_zone_count == 'One' %}selected{% endif %}>One (1 zone)</option>
+                            <option value="Low" {% if settings.ob_zone_count == 'Low' or not settings.ob_zone_count %}selected{% endif %}>Low (3 zones)</option>
+                            <option value="Medium" {% if settings.ob_zone_count == 'Medium' %}selected{% endif %}>Medium (5 zones)</option>
+                            <option value="High" {% if settings.ob_zone_count == 'High' %}selected{% endif %}>High (10 zones)</option>
+                        </select>
+                        <small>Number of OB zones to track</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="ob_end_method">Zone Invalidation</label>
+                        <select id="ob_end_method" name="ob_end_method" class="form-control">
+                            <option value="Wick" {% if settings.ob_end_method == 'Wick' or not settings.ob_end_method %}selected{% endif %}>Wick (high/low)</option>
+                            <option value="Close" {% if settings.ob_end_method == 'Close' %}selected{% endif %}>Close (candle close)</option>
+                        </select>
+                        <small>How OB is invalidated</small>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ob_max_count">Max Order Blocks</label>
+                        <input type="number" id="ob_max_count" name="ob_max_count" 
+                               value="{{ settings.ob_max_count | default(30) }}" min="5" max="100" class="form-control">
+                        <small>Maximum OBs to store (default: 30)</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="ob_timeframes">Scan Timeframes</label>
+                        <input type="text" id="ob_timeframes" name="ob_timeframes" 
+                               value="{{ settings.ob_timeframes | default('15,5') }}" class="form-control">
+                        <small>Minutes, comma-separated (e.g. 15,5,1)</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h2>🎯 Quality Filters</h2>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="ob_min_quality">Min Quality Score</label>
+                        <input type="number" id="ob_min_quality" name="ob_min_quality" 
+                               value="{{ settings.ob_min_quality | default(60) }}" min="0" max="100" class="form-control">
+                        <small>Minimum OB quality to track</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="ob_signal_quality">Signal Quality</label>
+                        <input type="number" id="ob_signal_quality" name="ob_signal_quality" 
+                               value="{{ settings.ob_signal_quality | default(70) }}" min="0" max="100" class="form-control">
+                        <small>Min quality to generate signal</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trading Tab -->
+        <div class="tab-content" id="tab-trading">
+            <div class="settings-section">
+                <h2>💰 Position Sizing</h2>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="risk_per_trade">Risk per Trade (%)</label>
+                        <input type="number" id="risk_per_trade" name="risk_per_trade" 
+                               value="{{ settings.risk_per_trade | default(1) }}" step="0.1" min="0.1" max="10" class="form-control">
+                        <small>% of balance to risk</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="max_position_pct">Max Position Size (%)</label>
+                        <input type="number" id="max_position_pct" name="max_position_pct" 
+                               value="{{ settings.max_position_pct | default(20) }}" step="1" min="1" max="100" class="form-control">
+                        <small>Max % of balance per trade</small>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="default_leverage">Default Leverage</label>
+                        <input type="number" id="default_leverage" name="default_leverage" 
+                               value="{{ settings.default_leverage | default(5) }}" min="1" max="50" class="form-control">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="max_positions">Max Open Positions</label>
+                        <input type="number" id="max_positions" name="max_positions" 
+                               value="{{ settings.max_positions | default(3) }}" min="1" max="20" class="form-control">
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h2>🎯 Stop Loss & Take Profit</h2>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="atr_sl_multiplier">SL ATR Multiplier</label>
+                        <input type="number" id="atr_sl_multiplier" name="atr_sl_multiplier" 
+                               value="{{ settings.atr_sl_multiplier | default(1.5) }}" step="0.1" min="0.5" max="5" class="form-control">
+                        <small>Stop Loss = ATR × this</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="atr_tp_multiplier">TP ATR Multiplier</label>
+                        <input type="number" id="atr_tp_multiplier" name="atr_tp_multiplier" 
+                               value="{{ settings.atr_tp_multiplier | default(3) }}" step="0.1" min="1" max="10" class="form-control">
+                        <small>Take Profit = ATR × this</small>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="trailing_stop_enabled" name="trailing_stop_enabled" 
+                               {% if settings.trailing_stop_enabled | default(true) %}checked{% endif %}>
+                        📈 Enable Trailing Stop
+                    </label>
+                    <small>Move SL to breakeven after TP1</small>
+                </div>
+                
+                <div class="form-row three-col">
+                    <div class="form-group">
+                        <label for="tp1_pct">TP1 Close (%)</label>
+                        <input type="number" id="tp1_pct" name="tp1_pct" 
+                               value="{{ settings.tp1_pct | default(50) }}" min="0" max="100" class="form-control">
+                        <small>Close at 1R</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="tp2_pct">TP2 Close (%)</label>
+                        <input type="number" id="tp2_pct" name="tp2_pct" 
+                               value="{{ settings.tp2_pct | default(25) }}" min="0" max="100" class="form-control">
+                        <small>Close at 2R</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="tp3_pct">TP3 Close (%)</label>
+                        <input type="number" id="tp3_pct" name="tp3_pct" 
+                               value="{{ settings.tp3_pct | default(25) }}" min="0" max="100" class="form-control">
+                        <small>Close at 3R</small>
+                    </div>
+                </div>
+            </div>
+
+            <div class="settings-section">
+                <h2>⚠️ Risk Limits</h2>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="max_daily_loss_pct">Max Daily Loss (%)</label>
+                        <input type="number" id="max_daily_loss_pct" name="max_daily_loss_pct" 
+                               value="{{ settings.max_daily_loss_pct | default(5) }}" step="0.5" min="1" max="20" class="form-control">
+                        <small>Stop trading after this loss</small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="max_daily_trades">Max Daily Trades</label>
+                        <input type="number" id="max_daily_trades" name="max_daily_trades" 
+                               value="{{ settings.max_daily_trades | default(10) }}" min="1" max="50" class="form-control">
+                        <small>Limit overtrading</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notifications Tab -->
+        <div class="tab-content" id="tab-notifications">
+            <div class="settings-section">
+                <h2>📱 Telegram</h2>
+                
+                <div class="info-box" style="margin-bottom: 15px; background: rgba(255, 193, 7, 0.1); border-color: rgba(255, 193, 7, 0.3);">
+                    <p style="margin: 0;"><b>⚠️ Note:</b> Telegram token must be set in <b>Render Environment Variables</b>, not here.</p>
+                    <p style="margin: 5px 0 0 0; font-size: 0.85em;">Required vars: <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_CHAT_ID</code></p>
+                </div>
+                
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="telegram_enabled" name="telegram_enabled" 
+                               {% if settings.telegram_enabled %}checked{% endif %}>
+                        Enable Telegram Notifications
+                    </label>
+                </div>
+                
+                <div class="form-group">
+                    <label for="telegram_chat_id">Chat ID (for reference)</label>
+                    <input type="text" id="telegram_chat_id" name="telegram_chat_id" 
+                           value="{{ settings.telegram_chat_id or '' }}" class="form-control" readonly>
+                    <small>Get from @userinfobot on Telegram. Set in Render env vars.</small>
+                </div>
+                
+                <div class="form-group" style="margin-top: 15px;">
+                    <button type="button" class="btn btn-primary" onclick="testTelegram()">
+                        📤 Send Test Message
+                    </button>
+                    <span id="telegram-test-result" style="margin-left: 10px;"></span>
+                </div>
+            </div>
+            
+            <div class="settings-section">
+                <h2>🔔 Alert Types</h2>
+                <p class="section-desc">Choose which alerts to receive in Telegram</p>
+                
+                <div class="alert-settings-grid">
+                    <!-- Sleeper Alerts -->
+                    <div class="alert-category">
+                        <h3>😴 Sleeper Scanner</h3>
+                        <div class="alert-items">
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_sleeper_ready" name="alert_sleeper_ready" 
+                                       {% if settings.alert_sleeper_ready | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">🔥</span>
+                                <span class="alert-name">Sleeper Ready</span>
+                                <span class="alert-desc">When sleeper reaches READY state</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Order Block Alerts -->
+                    <div class="alert-category">
+                        <h3>📦 Order Blocks</h3>
+                        <div class="alert-items">
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_ob_formed" name="alert_ob_formed" 
+                                       {% if settings.alert_ob_formed | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">📦</span>
+                                <span class="alert-name">OB Detected</span>
+                                <span class="alert-desc">When new Order Block is found</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Trading Alerts -->
+                    <div class="alert-category">
+                        <h3>💰 Trading</h3>
+                        <div class="alert-items">
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_signal" name="alert_signal" 
+                                       {% if settings.alert_signal | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">🎯</span>
+                                <span class="alert-name">Trade Signal</span>
+                                <span class="alert-desc">New trading signal generated</span>
+                            </label>
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_trade_open" name="alert_trade_open" 
+                                       {% if settings.alert_trade_open | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">📈</span>
+                                <span class="alert-name">Trade Opened</span>
+                                <span class="alert-desc">Position opened (SEMI_AUTO/AUTO)</span>
+                            </label>
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_trade_close" name="alert_trade_close" 
+                                       {% if settings.alert_trade_close | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">📊</span>
+                                <span class="alert-name">Trade Closed</span>
+                                <span class="alert-desc">Position closed (TP/SL hit)</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <!-- Monitoring Alerts -->
+                    <div class="alert-category">
+                        <h3>👀 Monitoring</h3>
+                        <div class="alert-items">
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_intensive" name="alert_intensive" 
+                                       {% if settings.alert_intensive | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">⚡</span>
+                                <span class="alert-name">Intensive Alerts</span>
+                                <span class="alert-desc">Volume spikes on READY sleepers</span>
+                            </label>
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_daily_summary" name="alert_daily_summary" 
+                                       {% if settings.alert_daily_summary | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">📋</span>
+                                <span class="alert-name">Daily Summary</span>
+                                <span class="alert-desc">Daily report at 20:00 UTC</span>
+                            </label>
+                            <label class="checkbox-label alert-toggle">
+                                <input type="checkbox" id="alert_system" name="alert_system" 
+                                       {% if settings.alert_system | default(true) %}checked{% endif %}>
+                                <span class="alert-emoji">⚙️</span>
+                                <span class="alert-name">System Messages</span>
+                                <span class="alert-desc">Bot start/stop, errors</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div style="grid-column: 1 / -1; margin-top: 15px;">
+                        <button type="button" class="btn btn-primary" onclick="toggleAllAlerts(true)">
+                            ✅ Enable All
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="toggleAllAlerts(false)">
+                            ❌ Disable All
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Maintenance Tab (NEW) -->
+        <div class="tab-content" id="tab-maintenance">
+            <div class="settings-section danger-section">
+                <h2>🗑️ Database Cleanup</h2>
+                <p class="section-desc">Clear old or corrupted data. Use with caution!</p>
+                
+                <div class="cleanup-grid">
+                    <div class="cleanup-card">
+                        <h3>📦 Order Blocks</h3>
+                        <p>Remove all order blocks from database. New ones will be detected on next scan.</p>
+                        <div id="ob-count" class="count-badge">Loading...</div>
+                        <button type="button" class="btn btn-danger" onclick="cleanupOrderBlocks()">
+                            🗑️ Clear All Order Blocks
+                        </button>
+                    </div>
+                    
+                    <div class="cleanup-card">
+                        <h3>😴 Sleeper Candidates</h3>
+                        <p>Remove all sleeper candidates. New ones will be detected on next scan.</p>
+                        <div id="sleeper-count" class="count-badge">Loading...</div>
+                        <button type="button" class="btn btn-danger" onclick="cleanupSleepers()">
+                            🗑️ Clear All Sleepers
+                        </button>
+                    </div>
+                    
+                    <div class="cleanup-card full-width">
+                        <h3>⚠️ Full Database Reset</h3>
+                        <p>Remove ALL data: Order Blocks, Sleepers, and closed Trades. Settings will be preserved.</p>
+                        <button type="button" class="btn btn-danger btn-lg" onclick="cleanupAll()">
+                            ⚠️ Clear Everything
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="settings-section">
+                <h2>🔧 Debug Tools</h2>
+                <p class="section-desc">Diagnose issues with data fetching</p>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Test Symbol Analysis</label>
+                        <div class="input-group">
+                            <input type="text" id="debug_symbol" placeholder="BTCUSDT" class="form-control">
+                            <button type="button" class="btn btn-secondary" onclick="debugSymbol()">🔍 Debug</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="debug-result" class="debug-result" style="display: none;">
+                    <!-- Debug results will be shown here -->
+                </div>
+            </div>
+            
+            <div class="settings-section">
+                <h2>🔄 Manual Actions</h2>
+                
+                <div class="action-buttons">
+                    <button type="button" class="btn btn-primary" onclick="triggerSleeperScan()">
+                        🔍 Run Sleeper Scan Now
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="triggerOBScan()">
+                        📦 Scan OBs for Ready Sleepers
+                    </button>
+                </div>
+            </div>
+            
+            <!-- BLACKLIST SECTION (v8.2.2) -->
+            <div class="settings-section">
+                <h2>🚫 Symbol Blacklist</h2>
+                <p class="section-desc">Exclude low-volatility coins from scanning. Stablecoins & "heavy" assets waste API calls.</p>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Minimum 24h Volatility %</label>
+                        <input type="number" name="min_volatility_pct" 
+                               value="{{ settings.min_volatility_pct | default(3.0) }}"
+                               min="0" max="50" step="0.5" class="form-control">
+                        <small>Coins with less volatility will be skipped (not blacklisted)</small>
+                    </div>
+                </div>
+                
+                <div class="blacklist-controls">
+                    <div class="input-group" style="margin-bottom: 15px;">
+                        <input type="text" id="blacklist_symbol" placeholder="Symbol (e.g. BTC)" class="form-control">
+                        <button type="button" class="btn btn-danger" onclick="addToBlacklist()">
+                            ➕ Add to Blacklist
+                        </button>
+                    </div>
+                    
+                    <div class="action-buttons">
+                        <button type="button" class="btn btn-secondary" onclick="initDefaultBlacklist()">
+                            📋 Add Default Stablecoins
+                        </button>
+                        <button type="button" class="btn btn-warning" onclick="clearBlacklist()">
+                            🗑️ Clear Blacklist
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="loadBlacklist()">
+                            🔄 Refresh
+                        </button>
+                    </div>
+                    
+                    <div class="action-buttons" style="margin-top: 10px;">
+                        <button type="button" class="btn btn-primary" onclick="cleanupBlacklistedSleepers()">
+                            🧹 Remove Blacklisted Sleepers
+                        </button>
+                        <button type="button" class="btn btn-primary" onclick="cleanupDuplicateSleepers()">
+                            🔄 Remove Duplicate Sleepers
+                        </button>
+                    </div>
+                </div>
+                
+                <div id="blacklist-container" style="margin-top: 15px;">
+                    <div id="blacklist-count" class="count-badge">Loading...</div>
+                    <div id="blacklist-items" class="blacklist-grid">
+                        <!-- Blacklist items will be loaded here -->
+                    </div>
+                </div>
+            </div>
+            <!-- END BLACKLIST SECTION -->
+        </div>
+
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary btn-lg">💾 Save All Settings</button>
+        </div>
+    </form>
+</div>
+
+<style>
+.settings-page { max-width: 900px; margin: 0 auto; }
+.page-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+
+.settings-tabs {
+    display: flex;
+    gap: 5px;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.tab-btn {
+    padding: 10px 15px;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.9rem;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: all 0.2s;
+}
+
+.tab-btn:hover { color: var(--text-primary); }
+.tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+.tab-content { display: none; animation: fadeIn 0.3s ease; }
+.tab-content.active { display: block; }
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.settings-section {
+    background: var(--card-bg);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.settings-section h2 { margin: 0 0 15px 0; font-size: 1.1rem; }
+.settings-section h3 { margin: 15px 0 10px 0; font-size: 0.95rem; color: var(--text-secondary); }
+.section-desc { color: var(--text-secondary); font-size: 0.85rem; margin: -10px 0 15px 0; }
+
+.form-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
+.form-row.three-col { grid-template-columns: repeat(3, 1fr); }
+.form-row.four-col { grid-template-columns: repeat(4, 1fr); }
+
+@media (max-width: 700px) {
+    .form-row, .form-row.three-col, .form-row.four-col { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 500px) {
+    .form-row, .form-row.three-col, .form-row.four-col { grid-template-columns: 1fr; }
+}
+
+.form-group { margin-bottom: 15px; }
+.form-group label { display: block; margin-bottom: 5px; font-weight: 500; font-size: 0.9rem; }
+.form-group small { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 0.8rem; }
+
+.form-control {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.1);
+}
+
+.checkbox-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.checkbox-label input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+
+.checkbox-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+
+/* Alert Settings Grid */
+.alert-settings-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+}
+@media (max-width: 768px) {
+    .alert-settings-grid { grid-template-columns: 1fr; }
+}
+.alert-category {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 15px;
+}
+.alert-category h3 {
+    margin: 0 0 15px 0;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    padding-bottom: 10px;
+}
+.alert-items {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.alert-toggle {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    grid-template-rows: auto auto;
+    gap: 5px 10px;
+    align-items: center;
+    padding: 10px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    transition: background 0.2s;
+}
+.alert-toggle:hover {
+    background: rgba(255,255,255,0.08);
+}
+.alert-toggle input[type="checkbox"] {
+    grid-row: span 2;
+    width: 20px;
+    height: 20px;
+}
+.alert-emoji {
+    font-size: 1.2rem;
+    grid-row: span 2;
+}
+.alert-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.alert-desc {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    grid-column: 3;
+}
+
+.weight-total {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background: rgba(52, 199, 89, 0.1);
+    border-radius: 6px;
+    font-weight: bold;
+    text-align: center;
+}
+.weight-total.error { background: rgba(255, 59, 48, 0.1); color: var(--danger); }
+
+.form-actions { margin-top: 30px; text-align: center; }
+.btn-lg { padding: 15px 40px; font-size: 1.1rem; }
+
+/* Info Box */
+.info-box {
+    background: rgba(0, 122, 255, 0.1);
+    border: 1px solid rgba(0, 122, 255, 0.2);
+    border-radius: 8px;
+    padding: 15px;
+    margin-top: 10px;
+}
+.info-box h4 { margin: 0 0 10px 0; color: var(--primary); }
+.info-box ul { margin: 5px 0; padding-left: 20px; }
+.info-box li { margin: 5px 0; }
+.info-box p { margin: 10px 0 5px 0; }
+
+/* Input Group */
+.input-group { display: flex; gap: 10px; }
+.input-group .form-control { flex: 1; }
+.input-group .btn { flex-shrink: 0; }
+
+/* Trend Analysis Result */
+.trend-result {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 15px;
+    margin-top: 10px;
+}
+.trend-result .loading { text-align: center; color: var(--text-secondary); }
+.trend-result .error { color: var(--danger); }
+.trend-analysis h4 { margin: 0 0 10px 0; }
+.trend-score { 
+    display: flex; 
+    align-items: center; 
+    gap: 15px; 
+    margin-bottom: 15px;
+}
+.trend-score .score-value {
+    font-size: 2rem;
+    font-weight: bold;
+    color: var(--primary);
+}
+.components {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+.component {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 6px;
+}
+.component .label { color: var(--text-secondary); flex: 1; }
+.component .value { font-weight: bold; }
+.badge { 
+    padding: 4px 8px; 
+    border-radius: 4px; 
+    font-size: 0.75rem;
+    font-weight: bold;
+}
+.badge.success { background: rgba(52, 199, 89, 0.2); color: #34c759; }
+.badge.danger { background: rgba(255, 59, 48, 0.2); color: #ff3b30; }
+.badge.secondary { background: rgba(142, 142, 147, 0.2); color: #8e8e93; }
+.badge.small { font-size: 0.65rem; padding: 2px 6px; }
+
+/* Maintenance Section */
+.danger-section {
+    border: 1px solid rgba(255, 59, 48, 0.3);
+    background: rgba(255, 59, 48, 0.05);
+}
+.cleanup-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    margin-top: 15px;
+}
+.cleanup-card {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+}
+.cleanup-card.full-width { grid-column: 1 / -1; }
+.cleanup-card h3 { margin: 0 0 10px 0; }
+.cleanup-card p { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 15px; }
+.count-badge {
+    display: inline-block;
+    padding: 5px 15px;
+    background: rgba(0, 122, 255, 0.2);
+    border-radius: 20px;
+    font-weight: bold;
+    margin-bottom: 15px;
+}
+.btn-danger {
+    background: #ff3b30;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+}
+.btn-danger:hover { background: #e0352b; }
+
+.debug-result {
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    padding: 15px;
+    margin-top: 15px;
+    font-family: monospace;
+    white-space: pre-wrap;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+/* Blacklist styles (v8.2.2) */
+.blacklist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.blacklist-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: var(--bg-secondary, #1a1a1a);
+    border-radius: 6px;
+    border: 1px solid var(--border, #333);
+}
+
+.blacklist-item .symbol {
+    font-weight: bold;
+    color: var(--text-primary, #fff);
+}
+
+.blacklist-item .reason {
+    font-size: 0.75rem;
+    color: var(--text-secondary, #888);
+    margin-left: 8px;
+}
+
+.blacklist-item .btn-sm {
+    padding: 2px 8px;
+    font-size: 0.8rem;
+    background: transparent;
+    border: 1px solid #dc3545;
+    color: #dc3545;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.blacklist-item .btn-sm:hover {
+    background: #dc3545;
+    color: white;
+}
+
+.blacklist-controls {
+    margin-top: 15px;
+}
+
+.count-badge.warning {
+    background: #ffc107;
+    color: #000;
+}
+</style>
+
+<script>
+// Tab switching
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+    });
+});
+
+// Weight validation
+function updateWeightTotal() {
+    const fuel = parseInt(document.getElementById('weight_fuel').value) || 0;
+    const vol = parseInt(document.getElementById('weight_volatility').value) || 0;
+    const price = parseInt(document.getElementById('weight_price').value) || 0;
+    const liq = parseInt(document.getElementById('weight_liquidity').value) || 0;
+    const total = fuel + vol + price + liq;
+    
+    const el = document.getElementById('weight-total');
+    document.getElementById('weight-total-value').textContent = total;
+    el.classList.toggle('error', total !== 100);
+}
+
+// v8.2.6: Direction Engine Weights validation
+function updateDirWeightTotal() {
+    const smc = parseInt(document.getElementById('dir_weight_smc').value) || 0;
+    const structure = parseInt(document.getElementById('dir_weight_structure').value) || 0;
+    const momentum = parseInt(document.getElementById('dir_weight_momentum').value) || 0;
+    const derivatives = parseInt(document.getElementById('dir_weight_derivatives').value) || 0;
+    const total = smc + structure + momentum + derivatives;
+    
+    const el = document.getElementById('dir-weight-total');
+    const valueEl = document.getElementById('dir-total-value');
+    if (valueEl) valueEl.textContent = total;
+    if (el) {
+        el.style.background = total === 100 ? 'rgba(0, 200, 83, 0.2)' : 'rgba(255, 82, 82, 0.2)';
+    }
+}
+
+['weight_fuel', 'weight_volatility', 'weight_price', 'weight_liquidity'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateWeightTotal);
+});
+updateWeightTotal();
+
+// Direction Engine Weights listeners
+['dir_weight_smc', 'dir_weight_structure', 'dir_weight_momentum', 'dir_weight_derivatives'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateDirWeightTotal);
+});
+updateDirWeightTotal();
+
+// Form submission
+document.getElementById('settings-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const form = e.target;
+    const settings = {};
+    
+    // Collect all inputs
+    form.querySelectorAll('input, select').forEach(input => {
+        const name = input.name;
+        if (!name) return;
+        
+        if (input.type === 'checkbox') {
+            settings[name] = input.checked;
+        } else if (input.type === 'number') {
+            settings[name] = parseFloat(input.value) || 0;
+        } else {
+            settings[name] = input.value;
+        }
+    });
+    
+    // Convert volume from M to actual
+    if (settings.sleeper_min_volume) {
+        settings.sleeper_min_volume = settings.sleeper_min_volume * 1000000;
+    }
+    
+    // Validate weights
+    const weightTotal = (settings.weight_fuel || 0) + (settings.weight_volatility || 0) + 
+                       (settings.weight_price || 0) + (settings.weight_liquidity || 0);
+    if (weightTotal !== 100) {
+        alert('⚠️ Score weights must sum to 100%!');
+        return;
+    }
+    
+    // Validate Direction Engine weights
+    const dirWeightTotal = (settings.dir_weight_smc || 0) + (settings.dir_weight_structure || 0) + 
+                          (settings.dir_weight_momentum || 0) + (settings.dir_weight_derivatives || 0);
+    if (dirWeightTotal !== 100) {
+        alert('⚠️ Direction Engine weights must sum to 100%!');
+        return;
+    }
+    
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast('✅ Settings saved!');
+        } else {
+            alert('❌ Failed: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+});
+
+function resetDefaults() {
+    if (!confirm('Reset all settings to defaults? This cannot be undone.')) return;
+    
+    fetch('/api/settings/reset', { method: 'POST' })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                showToast('Settings reset to defaults');
+                location.reload();
+            }
+        })
+        .catch(err => alert('Error: ' + err.message));
+}
+
+async function testTrend() {
+    const symbol = document.getElementById('test_trend_symbol').value.trim().toUpperCase();
+    if (!symbol) {
+        alert('Enter a symbol (e.g., BTCUSDT)');
+        return;
+    }
+    
+    const resultDiv = document.getElementById('trend-result');
+    resultDiv.style.display = 'block';
+    resultDiv.innerHTML = '<div class="loading">Analyzing trend...</div>';
+    
+    try {
+        const res = await fetch(`/api/trend/${symbol}`);
+        const data = await res.json();
+        
+        if (data.success) {
+            const t = data.data;
+            const regimeClass = t.regime === 'BULLISH' ? 'success' : 
+                               t.regime === 'BEARISH' ? 'danger' : 'secondary';
+            
+            resultDiv.innerHTML = `
+                <div class="trend-analysis">
+                    <h4>${t.symbol} - ${t.timeframe}m Trend</h4>
+                    <div class="trend-score">
+                        <span class="score-value">${t.total_score.toFixed(1)}</span>
+                        <span class="badge ${regimeClass}">${t.regime}</span>
+                    </div>
+                    <div class="components">
+                        <div class="component">
+                            <span class="label">Structure</span>
+                            <span class="value">${t.components.structure.score.toFixed(1)}</span>
+                            <span class="badge small">${t.components.structure.direction}</span>
+                        </div>
+                        <div class="component">
+                            <span class="label">Volatility</span>
+                            <span class="value">${t.components.volatility.score.toFixed(1)}</span>
+                        </div>
+                        <div class="component">
+                            <span class="label">Acceptance</span>
+                            <span class="value">${t.components.acceptance.score.toFixed(1)}</span>
+                        </div>
+                        <div class="component">
+                            <span class="label">Momentum</span>
+                            <span class="value">${t.components.momentum.score.toFixed(1)}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        } else {
+            resultDiv.innerHTML = `<div class="error">❌ ${data.error}</div>`;
+        }
+    } catch (err) {
+        resultDiv.innerHTML = `<div class="error">❌ Error: ${err.message}</div>`;
+    }
+}
+
+// ==========================================
+// MAINTENANCE FUNCTIONS
+// ==========================================
+
+// Load counts when maintenance tab is opened
+document.querySelector('[data-tab="maintenance"]').addEventListener('click', loadMaintenanceCounts);
+
+async function loadMaintenanceCounts() {
+    try {
+        // Get OB count
+        const obsRes = await fetch('/api/orderblocks');
+        const obsData = await obsRes.json();
+        document.getElementById('ob-count').textContent = 
+            `${obsData.data?.length || 0} order blocks`;
+        
+        // Get sleeper count
+        const sleepersRes = await fetch('/api/sleepers');
+        const sleepersData = await sleepersRes.json();
+        document.getElementById('sleeper-count').textContent = 
+            `${sleepersData.data?.length || 0} sleepers`;
+    } catch (err) {
+        console.error('Error loading counts:', err);
+    }
+}
+
+async function cleanupOrderBlocks() {
+    if (!confirm('⚠️ Delete ALL order blocks? This cannot be undone.')) return;
+    
+    try {
+        const res = await fetch('/api/cleanup/orderblocks', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Deleted ${data.deleted} order blocks`);
+            loadMaintenanceCounts();
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function cleanupSleepers() {
+    if (!confirm('⚠️ Delete ALL sleeper candidates? This cannot be undone.')) return;
+    
+    try {
+        const res = await fetch('/api/cleanup/sleepers', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Deleted ${data.deleted} sleepers`);
+            loadMaintenanceCounts();
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function cleanupAll() {
+    if (!confirm('⚠️⚠️⚠️ DELETE EVERYTHING? Order Blocks, Sleepers, Closed Trades? This CANNOT be undone!')) return;
+    if (!confirm('Are you REALLY sure?')) return;
+    
+    try {
+        const res = await fetch('/api/cleanup/all', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Deleted: ${data.deleted.orderblocks} OBs, ${data.deleted.sleepers} sleepers, ${data.deleted.trades} trades`);
+            loadMaintenanceCounts();
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function debugSymbol() {
+    const symbol = document.getElementById('debug_symbol').value.trim().toUpperCase();
+    if (!symbol) {
+        alert('Enter a symbol');
+        return;
+    }
+    
+    const resultDiv = document.getElementById('debug-result');
+    resultDiv.style.display = 'block';
+    resultDiv.textContent = 'Loading...';
+    
+    try {
+        const res = await fetch(`/api/debug/sleeper/${symbol}`);
+        const data = await res.json();
+        
+        resultDiv.textContent = JSON.stringify(data, null, 2);
+    } catch (err) {
+        resultDiv.textContent = 'Error: ' + err.message;
+    }
+}
+
+async function triggerSleeperScan() {
+    showToast('🔍 Starting sleeper scan...');
+    
+    try {
+        const res = await fetch('/api/scan/sleepers', { method: 'POST' });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Scanned! Found ${data.data.total} (${data.data.ready} ready, ${data.data.building} building)`);
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function triggerOBScan() {
+    const symbol = prompt('Enter symbol to scan (e.g., BTCUSDT):');
+    if (!symbol) return;
+    
+    showToast(`📦 Scanning OBs for ${symbol.toUpperCase()}...`);
+    
+    try {
+        const res = await fetch('/api/scan/orderblocks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol: symbol.toUpperCase() })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast(`✅ Found ${data.data.length} order blocks for ${symbol.toUpperCase()}`);
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function testTelegram() {
+    const resultSpan = document.getElementById('telegram-test-result');
+    resultSpan.textContent = '⏳ Sending...';
+    resultSpan.style.color = 'var(--text-secondary)';
+    
+    try {
+        const res = await fetch('/api/telegram/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            resultSpan.textContent = '✅ Message sent!';
+            resultSpan.style.color = 'var(--success)';
+            showToast('✅ Telegram test message sent!');
+        } else {
+            resultSpan.textContent = '❌ ' + data.error;
+            resultSpan.style.color = 'var(--danger)';
+            alert('❌ ' + data.error);
+        }
+    } catch (err) {
+        resultSpan.textContent = '❌ Error';
+        resultSpan.style.color = 'var(--danger)';
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+async function resetPaperBalance() {
+    if (!confirm('Reset paper balance to $10,000?')) return;
+    
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paper_balance: 10000 })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            document.getElementById('paper_balance').value = 10000;
+            showToast('✅ Paper balance reset to $10,000');
+        } else {
+            alert('❌ Error: ' + data.error);
+        }
+    } catch (err) {
+        alert('❌ Error: ' + err.message);
+    }
+}
+
+// Toggle all alert checkboxes
+function toggleAllAlerts(enable) {
+    const alertCheckboxes = [
+        'alert_sleeper_ready',
+        'alert_ob_formed', 
+        'alert_signal',
+        'alert_trade_open',
+        'alert_trade_close',
+        'alert_intensive',
+        'alert_daily_summary',
+        'alert_system'
+    ];
+    
+    alertCheckboxes.forEach(id => {
+        const checkbox = document.getElementById(id);
+        if (checkbox) {
+            checkbox.checked = enable;
+        }
+    });
+    
+    showToast(enable ? '✅ All alerts enabled' : '❌ All alerts disabled');
+}
+
+function showToast(msg) {
+    const toast = document.createElement('div');
+    toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#333;color:#fff;padding:12px 24px;border-radius:8px;z-index:9999;';
+    toast.textContent = msg;
+    document.body.appendChild(toast);
+    setTimeout(() => toast.remove(), 3000);
+}
+
+// ==========================================
+// BLACKLIST FUNCTIONS (v8.2.2)
+// ==========================================
+
+async function loadBlacklist() {
+    try {
+        const response = await fetch('/api/blacklist');
+        const result = await response.json();
+        
+        const countEl = document.getElementById('blacklist-count');
+        const itemsEl = document.getElementById('blacklist-items');
+        
+        if (result.success) {
+            countEl.textContent = `${result.count} symbols blacklisted`;
+            countEl.className = result.count > 0 ? 'count-badge warning' : 'count-badge';
+            
+            if (result.data.length === 0) {
+                itemsEl.innerHTML = '<p class="text-muted">No symbols in blacklist</p>';
+            } else {
+                itemsEl.innerHTML = result.data.map(item => `
+                    <div class="blacklist-item">
+                        <span class="symbol">${item.symbol}</span>
+                        <span class="reason">${item.reason}</span>
+                        <button class="btn-sm btn-danger" onclick="removeFromBlacklist('${item.symbol}')">✕</button>
+                    </div>
+                `).join('');
+            }
+        }
+    } catch (e) {
+        console.error('Error loading blacklist:', e);
+    }
+}
+
+async function addToBlacklist() {
+    const input = document.getElementById('blacklist_symbol');
+    let symbol = input.value.trim().toUpperCase();
+    
+    if (!symbol) {
+        showToast('❌ Enter a symbol');
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/blacklist/add', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol, reason: 'MANUAL'})
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(`✅ ${symbol} added to blacklist`);
+            input.value = '';
+            loadBlacklist();
+        } else {
+            showToast(`❌ ${result.error || 'Error'}`);
+        }
+    } catch (e) {
+        showToast('❌ Error adding to blacklist');
+    }
+}
+
+async function removeFromBlacklist(symbol) {
+    try {
+        const response = await fetch('/api/blacklist/remove', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({symbol: symbol})
+        });
+        const result = await response.json();
+        
+        if (result.success) {
+            showToast(`✅ ${symbol} removed`);
+            loadBlacklist();
+        }
+    } catch (e) {
+        showToast('❌ Error removing');
+    }
+}
+
+async function initDefaultBlacklist() {
+    if (!confirm('Add default stablecoins to blacklist?')) return;
+    
+    try {
+        const response = await fetch('/api/blacklist/init-defaults', {method: 'POST'});
+        const result = await response.json();
+        
+        showToast(`✅ Added ${result.added} stablecoins`);
+        loadBlacklist();
+    } catch (e) {
+        showToast('❌ Error');
+    }
+}
+
+async function clearBlacklist() {
+    if (!confirm('Clear entire blacklist? All symbols will be scanned again.')) return;
+    
+    try {
+        const response = await fetch('/api/blacklist/clear', {method: 'POST'});
+        const result = await response.json();
+        
+        showToast(`✅ Cleared ${result.removed} entries`);
+        loadBlacklist();
+    } catch (e) {
+        showToast('❌ Error');
+    }
+}
+
+async function cleanupBlacklistedSleepers() {
+    if (!confirm('Remove all sleepers that are in the blacklist?')) return;
+    
+    try {
+        const response = await fetch('/api/sleepers/cleanup-blacklisted', {method: 'POST'});
+        const result = await response.json();
+        
+        showToast(`✅ Removed ${result.removed} blacklisted sleepers`);
+    } catch (e) {
+        showToast('❌ Error');
+    }
+}
+
+async function cleanupDuplicateSleepers() {
+    if (!confirm('Remove duplicate sleepers (keep newest)?')) return;
+    
+    try {
+        const response = await fetch('/api/sleepers/cleanup-duplicates', {method: 'POST'});
+        const result = await response.json();
+        
+        showToast(`✅ Removed ${result.removed} duplicate sleepers`);
+    } catch (e) {
+        showToast('❌ Error');
+    }
+}
+
+// Load blacklist on page load (if maintenance tab)
+document.addEventListener('DOMContentLoaded', function() {
+    if (document.getElementById('blacklist-items')) {
+        loadBlacklist();
+    }
+    // Load credentials status if the credentials tab exists
+    if (document.getElementById('creds-status-block')) {
+        loadCredentialsStatus();
+    }
+    if (document.getElementById('cg-status-block')) {
+        loadCoinGeckoStatus();
+    }
+    if (document.getElementById('bn-status-block')) {
+        loadBinanceStatus();
+    }
+});
+
+// ====================================================================
+// 🔐 API Credentials — UI handlers for the three-tier resolver
+// ====================================================================
+//
+// Five operations, all gated on the credentials tab being present so
+// this code is harmless to load on pages that don't expose it:
+//   loadCredentialsStatus()    — populate the status block
+//   testCredentials()          — call Bybit auth API to verify keys work
+//   generateMasterKey()        — generate new ENCRYPTION_KEY for ENV
+//
+// We never store secrets in JS variables longer than needed — inputs
+// are cleared after successful save, and the test result only echoes
+// the masked preview (never the raw key).
+
+async function loadCredentialsStatus() {
+    try {
+        const r = await fetch('/api/credentials/status');
+        const d = await r.json();
+        if (!d.ok) return;
+        
+        // Source label with color coding so user sees status at a glance
+        const sourceEl = document.getElementById('creds-status-source');
+        const sourceLabel = {
+            'db_encrypted': '🟢 DB (encrypted)',
+            'env_plain': '🟡 ENV plain',
+            'env_encrypted': '🟢 ENV encrypted',
+            'none': '🔴 Not configured',
+        }[d.source] || d.source;
+        sourceEl.textContent = sourceLabel;
+        
+        document.getElementById('creds-status-key').textContent = d.key_preview;
+        
+        // Master key indicator + show/hide the generation panel
+        const masterEl = document.getElementById('creds-status-master');
+        masterEl.textContent = d.encryption_key_set ? '✅ set' : '❌ NOT set';
+        masterEl.style.color = d.encryption_key_set ? '#4caf50' : '#f44336';
+        document.getElementById('creds-no-master').style.display =
+            d.encryption_key_set ? 'none' : 'block';
+
+    } catch (e) {
+        console.error('Failed to load credentials status:', e);
+    }
+}
+
+// 🔐 Збереження / видалення ключів Bybit — в особистому кабінеті (24.11).
+
+// ====================================================================
+// 🦎 CoinGecko credentials
+// ====================================================================
+const _srcLabels = {
+    db_encrypted: '🟢 DB encrypted', env_plain: '🟡 ENV plain', none: '⚪ Not set',
+};
+function _showMsg(id, ok, text) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.background = ok ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)';
+    el.style.color = ok ? '#86efac' : '#fca5a5';
+    el.textContent = text;
+}
+
+async function loadCoinGeckoStatus() {
+    try {
+        const r = await fetch('/api/credentials/coingecko/status');
+        const d = await r.json();
+        if (!d.ok) return;
+        document.getElementById('cg-status-source').textContent =
+            _srcLabels[d.source] || d.source;
+        document.getElementById('cg-status-key').textContent =
+            d.has_key ? d.key_preview : '— none —';
+    } catch (e) { console.error('loadCoinGeckoStatus', e); }
+}
+
+async function saveCoinGeckoKey() {
+    const key = document.getElementById('cg-key').value.trim();
+    if (!key) { _showMsg('cg-msg', false, 'Enter an API key first'); return; }
+    try {
+        const r = await fetch('/api/credentials/coingecko/save', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({api_key: key}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            _showMsg('cg-msg', true, '✅ Saved + encrypted. Applies immediately.');
+            document.getElementById('cg-key').value = '';
+            await loadCoinGeckoStatus();
+        } else {
+            _showMsg('cg-msg', false, 'Save failed: ' + (d.error || 'unknown'));
+        }
+    } catch (e) { _showMsg('cg-msg', false, 'Network error: ' + e); }
+}
+
+async function clearCoinGeckoKey() {
+    if (!confirm('Clear DB-stored CoinGecko key? Falls back to COINGECKO_API_KEY env.')) return;
+    try {
+        const r = await fetch('/api/credentials/coingecko/clear', {method: 'POST'});
+        const d = await r.json();
+        if (d.ok) {
+            _showMsg('cg-msg', true, '✅ ' + d.message);
+            await loadCoinGeckoStatus();
+        } else {
+            _showMsg('cg-msg', false, 'Clear failed: ' + (d.error || 'unknown'));
+        }
+    } catch (e) { _showMsg('cg-msg', false, 'Network error: ' + e); }
+}
+
+// ====================================================================
+// 🟡 Binance credentials
+// ====================================================================
+async function loadBinanceStatus() {
+    try {
+        const r = await fetch('/api/credentials/binance/status');
+        const d = await r.json();
+        if (!d.ok) return;
+        document.getElementById('bn-status-source').textContent =
+            _srcLabels[d.source] || d.source;
+        document.getElementById('bn-status-key').textContent =
+            d.has_keys ? d.key_preview : '— none —';
+    } catch (e) { console.error('loadBinanceStatus', e); }
+}
+
+async function saveBinanceKeys() {
+    const key = document.getElementById('bn-key').value.trim();
+    const secret = document.getElementById('bn-secret').value.trim();
+    if (!key || !secret) { _showMsg('bn-msg', false, 'Enter both key and secret'); return; }
+    try {
+        const r = await fetch('/api/credentials/binance/save', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({api_key: key, api_secret: secret}),
+        });
+        const d = await r.json();
+        if (d.ok) {
+            _showMsg('bn-msg', true, '✅ Saved + encrypted. ' + (d.note || ''));
+            document.getElementById('bn-key').value = '';
+            document.getElementById('bn-secret').value = '';
+            await loadBinanceStatus();
+        } else {
+            _showMsg('bn-msg', false, 'Save failed: ' + (d.error || 'unknown'));
+        }
+    } catch (e) { _showMsg('bn-msg', false, 'Network error: ' + e); }
+}
+
+async function clearBinanceKeys() {
+    if (!confirm('Clear DB-stored Binance keys? Falls back to BINANCE_API_KEY/SECRET env.')) return;
+    try {
+        const r = await fetch('/api/credentials/binance/clear', {method: 'POST'});
+        const d = await r.json();
+        if (d.ok) {
+            _showMsg('bn-msg', true, '✅ ' + d.message);
+            await loadBinanceStatus();
+        } else {
+            _showMsg('bn-msg', false, 'Clear failed: ' + (d.error || 'unknown'));
+        }
+    } catch (e) { _showMsg('bn-msg', false, 'Network error: ' + e); }
+}
+
+async function testCredentials() {
+    const resultEl = document.getElementById('creds-test-result');
+    const btn = document.getElementById('creds-test-btn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Testing…';
+    resultEl.style.display = 'none';
+    try {
+        const r = await fetch('/api/credentials/test', {method: 'POST'});
+        const d = await r.json();
+        resultEl.style.display = 'block';
+        if (d.ok && d.auth_works) {
+            resultEl.style.background = 'rgba(76,175,80,0.15)';
+            resultEl.style.border = '1px solid rgba(76,175,80,0.4)';
+            resultEl.style.color = '#a5d6a7';
+            resultEl.innerHTML = `✅ <b>Authentication OK.</b> Keys are valid. Preview: <code>${d.key_preview}</code>`;
+        } else {
+            resultEl.style.background = 'rgba(244,67,54,0.15)';
+            resultEl.style.border = '1px solid rgba(244,67,54,0.4)';
+            resultEl.style.color = '#ef9a9a';
+            const friendly = d.friendly || d.error || d.ret_msg || 'unknown error';
+            const code = d.ret_code ? ` (code ${d.ret_code})` : '';
+            resultEl.innerHTML = `❌ <b>Auth failed${code}:</b> ${friendly}`;
+        }
+    } catch (e) {
+        resultEl.style.display = 'block';
+        resultEl.style.background = 'rgba(244,67,54,0.15)';
+        resultEl.style.color = '#ef9a9a';
+        resultEl.innerHTML = `❌ Network error: ${e}`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '🧪 Test against Bybit';
+    }
+}
+
+async function generateMasterKey() {
+    try {
+        const r = await fetch('/api/credentials/generate-master', {method: 'POST'});
+        const d = await r.json();
+        if (!d.ok) {
+            alert('Generation failed: ' + (d.error || 'unknown'));
+            return;
+        }
+        const valueEl = document.getElementById('creds-generated-master-value');
+        valueEl.value = d.encryption_key;
+        document.getElementById('creds-generated-master').style.display = 'block';
+        if (d.warning) {
+            alert('⚠️ Warning: ' + d.warning);
+        }
+    } catch (e) {
+        alert('Network error: ' + e);
+    }
+}
+
+function copyToClipboard(elementId) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    el.select();
+    navigator.clipboard.writeText(el.value).then(() => {
+        showToast('📋 Copied to clipboard');
+    }).catch(() => {
+        // Fallback for older browsers
+        document.execCommand('copy');
+        showToast('📋 Copied');
+    });
+}
+</script>
+{% endblock %}

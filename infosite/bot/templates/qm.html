@@ -1,0 +1,502 @@
+{% extends "base.html" %}
+
+{% block title %}QM Zone Hunter{% endblock %}
+
+{% block content %}
+<div class="page-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:10px;">
+    <div>
+        <h1 style="margin:0;font-size:1.5em;">🎯 QM Zone Hunter</h1>
+        <p style="margin:4px 0 0;color:#888;font-size:0.85em;">Multi-TF: SMC Zones (HTF) → Quasimodo Pattern (LTF) → Telegram</p>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+        <span id="qm-status-badge" class="status-badge {{ 'running' if qm_running else 'stopped' }}" style="padding:4px 12px;border-radius:6px;font-size:0.8em;font-weight:bold;
+            background:{{ '#1a3a1a' if qm_running else '#3a1a1a' }};color:{{ '#4caf50' if qm_running else '#f44336' }};border:1px solid {{ '#4caf50' if qm_running else '#f44336' }};">
+            {{ '🟢 RUNNING' if qm_running else '🔴 STOPPED' }}
+        </span>
+        <button onclick="startQM()" class="btn btn-sm" style="background:#1b5e20;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;">▶ Start</button>
+        <button onclick="stopQM()" class="btn btn-sm" style="background:#b71c1c;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;">⏹ Stop</button>
+        <button onclick="scanNowQM()" class="btn btn-sm" style="background:#0d47a1;color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer;">🔍 Scan Now</button>
+    </div>
+</div>
+
+<!-- ═══════════════ INFO CARDS ═══════════════ -->
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:20px;">
+    <div class="card" style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:14px 18px;">
+        <div style="color:#888;font-size:0.75em;margin-bottom:4px;">📊 HTF Timeframe</div>
+        <div style="font-size:1.3em;font-weight:bold;color:#448aff;">{{ settings.qm_htf_timeframe }}</div>
+    </div>
+    <div class="card" style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:14px 18px;">
+        <div style="color:#888;font-size:0.75em;margin-bottom:4px;">🎯 LTF Timeframe</div>
+        <div style="font-size:1.3em;font-weight:bold;color:#b388ff;">{{ settings.qm_ltf_timeframe }}</div>
+    </div>
+    <div class="card" style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:14px 18px;">
+        <div style="color:#888;font-size:0.75em;margin-bottom:4px;">🔥 Active Zones</div>
+        <div style="font-size:1.3em;font-weight:bold;color:#ffab00;" id="zones-count">{{ zones_active }}</div>
+    </div>
+    <div class="card" style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:14px 18px;">
+        <div style="color:#888;font-size:0.75em;margin-bottom:4px;">📨 Signals Sent</div>
+        <div style="font-size:1.3em;font-weight:bold;color:#00c853;" id="signals-count">{{ signals_sent }}</div>
+    </div>
+</div>
+
+<!-- ═══════════════ WATCHLIST ═══════════════ -->
+<div class="card" style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:16px;margin-bottom:20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 style="margin:0;font-size:1.1em;">📋 Watchlist ({{ watchlist|length }} symbols)</h2>
+        <div style="display:flex;gap:8px;">
+            <input type="text" id="qm-new-symbol" placeholder="BTCUSDT" 
+                style="background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 12px;border-radius:6px;width:130px;font-size:0.85em;">
+            <button onclick="addSymbolQM()" style="background:#1b5e20;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:0.85em;">+ Add</button>
+        </div>
+    </div>
+    <div id="qm-watchlist" style="display:flex;flex-wrap:wrap;gap:8px;">
+        {% for sym in watchlist %}
+        <span class="watchlist-tag" style="background:#0f1117;border:1px solid #2a2d3a;border-radius:6px;padding:4px 10px;font-size:0.8em;display:flex;align-items:center;gap:6px;">
+            {{ sym }}
+            <span onclick="removeSymbolQM('{{ sym }}')" style="color:#f44336;cursor:pointer;font-weight:bold;">✕</span>
+        </span>
+        {% endfor %}
+        {% if not watchlist %}
+        <span style="color:#666;font-size:0.85em;">Додайте монети для сканування</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ═══════════════ SETTINGS ═══════════════ -->
+<div class="card" style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:16px;margin-bottom:20px;">
+    <details id="qm-settings-details">
+        <summary style="cursor:pointer;font-size:1.1em;font-weight:bold;margin-bottom:12px;user-select:none;">
+            ⚙️ Налаштування QM Hunter <span style="color:#888;font-size:0.75em;font-weight:normal;">(натисніть для розгортання)</span>
+        </summary>
+
+        <form id="qm-settings-form" onsubmit="saveSettingsQM(event)">
+            <!-- HTF Settings -->
+            <div style="margin-bottom:16px;">
+                <h3 style="color:#448aff;font-size:0.95em;margin:0 0 10px;border-bottom:1px solid #2a2d3a;padding-bottom:6px;">
+                    📊 HTF — SMC Zones Detection
+                </h3>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;">
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Timeframe</label>
+                        <select name="qm_htf_timeframe" style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;">
+                            {% for tf in ['5m','15m','30m','1h','2h','4h'] %}
+                            <option value="{{ tf }}" {{ 'selected' if settings.qm_htf_timeframe == tf }}>{{ tf }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">SMC Swing Length</label>
+                        <input type="number" name="qm_smc_swing_length" value="{{ settings.qm_smc_swing_length }}" min="10" max="200"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Zone Threshold (%)</label>
+                        <input type="number" name="qm_smc_zone_threshold" value="{{ settings.qm_smc_zone_threshold }}" min="0.1" max="5.0" step="0.1"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                </div>
+                <p style="color:#666;font-size:0.7em;margin:6px 0 0;">
+                    HTF визначає <strong>ДЕ</strong> торгувати: Strong Low, HL → BUY зони | Weak High, LH → SELL зони
+                </p>
+            </div>
+
+            <!-- LTF Settings -->
+            <div style="margin-bottom:16px;">
+                <h3 style="color:#b388ff;font-size:0.95em;margin:0 0 10px;border-bottom:1px solid #2a2d3a;padding-bottom:6px;">
+                    🎯 LTF — Quasimodo Pattern Detection
+                </h3>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;">
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Timeframe</label>
+                        <select name="qm_ltf_timeframe" style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;">
+                            {% for tf in ['1m','3m','5m','15m','30m'] %}
+                            <option value="{{ tf }}" {{ 'selected' if settings.qm_ltf_timeframe == tf }}>{{ tf }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Min Swing Bars</label>
+                        <input type="number" name="qm_min_swing_bars" value="{{ settings.qm_min_swing_bars }}" min="2" max="20"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">ATR Period</label>
+                        <input type="number" name="qm_atr_period" value="{{ settings.qm_atr_period }}" min="5" max="50"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Min Swing ATR</label>
+                        <input type="number" name="qm_min_swing_atr" value="{{ settings.qm_min_swing_atr }}" min="0.3" max="5.0" step="0.1"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Min Pattern Bars</label>
+                        <input type="number" name="qm_min_pattern_bars" value="{{ settings.qm_min_pattern_bars }}" min="10" max="100"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Lookback Bars</label>
+                        <input type="number" name="qm_lookback_bars" value="{{ settings.qm_lookback_bars }}" min="50" max="500"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trade & Filter Settings -->
+            <div style="margin-bottom:16px;">
+                <h3 style="color:#ffab00;font-size:0.95em;margin:0 0 10px;border-bottom:1px solid #2a2d3a;padding-bottom:6px;">
+                    📋 Фільтрація та торгові рівні
+                </h3>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;">
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Min D-B Diff (%)</label>
+                        <input type="number" name="qm_min_db_diff_pct" value="{{ settings.qm_min_db_diff_pct }}" min="0.1" max="5.0" step="0.1"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">SL Buffer (%)</label>
+                        <input type="number" name="qm_sl_buffer_pct" value="{{ settings.qm_sl_buffer_pct }}" min="0.05" max="2.0" step="0.05"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Min Confidence (%)</label>
+                        <input type="number" name="qm_min_confidence" value="{{ settings.qm_min_confidence }}" min="30" max="95" step="5"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Min R:R Ratio</label>
+                        <input type="number" name="qm_min_rr_ratio" value="{{ settings.qm_min_rr_ratio }}" min="0.5" max="5.0" step="0.1"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Max Risk (%)</label>
+                        <input type="number" name="qm_max_risk_pct" value="{{ settings.qm_max_risk_pct }}" min="0.5" max="5.0" step="0.5"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                    <div>
+                        <label style="color:#888;font-size:0.75em;display:block;margin-bottom:3px;">Scan Interval (sec)</label>
+                        <input type="number" name="qm_scan_interval" value="{{ settings.qm_scan_interval }}" min="5" max="300"
+                            style="width:100%;background:#0f1117;border:1px solid #2a2d3a;color:#e0e0e0;padding:6px 10px;border-radius:6px;box-sizing:border-box;">
+                    </div>
+                </div>
+            </div>
+
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button type="submit" style="background:#1b5e20;color:#fff;border:none;padding:8px 24px;border-radius:6px;cursor:pointer;font-weight:bold;">
+                    💾 Save & Reload
+                </button>
+            </div>
+        </form>
+    </details>
+</div>
+
+<!-- ═══════════════ SCAN RESULTS ═══════════════ -->
+<div class="card" style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:16px;margin-bottom:20px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 style="margin:0;font-size:1.1em;">📈 Scan Results</h2>
+        <span style="color:#888;font-size:0.8em;" id="qm-scan-time">{{ last_scan_time or '—' }}</span>
+    </div>
+    <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85em;" id="qm-results-table">
+            <thead>
+                <tr style="border-bottom:1px solid #2a2d3a;">
+                    <th style="padding:8px;text-align:left;color:#888;">SYMBOL</th>
+                    <th style="padding:8px;text-align:right;color:#888;">PRICE</th>
+                    <th style="padding:8px;text-align:center;color:#888;">SMC TREND</th>
+                    <th style="padding:8px;text-align:center;color:#888;">ZONE</th>
+                    <th style="padding:8px;text-align:right;color:#888;">DISTANCE</th>
+                    <th style="padding:8px;text-align:center;color:#888;">HUNTING</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in scan_results %}
+                <tr style="border-bottom:1px solid #1a1d2755;">
+                    <td style="padding:8px;font-weight:bold;">{{ r.symbol }}</td>
+                    <td style="padding:8px;text-align:right;color:#e0e0e0;">${{ '%.4f'|format(r.price) if r.price else '—' }}</td>
+                    <td style="padding:8px;text-align:center;">
+                        {% if r.smc and r.smc.trend == 'BULLISH' %}
+                            <span style="color:#4caf50;" title="HH: {{ r.smc.last_hh or '—' }} | HL: {{ r.smc.last_hl or '—' }}">🟢 BULLISH</span>
+                        {% elif r.smc and r.smc.trend == 'BEARISH' %}
+                            <span style="color:#f44336;" title="LH: {{ r.smc.last_lh or '—' }} | LL: {{ r.smc.last_ll or '—' }}">🔴 BEARISH</span>
+                        {% else %}
+                            <span style="color:#888;">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:8px;text-align:center;">
+                        {% if r.zone %}
+                            {% if r.zone_type == 'demand' %}
+                                <span style="background:#1a3a1a;color:#4caf50;padding:2px 8px;border-radius:4px;font-size:0.85em;border:1px solid #4caf5044;">
+                                    🟢 {{ r.zone }}
+                                </span>
+                            {% else %}
+                                <span style="background:#3a1a1a;color:#f44336;padding:2px 8px;border-radius:4px;font-size:0.85em;border:1px solid #f4433644;">
+                                    🔴 {{ r.zone }}
+                                </span>
+                            {% endif %}
+                        {% else %}
+                            <span style="color:#555;">—</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:8px;text-align:right;color:{{ '#ffab00' if r.zone_distance and r.zone_distance|abs < 0.5 else '#888' }};">
+                        {{ '%.3f%%'|format(r.zone_distance) if r.zone_distance is not none else '—' }}
+                    </td>
+                    <td style="padding:8px;text-align:center;">
+                        {% if r.hunting %}
+                            <span style="color:#ffab00;font-weight:bold;" title="Searching QM pattern on LTF">🎯 HUNTING</span>
+                        {% else %}
+                            <span style="color:#555;">⏸️</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not scan_results %}
+                <tr><td colspan="6" style="padding:20px;text-align:center;color:#555;">Запустіть сканер для отримання результатів</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ═══════════════ EXECUTED SIGNALS ═══════════════ -->
+<div class="card" style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <h2 style="margin:0;font-size:1.1em;">🎯 QM Signals ({{ qm_signals|length }})</h2>
+        {% if qm_signals %}
+        <button onclick="clearAllSignalsQM()" style="background:#b71c1c;color:#fff;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;font-size:0.8em;">
+            🗑️ Clear All
+        </button>
+        {% endif %}
+    </div>
+    <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:0.8em;" id="qm-signals-table">
+            <thead>
+                <tr style="border-bottom:1px solid #2a2d3a;">
+                    <th style="padding:6px;text-align:left;color:#888;">TIME</th>
+                    <th style="padding:6px;text-align:left;color:#888;">SYMBOL</th>
+                    <th style="padding:6px;text-align:center;color:#888;">DIR</th>
+                    <th style="padding:6px;text-align:center;color:#888;">ZONE</th>
+                    <th style="padding:6px;text-align:right;color:#888;">ENTRY</th>
+                    <th style="padding:6px;text-align:right;color:#888;">SL</th>
+                    <th style="padding:6px;text-align:right;color:#888;">TP1</th>
+                    <th style="padding:6px;text-align:center;color:#888;">R:R</th>
+                    <th style="padding:6px;text-align:center;color:#888;">CONF</th>
+                    <th style="padding:6px;text-align:center;color:#888;">⚡</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in qm_signals %}
+                <tr style="border-bottom:1px solid #1a1d2755;" id="qm-sig-row-{{ loop.index0 }}">
+                    <td style="padding:6px;color:#888;">{{ s.timestamp[:16] if s.timestamp else '—' }}</td>
+                    <td style="padding:6px;font-weight:bold;">{{ s.symbol }}</td>
+                    <td style="padding:6px;text-align:center;">
+                        {% if s.direction == 'BUY' %}
+                            <span style="color:#4caf50;font-weight:bold;">🟢 BUY</span>
+                        {% else %}
+                            <span style="color:#f44336;font-weight:bold;">🔴 SELL</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:6px;text-align:center;font-size:0.9em;">{{ s.zone_level or '—' }}</td>
+                    <td style="padding:6px;text-align:right;">${{ '%.4f'|format(s.entry) if s.entry else '—' }}</td>
+                    <td style="padding:6px;text-align:right;color:#f44336;">${{ '%.4f'|format(s.stop_loss) if s.stop_loss else '—' }}</td>
+                    <td style="padding:6px;text-align:right;color:#4caf50;">${{ '%.4f'|format(s.tp1) if s.tp1 else '—' }}</td>
+                    <td style="padding:6px;text-align:center;color:#ffab00;">{{ '%.2f'|format(s.risk_reward) if s.risk_reward else '—' }}</td>
+                    <td style="padding:6px;text-align:center;">{{ '%.0f%%'|format(s.confidence) if s.confidence else '—' }}</td>
+                    <td style="padding:6px;text-align:center;">
+                        <span onclick="deleteSignalQM('{{ s.timestamp }}', {{ loop.index0 }})" style="color:#f44336;cursor:pointer;font-size:1.1em;" title="Видалити">✕</span>
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not qm_signals %}
+                <tr><td colspan="10" style="padding:20px;text-align:center;color:#555;">Немає сигналів. Сканер шукає QM паттерни в SMC зонах.</td></tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- ═══════════════ PIPELINE DIAGRAM ═══════════════ -->
+<div class="card" style="background:#1a1d27;border:1px solid #2a2d3a;border-radius:10px;padding:16px;margin-top:20px;">
+    <h2 style="margin:0 0 12px;font-size:1em;color:#888;">📋 Pipeline</h2>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:0.8em;">
+        <span style="background:rgba(68,138,255,0.15);border:1px solid #448aff44;color:#448aff;padding:4px 10px;border-radius:6px;font-weight:bold;">
+            HTF ({{ settings.qm_htf_timeframe }}) SMC Zones
+        </span>
+        <span style="color:#555;">→</span>
+        <span style="background:rgba(255,171,0,0.15);border:1px solid #ffab0044;color:#ffab00;padding:4px 10px;border-radius:6px;font-weight:bold;">
+            Price in Zone? (±{{ settings.qm_smc_zone_threshold }}%)
+        </span>
+        <span style="color:#555;">→</span>
+        <span style="background:rgba(179,136,255,0.15);border:1px solid #b388ff44;color:#b388ff;padding:4px 10px;border-radius:6px;font-weight:bold;">
+            LTF ({{ settings.qm_ltf_timeframe }}) QM Pattern
+        </span>
+        <span style="color:#555;">→</span>
+        <span style="background:rgba(0,200,83,0.15);border:1px solid #00c85344;color:#00c853;padding:4px 10px;border-radius:6px;font-weight:bold;">
+            Conf ≥ {{ settings.qm_min_confidence }}% & R:R ≥ {{ settings.qm_min_rr_ratio }}
+        </span>
+        <span style="color:#555;">→</span>
+        <span style="background:rgba(0,200,83,0.3);border:1px solid #00c853;color:#00c853;padding:4px 10px;border-radius:6px;font-weight:bold;">
+            📨 Telegram
+        </span>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ═══════════════ API CALLS ═══════════════
+
+async function apiCall(url, data = {}) {
+    try {
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+        return await resp.json();
+    } catch(e) {
+        console.error('API error:', e);
+        return {error: e.message};
+    }
+}
+
+function startQM() {
+    apiCall('/api/qm/start').then(r => {
+        if (r.ok) location.reload();
+        else alert(r.error || 'Failed to start');
+    });
+}
+
+function stopQM() {
+    apiCall('/api/qm/stop').then(r => {
+        if (r.ok) location.reload();
+        else alert(r.error || 'Failed to stop');
+    });
+}
+
+function scanNowQM() {
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = '⏳ Scanning...';
+    apiCall('/api/qm/scan').then(r => {
+        setTimeout(() => location.reload(), 500);
+    });
+}
+
+function addSymbolQM() {
+    const input = document.getElementById('qm-new-symbol');
+    const symbol = input.value.trim().toUpperCase();
+    if (!symbol) return;
+    apiCall('/api/qm/watchlist/add', {symbol}).then(r => {
+        if (r.ok) location.reload();
+        else alert(r.error || 'Failed');
+    });
+}
+
+function removeSymbolQM(symbol) {
+    if (!confirm(`Remove ${symbol}?`)) return;
+    apiCall('/api/qm/watchlist/remove', {symbol}).then(r => {
+        if (r.ok) location.reload();
+    });
+}
+
+function saveSettingsQM(e) {
+    e.preventDefault();
+    const form = document.getElementById('qm-settings-form');
+    const data = {};
+    new FormData(form).forEach((val, key) => { data[key] = val; });
+    apiCall('/api/qm/settings', data).then(r => {
+        if (r.ok) location.reload();
+        else alert(r.error || 'Failed');
+    });
+}
+
+function deleteSignalQM(timestamp, rowIdx) {
+    const row = document.getElementById('qm-sig-row-' + rowIdx);
+    if (row) row.style.opacity = '0.3';
+    apiCall('/api/qm/signals/delete', {timestamp}).then(r => {
+        if (r.ok && row) row.remove();
+        else if (row) row.style.opacity = '1';
+    });
+}
+
+function clearAllSignalsQM() {
+    if (!confirm('Clear all QM signals?')) return;
+    apiCall('/api/qm/signals/clear').then(r => {
+        if (r.ok) location.reload();
+    });
+}
+
+// Format a UTC ISO timestamp into the viewer's COMPUTER local time (HH:MM:SS).
+// Falls back to the raw value if it isn't a parseable date.
+function qmLocalTime(v) {
+    if (!v) return v;
+    var iso = /[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v : v + 'Z';
+    var d = new Date(iso);
+    return isNaN(d.getTime()) ? v : d.toLocaleTimeString([], { hour12: false });
+}
+// Localize the server-rendered initial value on load.
+(function () {
+    var el = document.getElementById('qm-scan-time');
+    if (el && el.textContent && el.textContent.trim() !== '—') el.textContent = qmLocalTime(el.textContent.trim());
+})();
+
+// Auto-refresh every 15s
+setInterval(() => {
+    if (document.getElementById('qm-status-badge').textContent.includes('RUNNING')) {
+        fetch('/api/qm/results').then(r => r.json()).then(data => {
+            if (data.scan_time) document.getElementById('qm-scan-time').textContent = qmLocalTime(data.scan_time);
+            if (data.zones_active !== undefined) document.getElementById('zones-count').textContent = data.zones_active;
+            if (data.signals_sent !== undefined) document.getElementById('signals-count').textContent = data.signals_sent;
+            
+            // Update scan results table
+            if (data.scan_results && data.scan_results.length > 0) {
+                const tbody = document.querySelector('#qm-results-table tbody');
+                let html = '';
+                data.scan_results.forEach(r => {
+                    const price = r.price ? '$' + r.price.toFixed(4) : '—';
+                    // SMC Trend
+                    let trendHtml = '<span style="color:#888;">—</span>';
+                    if (r.smc && r.smc.trend === 'BULLISH') {
+                        trendHtml = '<span style="color:#4caf50;" title="HH: ' + (r.smc.last_hh || '—') + ' | HL: ' + (r.smc.last_hl || '—') + '">🟢 BULLISH</span>';
+                    } else if (r.smc && r.smc.trend === 'BEARISH') {
+                        trendHtml = '<span style="color:#f44336;" title="LH: ' + (r.smc.last_lh || '—') + ' | LL: ' + (r.smc.last_ll || '—') + '">🔴 BEARISH</span>';
+                    }
+                    // Zone
+                    let zoneHtml = '<span style="color:#555;">—</span>';
+                    if (r.zone) {
+                        if (r.zone_type === 'demand') {
+                            zoneHtml = '<span style="background:#1a3a1a;color:#4caf50;padding:2px 8px;border-radius:4px;font-size:0.85em;border:1px solid #4caf5044;">🟢 ' + r.zone + '</span>';
+                        } else {
+                            zoneHtml = '<span style="background:#3a1a1a;color:#f44336;padding:2px 8px;border-radius:4px;font-size:0.85em;border:1px solid #f4433644;">🔴 ' + r.zone + '</span>';
+                        }
+                    }
+                    // Distance
+                    const distColor = (r.zone_distance !== null && Math.abs(r.zone_distance) < 0.5) ? '#ffab00' : '#888';
+                    const distText = r.zone_distance !== null ? r.zone_distance.toFixed(3) + '%' : '—';
+                    // Hunting
+                    const huntHtml = r.hunting
+                        ? '<span style="color:#ffab00;font-weight:bold;" title="Searching QM pattern on LTF">🎯 HUNTING</span>'
+                        : '<span style="color:#555;">⏸️</span>';
+                    
+                    html += '<tr style="border-bottom:1px solid #1a1d2755;">'
+                        + '<td style="padding:8px;font-weight:bold;">' + r.symbol + '</td>'
+                        + '<td style="padding:8px;text-align:right;color:#e0e0e0;">' + price + '</td>'
+                        + '<td style="padding:8px;text-align:center;">' + trendHtml + '</td>'
+                        + '<td style="padding:8px;text-align:center;">' + zoneHtml + '</td>'
+                        + '<td style="padding:8px;text-align:right;color:' + distColor + ';">' + distText + '</td>'
+                        + '<td style="padding:8px;text-align:center;">' + huntHtml + '</td>'
+                        + '</tr>';
+                });
+                tbody.innerHTML = html;
+            }
+        }).catch(() => {});
+    }
+}, 15000);
+
+// Enter key for add symbol
+document.getElementById('qm-new-symbol').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); addSymbolQM(); }
+});
+</script>
+{% endblock %}
