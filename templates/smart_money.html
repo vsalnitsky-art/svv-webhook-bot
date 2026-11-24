@@ -954,6 +954,14 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
     vertical-align: middle;
 }
 
+/* ➕ Усереднення угоди за ⚠ сигналами аномалій (кількість докуповувань). */
+.tm-avg-mark {
+    display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px;
+    font: 700 0.66rem/1.45 ui-monospace, monospace; vertical-align: middle;
+    color: #a5f3fc; background: rgba(34,211,238,0.12); border: 1px solid rgba(34,211,238,0.45);
+    cursor: help;
+}
+
 /* 🏷 Позначка «останній OB 4H» у полі Side (колір = біас блоку). */
 .mm-ob4h-slot { display:inline-block; width:38px; vertical-align:middle; }
 .mm-ob4h-slot .tm-ob4h { margin-left:0; }
@@ -19881,12 +19889,27 @@ function tvSym(sym, label) {
 }
 
 // Closed-trade cell: 📈 (left) = history chart, the NAME = TradingView link.
+// ➕ УСЕРЕДНЕННЯ (вимога 24.11): угода за ⚠ сигналом аномалій, у яку докинуто
+// маржу на кращій точці входу. Позначка біля назви: «➕N», точки входу — у підказці.
+function cabAvgMarkHTML(p) {
+    const n = Number((p && p.cab_avg_n) || 0);
+    if (!n) return '';
+    const tr = Array.isArray(p.cab_tranches) ? p.cab_tranches : [];
+    const pts = tr.map((t, i) => (i === 0 ? 'вхід' : `+${i}`) + ' '
+        + (typeof fmtPriceJS === 'function' ? fmtPriceJS(Number(t.px)) : t.px)
+        + (t.t ? ' · ' + _pcDM(Number(t.t)) + ' ' + _pcHM(Number(t.t)) : '')).join('\n');
+    const tip = `➕ Усереднення: ${n} докуповування за ⚠ сигналами аномалій\n`
+        + `середній вхід — у колонці Entry\n${pts}\nЗакриття закриває ВСЮ позицію по монеті`;
+    return `<span class="tm-avg-mark" title="${tip.replace(/"/g, '&quot;')}">➕${n}</span>`;
+}
+
 function histSymCell(c, isShadow) {
     const tv = tvSym(c.symbol);
     const sig = signalIconHtml(c.opened_by);   // 🏷 звідки угода — біля назви
     const ca = JSON.stringify(c.closed_at);
     return `${sig}<b><span style="cursor:pointer;margin-right:3px" title="Хронологія угоди: шлях монети, ⚠ аномалії, 🔬 дослідження"`
-        + ` onclick="event.stopPropagation();showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
+        + ` onclick="event.stopPropagation();showTradeHistory('${c.symbol}', ${ca}, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`
+        + cabAvgMarkHTML(c);
 }
 
 // 🏷️ Мітки «Сигнал → Двигун» — JS-ДЗЕРКАЛО detection/signal_labels.py.
@@ -19974,7 +19997,8 @@ function histSymOpen(p, isShadow) {
     const fund = fromFunding
         ? '<span title="Монета з 💰 Funding" style="margin-right:3px;font-size:0.72rem">💰</span>' : '';
     return `${sig}${fund}<b class="tm-sym-name"><span style="cursor:pointer;margin-right:3px" title="Хронологія угоди: шлях монети, ⚠ аномалії, 🔬 дослідження"`
-        + ` onclick="event.stopPropagation();showTradeHistory('${p.symbol}', null, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`;
+        + ` onclick="event.stopPropagation();showTradeHistory('${p.symbol}', null, ${isShadow ? 'true' : 'false'})">📈</span>${tv}</b>`
+        + cabAvgMarkHTML(p);
 }
 
 function ensureHistModal() {

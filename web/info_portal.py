@@ -1720,10 +1720,12 @@ _PAPER_POS_KEYS = ('symbol', 'side', 'entry_price', 'current_price', 'pnl_pct',
                    'spring_fire', 'exh_trail', 'exh', 'spring_open_tgt',
                    # 15.11: ті самі поля, що таблиця бота (Side, 📌, 🚨-трейл, SL-TF)
                    'ob4h', 'ob1h', 'manual_mode', 'manual_sl_tf', 'manual_sl_src',
-                   'sl_breakeven', 'sbr_trail')
+                   'sl_breakeven', 'sbr_trail',
+                   # ➕ усереднення (24.11)
+                   'cab_avg_n', 'cab_tranches')
 _PAPER_CLOSED_KEYS = ('symbol', 'side', 'entry_price', 'exit_price', 'opened_at',
                       'closed_at', 'pnl_pct', 'reason', 'opened_by', 'peak_pnl_pct',
-                      'was_manual')
+                      'was_manual', 'cab_avg_n')
 _paper_cache = {'at': 0.0, 'data': None, 'sig': None}
 
 

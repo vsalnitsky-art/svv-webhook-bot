@@ -2633,6 +2633,12 @@
       : (p.manual_sl_src === "auto" && p.manual_sl_tf ? ' <span class="pp-sltf" title="SL виставив бот із ' + esc(p.manual_sl_tf) + '">' + esc(p.manual_sl_tf) + "</span>" : "");
     return '<td class="r">' + fmtPrice(v).replace("$", "") + tag + "</td>";
   }
+  // ➕ Усереднення угоди за ⚠ сигналами аномалій (24.11) — дзеркало cabAvgMarkHTML бота.
+  function ppAvgMark(p) {
+    var n = Number((p && p.cab_avg_n) || 0);
+    if (!n) return "";
+    return '<span class="pp-avg" title="➕ Усереднення: ' + n + ' докуповування за ⚠ сигналами аномалій · закриття закриває всю позицію">➕' + n + "</span>";
+  }
   function ppPeak(c) {
     var pk = c.peak_pnl_pct != null ? Number(c.peak_pnl_pct) : null;
     if (pk == null || !isFinite(pk)) return '<td class="r"><span class="muted">—</span></td>';
@@ -2646,7 +2652,7 @@
     var rows = d.positions || [], tb = $("#pp-open tbody"); $("#pp-open-n").textContent = rows.length;
     if (!rows.length) { tb.innerHTML = '<tr><td colspan="11" class="muted">Відкритих угод немає</td></tr>'; return; }
     tb.innerHTML = rows.map(function (p) {
-      return "<tr><td class=\"sym\">" + (p.manual_mode ? PP_PIN : "") + signalIconHtml(p.opened_by) + tvSym(p.symbol) + '</td><td class="nw ' + (p.side === "LONG" ? "pp-long" : "pp-short") + '">' + ppObMark(p, "4h") + ppObMark(p, "1h") + esc(p.side) + "</td>" +
+      return "<tr><td class=\"sym\">" + (p.manual_mode ? PP_PIN : "") + signalIconHtml(p.opened_by) + tvSym(p.symbol) + ppAvgMark(p) + '</td><td class="nw ' + (p.side === "LONG" ? "pp-long" : "pp-short") + '">' + ppObMark(p, "4h") + ppObMark(p, "1h") + esc(p.side) + "</td>" +
         '<td class="r">' + fmtPrice(p.entry_price) + '</td><td class="r">' + fmtPrice(p.current_price) + "</td>" +
         ppPnlCell(p) + "<td>" + ppExh(p) + "</td>" + ppAlertCell(p) +
         ppSlCell(p) + '<td class="r">' + ppLvl(p.manual_tp1, p.tp1_done) + '</td><td class="r">' + ppLvl(p.manual_tp) + "</td>" +
@@ -2674,7 +2680,7 @@
     tb.innerHTML = rows.map(function (c) {
       var pc = Number(c.pnl_pct || 0), t = new Date((c.closed_at || 0) * 1000), p2 = function (n) { return String(n).padStart(2, "0"); };
       return "<tr><td><span class=\"dt-d\">" + p2(t.getDate()) + "." + p2(t.getMonth() + 1) + "</span> <span class=\"dt-t\">" + p2(t.getHours()) + ":" + p2(t.getMinutes()) + "</span></td>" +
-        '<td class="sym">' + (c.was_manual ? PP_PIN : "") + signalIconHtml(c.opened_by) + tvSym(c.symbol) + '</td><td class="' + (c.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(c.side) + "</td>" +
+        '<td class="sym">' + (c.was_manual ? PP_PIN : "") + signalIconHtml(c.opened_by) + tvSym(c.symbol) + ppAvgMark(c) + '</td><td class="' + (c.side === "LONG" ? "pp-long" : "pp-short") + '">' + esc(c.side) + "</td>" +
         '<td class="r">' + fmtPrice(c.entry_price) + '</td><td class="r">' + fmtPrice(c.exit_price) + "</td>" +
         '<td class="r ' + ppCls(c.net_usd != null ? c.net_usd : pc) + '">' + ppPnlCols(pc, c.net_usd) + "</td>" +
         ppPeak(c) +

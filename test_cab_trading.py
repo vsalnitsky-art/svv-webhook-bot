@@ -56,6 +56,8 @@ def test_action_rule():
 class _FakeTM:
     """Мінімальна книга: те, що чіпає cab_signal_trade."""
     cab_trade_action = staticmethod(TM.cab_trade_action)
+    cab_avg_check = staticmethod(TM.cab_avg_check)
+    _fmt_price = staticmethod(lambda v: f'{v}')
 
     def __init__(self, flat_ok=True):
         self._lock = threading.RLock()
@@ -84,6 +86,12 @@ class _FakeTM:
 
     def _notify(self, *a, **kw):
         self.calls.append(('notify',))
+
+    def _cab_average(self, s, side, is_shadow, px):
+        self.calls.append(('average', s, side, is_shadow, px))
+        book = self._shadow_positions if is_shadow else self._positions
+        book[s] = dict(book[s], cab_avg_n=int(book[s].get('cab_avg_n') or 0) + 1, entry_price=px)
+        return {'ok': True, 'pos': book[s]}
 
 
 def _trade(tm, *a, **kw):
@@ -129,6 +137,88 @@ def test_bad_book_is_rejected():
     tm = _FakeTM()
     assert _trade(tm, 'BTCUSDT', 'LONG', 'auto')['status'] == 'rejected'
     assert not tm.calls
+
+
+# ── ➕ усереднення (вимога 24.11) ──────────────────────────────────────────
+def _anom_pos(side='LONG', e=100.0, **kw):
+    return dict({'side': side, 'entry_price': e, 'opened_by': 'anom · LONG 70%',
+                 'opened_at': 1.0, 'qty': 2.0, 'remaining_qty': 2.0}, **kw)
+
+
+def test_avg_rule_is_pure_and_strict():
+    assert TM.cab_trade_action('LONG', 'LONG', avg_ok=True) == 'average'
+    assert TM.cab_trade_action('LONG', 'SHORT', avg_ok=True) == 'reverse'
+    assert TM.cab_trade_action(None, 'LONG', avg_ok=True) == 'open'
+    ok, _ = TM.cab_avg_check(_anom_pos(), 'LONG', 99.5)               # −0.5% — краща
+    assert ok
+    ok, why = TM.cab_avg_check(_anom_pos(), 'LONG', 99.9)             # −0.1% < порога
+    assert not ok and 'не краща' in why, why
+    ok, _ = TM.cab_avg_check(_anom_pos(), 'LONG', 101.0)              # гірша
+    assert not ok
+    ok, _ = TM.cab_avg_check(_anom_pos('SHORT'), 'SHORT', 100.6)      # SHORT — вища краща
+    assert ok
+    # краща за КОЖНУ попередню точку, а не лише за середню
+    p = _anom_pos(e=99.0, cab_avg_n=1, cab_tranches=[{'px': 100.0}, {'px': 98.0}])
+    assert TM.cab_best_entry(p) == 98.0
+    assert not TM.cab_avg_check(p, 'LONG', 98.5)[0]
+    assert TM.cab_avg_check(p, 'LONG', 97.0)[0]
+    for bad, word in ((dict(opened_by='choch_bos → Q4'), 'не ⚠'), (dict(ai_owned=True), 'ШІ'),
+                      (dict(manual_mode=True), 'Manual'),
+                      (dict(cab_avg_n=TM.CAB_AVG_MAX_ADDS), 'стеля')):
+        ok, why = TM.cab_avg_check(_anom_pos(**bad), 'LONG', 90.0)
+        assert not ok and word in why, (bad, why)
+
+
+def test_avg_merge_real_weighted_by_remaining():
+    p = _anom_pos(qty=3.0, remaining_qty=2.0)                         # 1 монету вже частково закрито
+    n = TM.cab_avg_merge_real(p, 2.0, 90.0, 50.0)
+    assert abs(n['entry_price'] - 95.0) < 1e-9, n                      # (2·100 + 2·90) / 4
+    assert n['remaining_qty'] == 4.0 and n['qty'] == 5.0 and n['cab_avg_n'] == 1
+    assert [t['px'] for t in n['cab_tranches']] == [100.0, 90.0]
+    assert p['entry_price'] == 100.0                                    # ЧИСТА — вхід не змінено
+
+
+def test_avg_merge_paper_keeps_pnl_exact():
+    sz = {'qty': 1.0, 'notional': 100.0, 'margin': 10.0, 'fee_open_usd': 0.055,
+          'lev': 10, 'fee_pct': 0.055}
+    szn = dict(sz, qty=1.2, notional=108.0, margin=10.8, fee_open_usd=0.0594)
+    # частково закрито 40% по 104 — брутто й комісія вже у partial-полях
+    p = {'side': 'LONG', 'entry_price': 100.0, 'remaining_qty': 0.6,
+         'paper_part_usd': 0.4 * 4.0, 'paper_part_fees': 0.4 * 104 * 0.00055, 'opened_at': 1}
+    n = TM.cab_avg_merge_paper(p, sz, szn, 90.0, 9.0)
+    got = TM._paper_pnl(n['sz'], n['entry_price'], 95.0, 'LONG', remaining=n['remaining_qty'],
+                        part_usd=n['paper_part_usd'], part_fees=n['paper_part_fees'])
+    f = 0.00055
+    gross = 1.6 + 0.6 * (95 - 100) + 1.2 * (95 - 90)
+    fees = 1.0 * 100 * f + 1.2 * 90 * f + 0.4 * 104 * f + (0.6 + 1.2) * 95 * f
+    assert abs(got['net_usd'] - round(gross - fees, 4)) < 1e-3, (got, gross - fees)
+    assert n['sz']['qty'] == 2.2 and abs(n['sz']['margin'] - 20.8) < 1e-9
+    assert abs(n['remaining_qty'] - 1.8 / 2.2) < 1e-9
+
+
+def test_signal_averages_better_entry_both_books():
+    for book in ('paper', 'real'):
+        tm = _FakeTM()
+        (tm._shadow_positions if book == 'paper' else tm._positions)['BTCUSDT'] = _anom_pos(e=101.0)
+        r = _trade(tm, 'BTCUSDT', 'LONG', book)                        # ціна 100 < 101 −0.3%
+        assert r['status'] == 'averaged' and r['avg_n'] == 1, r
+        assert tm.calls[0] == ('average', 'BTCUSDT', 'LONG', book == 'paper', 100.0), tm.calls
+        r = _trade(tm, 'BTCUSDT', 'LONG', book)                        # уже 100 — не краща
+        assert r['status'] == 'hold', r
+
+
+def test_averaged_real_closes_everything_on_exchange():
+    src = _src('detection/trade_manager.py')
+    body = src[src.index('    def _close_position('):src.index('        # Calculate PnL')]
+    assert "pos.get('cab_avg_n')" in body and '_flatten_on_exchange(symbol)' in body
+    for need in ("'cab_avg_n': int(pos.get('cab_avg_n') or 0) or None",):
+        assert src.count(need) == 3, need                               # real · external · paper
+    page = _src('templates/smart_money.html')
+    for fn in ('function histSymOpen', 'function histSymCell'):
+        i = page.index(fn)
+        assert 'cabAvgMarkHTML(' in page[i:i + 1400], fn
+    app = _src('infosite/js/app.js')
+    assert app.count('ppAvgMark(') >= 3 and 'cab_avg_n' in _src('web/info_portal.py')
 
 
 # ── налаштування кабінету ────────────────────────────────────────────────

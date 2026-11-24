@@ -7360,6 +7360,8 @@ class TradeManager:
             'manual_sl': pos.get('manual_sl'),
             'manual_tp': pos.get('manual_tp'),
             'was_manual': bool(pos.get('was_manual')),   # trade was hand-managed
+            'cab_avg_n': int(pos.get('cab_avg_n') or 0) or None,   # ➕ усереднення
+            'cab_tranches': pos.get('cab_tranches') or None,
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             'entry_score': pos.get('entry_score'),
@@ -8195,6 +8197,17 @@ class TradeManager:
         bybit_side = 'Buy' if pos['side'] == 'LONG' else 'Sell'
         qty = pos.get('remaining_qty', pos['qty'])
         
+        if not exchange_done and pos.get('cab_avg_n'):
+            # ➕ Усереднена угода (кілька ордерів): закриваємо РІВНО те, що стоїть
+            # на БІРЖІ, і чекаємо нуля — щоб по монеті нічого не лишилось
+            # (округлення кількості кожного ордера книга бота не знає).
+            ok_f, why_f = self._flatten_on_exchange(symbol)
+            if ok_f:
+                exchange_done = True
+            else:
+                self._notify(f"⚠️ #{symbol}: усереднену позицію не підтверджено закритою "
+                             f"({why_f}) — шлю ордер закриття за книгою бота",
+                             category='trades')
         if not exchange_done:
             try:
                 self.bybit.close_position(symbol=symbol, side=bybit_side, qty=qty)
@@ -8248,6 +8261,8 @@ class TradeManager:
             'manual_sl': pos.get('manual_sl'),
             'manual_tp': pos.get('manual_tp'),
             'was_manual': bool(pos.get('was_manual')),   # trade was hand-managed
+            'cab_avg_n': int(pos.get('cab_avg_n') or 0) or None,   # ➕ усереднення
+            'cab_tranches': pos.get('cab_tranches') or None,
             'opened_by': pos.get('opened_by', ''),
             'partial_closes_done': pos.get('partial_closes_done', []),
             # Carry the entry-side advisory snapshot into the closed record
@@ -8804,6 +8819,8 @@ class TradeManager:
             'manual_sl': pos.get('manual_sl'),
             'manual_tp': pos.get('manual_tp'),
             'was_manual': bool(pos.get('was_manual')),   # trade was hand-managed
+            'cab_avg_n': int(pos.get('cab_avg_n') or 0) or None,   # ➕ усереднення
+            'cab_tranches': pos.get('cab_tranches') or None,
             'opened_by': pos.get('opened_by', ''),
             'shadow': True,
             # Same as real-position close — preserve the entry snapshot for
@@ -10389,14 +10406,180 @@ class TradeManager:
         return bool(t0 and (time.time() - t0) < cd * 60.0)
 
     @staticmethod
-    def cab_trade_action(cur_side: Optional[str], side: str) -> str:
+    def cab_trade_action(cur_side: Optional[str], side: str, avg_ok: bool = False) -> str:
         """ЧИСТА (вимога 24.11): що робити з сигналом при наявній угоді В ТІЙ
-        САМІЙ книзі. Угоди немає → 'open'; той самий бік → 'hold' (нічого не
-        робимо); протилежний → 'reverse' (закрити поточну, відкрити нову)."""
+        САМІЙ книзі. Угоди немає → 'open'; той самий бік → 'average', коли
+        `avg_ok` (кращу точку входу перевіряє `cab_avg_check`), інакше 'hold'
+        (нічого не робимо); протилежний → 'reverse' (закрити поточну, відкрити нову)."""
         c = str(cur_side or '').upper()
         if c not in ('LONG', 'SHORT'):
             return 'open'
-        return 'hold' if c == str(side or '').upper() else 'reverse'
+        if c == str(side or '').upper():
+            return 'average' if avg_ok else 'hold'
+        return 'reverse'
+
+    # ➕ УСЕРЕДНЕННЯ угод за ⚠ сигналами аномалій (вимога 24.11).
+    CAB_AVG_MIN_PCT = 0.3     # нова точка мусить бути кращою мінімум на стільки %
+    CAB_AVG_MAX_ADDS = 3      # стеля докуповувань на одну угоду
+
+    @staticmethod
+    def cab_best_entry(pos: Optional[Dict]) -> Optional[float]:
+        """ЧИСТА: найкраща з УСІХ точок входу угоди (LONG — найнижча, SHORT —
+        найвища). Без докуповувань — ціна входу."""
+        if not pos:
+            return None
+        pxs = []
+        for t in (pos.get('cab_tranches') or []):
+            try:
+                v = float((t or {}).get('px') or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            if v > 0:
+                pxs.append(v)
+        if not pxs:
+            try:
+                v = float(pos.get('entry_price') or 0)
+            except (TypeError, ValueError):
+                v = 0.0
+            return v if v > 0 else None
+        return min(pxs) if str(pos.get('side')).upper() == 'LONG' else max(pxs)
+
+    @classmethod
+    def cab_avg_check(cls, pos: Optional[Dict], side: str, price) -> tuple:
+        """ЧИСТА: чи докидати маржу в наявну угоду того самого боку.
+        → (ok, причина). «Краща точка» = ціна краща за КОЖНУ попередню точку
+        входу (LONG — нижча, SHORT — вища) мінімум на `CAB_AVG_MIN_PCT` %.
+        Лише угоди, відкриті ⚠ сигналом аномалій; угоди ШІ, 📌 Manual і стеля
+        докуповувань — ні."""
+        sd = str(side or '').upper()
+        if not pos or str(pos.get('side')).upper() != sd:
+            return False, 'угоди цього боку немає'
+        try:
+            from detection.signal_labels import signal_code_of
+            code = signal_code_of(pos.get('opened_by'))
+        except Exception:
+            code = str(pos.get('opened_by') or '').split(' ', 1)[0]
+        if code != 'anom':
+            return False, 'угоду відкрито не ⚠ сигналом аномалій'
+        if pos.get('ai_owned'):
+            return False, 'угоду веде ШІ'
+        if pos.get('manual_mode'):
+            return False, '📌 Manual — бот угоду не чіпає'
+        n = int(pos.get('cab_avg_n') or 0)
+        if n >= cls.CAB_AVG_MAX_ADDS:
+            return False, f'уже {n} усереднень (стеля {cls.CAB_AVG_MAX_ADDS})'
+        best = cls.cab_best_entry(pos)
+        try:
+            px = float(price or 0)
+        except (TypeError, ValueError):
+            px = 0.0
+        if not best or px <= 0:
+            return False, 'немає ціни'
+        gain = (best - px) / best * 100 if sd == 'LONG' else (px - best) / best * 100
+        if gain < cls.CAB_AVG_MIN_PCT:
+            return False, (f'точка не краща: {px:g} проти найкращого входу {best:g} '
+                           f'({gain:+.2f}% < {cls.CAB_AVG_MIN_PCT}%)')
+        return True, f'краща точка на {gain:.2f}% (найкращий вхід {best:g})'
+
+    @staticmethod
+    def cab_avg_merge_real(pos: Dict, add_qty: float, price: float, now: float) -> Dict:
+        """ЧИСТА: реальна позиція після докуповування (кількість — у монетах).
+        Середній вхід — зважений по ЗАЛИШКУ (як рахує біржа)."""
+        rem = float(pos.get('remaining_qty', pos.get('qty')) or 0)
+        e = float(pos.get('entry_price') or 0)
+        q, px = float(add_qty), float(price)
+        tot = rem + q
+        tr = list(pos.get('cab_tranches') or [])
+        if not tr:
+            tr.append({'t': pos.get('opened_at'), 'px': e, 'qty': rem})
+        tr.append({'t': now, 'px': px, 'qty': q})
+        out = dict(pos)
+        out.update(entry_price=(rem * e + q * px) / tot if tot > 0 else px,
+                   qty=float(pos.get('qty') or 0) + q, remaining_qty=tot,
+                   cab_tranches=tr, cab_avg_n=int(pos.get('cab_avg_n') or 0) + 1,
+                   cab_avg_at=now)
+        return out
+
+    @staticmethod
+    def cab_avg_merge_paper(pos: Dict, sz_old: Dict, sz_new: Dict, price: float,
+                            now: float) -> Dict:
+        """ЧИСТА: paper-позиція після докуповування. У paper `remaining_qty` —
+        ЧАСТКА від `sz['qty']`, тож розмір зливається, частка перераховується,
+        а комісія входу лишається ТОЧНОЮ (поправка — у `paper_part_fees`)."""
+        q_old = float(sz_old.get('qty') or 0)
+        r = max(0.0, min(1.0, float(pos.get('remaining_qty', 1.0) or 0)))
+        e = float(pos.get('entry_price') or 0)
+        qn, px = float(sz_new.get('qty') or 0), float(price)
+        q_open = q_old * r
+        q_tot = q_old + qn
+        e_new = (q_open * e + qn * px) / (q_open + qn) if (q_open + qn) > 0 else px
+        f_old = float(sz_old.get('fee_pct') or 0) / 100.0
+        f_new = float(sz_new.get('fee_pct', sz_old.get('fee_pct')) or 0) / 100.0
+        # Формула _paper_pnl бере комісію входу як qty·entry·fee — після злиття
+        # вона дала б інше число, ніж реально сплачене: різницю — у часткові.
+        adj = (q_old * e * f_old + qn * px * f_new) - q_tot * e_new * f_old
+        sz = dict(sz_old)
+        for k in ('notional', 'margin', 'fee_open_usd'):
+            sz[k] = round(float(sz_old.get(k) or 0) + float(sz_new.get(k) or 0), 4)
+        sz['qty'] = q_tot
+        sz['adds'] = int(sz_old.get('adds') or 0) + 1
+        tr = list(pos.get('cab_tranches') or [])
+        if not tr:
+            tr.append({'t': pos.get('opened_at'), 'px': e, 'qty': q_open,
+                       'margin': float(sz_old.get('margin') or 0)})
+        tr.append({'t': now, 'px': px, 'qty': qn, 'margin': float(sz_new.get('margin') or 0)})
+        out = dict(pos)
+        out.update(sz=sz, entry_price=e_new,
+                   remaining_qty=(q_open + qn) / q_tot if q_tot > 0 else 1.0,
+                   paper_part_fees=float(pos.get('paper_part_fees') or 0) + adj,
+                   cab_tranches=tr, cab_avg_n=int(pos.get('cab_avg_n') or 0) + 1,
+                   cab_avg_at=now)
+        return out
+
+    def _cab_average(self, S: str, sd: str, is_shadow: bool, price: float) -> Dict:
+        """➕ Докинути маржу в наявну угоду (розмір — як у нової угоди)."""
+        now = time.time()
+        if is_shadow:
+            sz_new = self._paper_sizing(price, None)
+            if not sz_new or sz_new.get('insufficient'):
+                return {'ok': False, 'reason': 'недостатньо вільних коштів (paper)'}
+            with self._lock:
+                pos = self._shadow_positions.get(S)
+                if not pos:
+                    return {'ok': False, 'reason': 'угода вже закрита'}
+                sz_old = dict(self._paper_size_of(pos) or {})
+                if not sz_old.get('qty'):
+                    return {'ok': False, 'reason': 'немає розміру paper-угоди'}
+                new = self.cab_avg_merge_paper(pos, sz_old, sz_new, price, now)
+                pos.clear(); pos.update(new)
+            self._persist_shadow_positions()
+            return {'ok': True, 'pos': pos, 'margin': sz_new.get('margin')}
+        qty = self._calculate_qty(S, price)
+        if not qty or qty <= 0:
+            return {'ok': False, 'reason': 'розмір докуповування = 0'}
+        with self._lock:
+            pos = self._positions.get(S)
+        if not pos:
+            return {'ok': False, 'reason': 'угода вже закрита'}
+        bybit_side = 'Buy' if sd == 'LONG' else 'Sell'
+        self._opening[S] = now     # звірка не має прийняти зміну за зовнішню
+        try:
+            res = self.bybit.place_order(symbol=S, side=bybit_side, qty=qty, order_type='Market')
+        except Exception as e:
+            res, err = None, str(e)
+        else:
+            err = getattr(self.bybit, '_last_order_error', None) or 'біржа відхилила ордер'
+        finally:
+            self._opening.pop(S, None)
+        if not res:
+            return {'ok': False, 'reason': f'ордер докуповування не пройшов: {err}'}
+        with self._lock:
+            pos = self._positions.get(S)
+            if pos:
+                new = self.cab_avg_merge_real(pos, qty, price, now)
+                pos.clear(); pos.update(new)
+        self._persist_positions()
+        return {'ok': True, 'pos': pos, 'qty': qty}
 
     def cab_signal_trade(self, symbol: str, side: str, book: str,
                          opened_by: str = 'anom', note: str = '') -> Dict:
@@ -10424,13 +10607,46 @@ class TradeManager:
         with self._lock:
             cur = (self._shadow_positions if is_shadow else self._positions).get(S)
             cur_side = (cur or {}).get('side')
-        act = self.cab_trade_action(cur_side, sd)
+            cur_snap = dict(cur) if cur else None
         sfx = f' · {note}' if note else ''
+        px_now = None
+        avg_ok, avg_why = False, ''
+        if cur_snap and str(cur_side).upper() == sd:
+            try:
+                px_now = self._get_current_price(S)
+            except Exception:
+                px_now = None
+            avg_ok, avg_why = self.cab_avg_check(cur_snap, sd, px_now)
+        act = self.cab_trade_action(cur_side, sd, avg_ok=avg_ok)
+        if act == 'average':
+            r = self._cab_average(S, sd, is_shadow, float(px_now))
+            if not r.get('ok'):
+                log_activity(S, 'rejected', f'🤖 Кабінет: ➕ усереднення {sd} ({tag}) не '
+                             f'вдалось — {r.get("reason")}{sfx}', side=sd, source='CAB')
+                return {'ok': False, 'status': 'rejected', 'mode': bk,
+                        'reason': f'{S}: усереднення не вдалось — {r.get("reason")}'}
+            p = r.get('pos') or {}
+            n = int(p.get('cab_avg_n') or 0)
+            avg_e = p.get('entry_price')
+            log_activity(S, 'opened', f'🤖 Кабінет: ➕ усереднення #{n} {sd} ({tag}) · '
+                         f'докуплено по {self._fmt_price(px_now)} · середній вхід '
+                         f'{self._fmt_price(avg_e)} · {avg_why}{sfx}', side=sd, source='CAB',
+                         extra={'cab_avg_n': n, 'price': px_now, 'avg_entry': avg_e,
+                                'is_shadow': is_shadow})
+            icon = '🟢' if sd == 'LONG' else '🔴'
+            self._notify(f"➕ {icon} <b>#{S}</b>{' 🧪' if is_shadow else ''} усереднення #{n} · "
+                         f"{self._fmt_price(px_now)} · сер. вхід {self._fmt_price(avg_e)}",
+                         is_test=is_shadow, category='trades')
+            return {'ok': True, 'status': 'averaged', 'mode': bk, 'avg_n': n,
+                    'reason': f'{S}: ➕ усереднення #{n}, середній вхід {self._fmt_price(avg_e)}'}
         if act == 'hold':
             log_activity(S, 'skipped', f'🤖 Кабінет: сигнал {sd} — угода {sd} ({tag}) вже '
-                         f'відкрита, нічого не робимо{sfx}', side=sd, source='CAB')
+                         f'відкрита, нічого не робимо'
+                         + (f' ({avg_why})' if avg_why else '') + sfx,
+                         side=sd, source='CAB')
             return {'ok': True, 'status': 'hold', 'mode': bk,
-                    'reason': f'{S}: угода {sd} уже відкрита'}
+                    'reason': f'{S}: угода {sd} уже відкрита'
+                              + (f' — {avg_why}' if avg_why else '')}
         if act == 'reverse':
             log_activity(S, 'signal', f'🤖 Кабінет: протилежний сигнал {sd} — закриваю '
                          f'{cur_side} ({tag}) і відкриваю {sd}{sfx}', side=sd, source='CAB')
