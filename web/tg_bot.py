@@ -843,10 +843,12 @@ def _site_url():
 def _handle_start(chat_id, username=None, name=None, lang=None, premium=None):
     from web.auth import get_user_by_chat, _make_tg_token
     from web.i18n import language_for_user, normalize_language
-    from web.telegram_i18n import telegram_tr
+    from web.telegram_i18n import telegram_tr, language_for_chat
     b = base_url()
     existing = get_user_by_chat(str(chat_id))
-    lang = language_for_user(existing['id']) if existing else normalize_language(lang)
+    # Before registration the contact's saved Telegram locale is authoritative.
+    # A later profile preference always wins; the raw locale is only a fallback.
+    lang = language_for_user(existing['id']) if existing else (language_for_chat(chat_id) or normalize_language(lang))
     if existing:
         btns = None
         if existing['active']:
@@ -1039,7 +1041,7 @@ def _handle_message(m):
     # users (even those who pressed /start but never registered) and can reach them.
     try:
         from web.auth import record_bot_contact
-        record_bot_contact(cid_s, uname, fname)
+        record_bot_contact(cid_s, uname, fname, flang)
     except Exception:
         pass
 

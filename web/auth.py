@@ -820,18 +820,20 @@ def tg_link_consume(code, chat_id, username=None, name=None, now=None):
         s.close()
 
 
-_DB_BOT_CONTACTS = 'tg_bot_contacts'   # {chat_id: {username, name, first_seen, last_seen}}
+_DB_BOT_CONTACTS = 'tg_bot_contacts'   # {chat_id: {username, name, language, first_seen, last_seen}}
 _MAX_BOT_CONTACTS = 5000
 
 
-def record_bot_contact(chat_id, username=None, name=None):
+def record_bot_contact(chat_id, username=None, name=None, language=None):
     """Remember EVERY chat that talks to the bot — even before (or without)
     registration — so the admin can SEE and reach all bot users, not just
-    registered accounts. Upserts into a bounded DB setting."""
+    registered accounts. Telegram's locale is saved only on first detection;
+    subsequent /start calls must not overwrite an established preference."""
     if not chat_id:
         return
     try:
         from storage.db_operations import get_db
+        from web.i18n import normalize_language
         import time as _t
         db = get_db()
         data = db.get_setting(_DB_BOT_CONTACTS, {}) or {}
@@ -845,6 +847,9 @@ def record_bot_contact(chat_id, username=None, name=None):
             rec['username'] = username
         if name:
             rec['name'] = name
+        if language and not rec.get('language'):
+            rec['language'] = normalize_language(language)
+            rec['language_source'] = 'telegram'
         data[cid] = rec
         if len(data) > _MAX_BOT_CONTACTS:      # keep the most-recent contacts
             data = dict(sorted(data.items(),

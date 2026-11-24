@@ -116,7 +116,14 @@ def language_for_chat(chat_id):
         from web.auth import get_user_by_chat, _load_prefs
         from web.i18n import language_from_prefs
         user = get_user_by_chat(str(chat_id))
-        return language_from_prefs(_load_prefs(user)) if user else None
+        if user:
+            return language_from_prefs(_load_prefs(user))
+        # /start also works before a website profile exists: reuse the locale
+        # captured from the first Telegram contact instead of reverting to uk.
+        from web.i18n import normalize_language
+        from web.auth import bot_contacts
+        contact = bot_contacts().get(str(chat_id)) or {}
+        return normalize_language(contact.get('language'), default='') if contact.get('language') else None
     except Exception:
         return None
 
