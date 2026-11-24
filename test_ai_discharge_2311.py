@@ -445,48 +445,53 @@ def test_vob_last_shadow():
     assert "row('vobl')" in src and "'vobl': '5m VOB останній'" in src and 'value="vobl"' not in src
 
 
-def test_vob1h_second_confirmation_2411():
-    """📦 Друге підтвердження розряду (24.11): САМИЙ ОСТАННІЙ VOB 1H у бік розряду."""
+def test_vob1h_is_the_confirmation_2411():
+    """📦 Спосіб підтвердження «VOB 1H» (24.11): звичайний СТАРТ розряду (без утримання
+    закритими свічками) + САМИЙ ОСТАННІЙ VOB 1H на графіку в його бік."""
     ob = lambda typ, ft, br=False: {'type': typ, 'formation_time': ft * 1000, 'start_time': ft * 1000,
                                     'top': 101.0, 'bottom': 100.0, 'breaker': br}
-    # останній у бік → ok; проти → ні (старіший у бік НЕ підставляється); breaker → ні
-    assert A.vob1h_check({'latest_ob': ob('Bull', 2000)}, 'LONG')['ok'] is True
-    r = A.vob1h_check({'latest_ob': ob('Bear', 3000), 'all_bullish': [ob('Bull', 2000)]}, 'LONG')
+    T0 = 1_800_000_000
+    # останній блок — і лише він
+    assert A.vob1h_check({'latest_ob': ob('Bull', T0 + 2000)}, 'LONG')['ok'] is True
+    r = A.vob1h_check({'latest_ob': ob('Bear', T0 + 3000), 'all_bullish': [ob('Bull', T0 + 2000)]}, 'LONG')
     assert r['ok'] is False and r['side'] == 'SHORT' and 'проти' in r['note']
-    assert A.vob1h_check({'latest_ob': ob('Bull', 2000, True)}, 'LONG')['ok'] is False
+    assert A.vob1h_check({'latest_ob': ob('Bull', T0 + 2000, True)}, 'LONG')['ok'] is False
     assert A.vob1h_check({'latest_ob': None}, 'SHORT')['ok'] is False
     assert A.vob1h_check(None, 'SHORT')['ok'] is False
-    assert A.vob1h_check({'latest_ob': ob('Bear', 2000)}, 'SHORT')['ok'] is True
-    # ворота E2: розряд підтверджено, але VOB 1H проти / немає → не відкриваємо
-    s = A.ai_settings_norm({})
-    assert s['discharge_vob1h'] is True
+    good = A.vob1h_check({'latest_ob': ob('Bull', T0 + 2000)}, 'LONG')
+    bad = A.vob1h_check({'latest_ob': ob('Bear', T0 + 3000)}, 'LONG')
+    # старт розряду лише на живій свічці (утримання НЕ треба) + VOB 1H у бік → підтверджено
+    st = A.discharge_state_v1h({'state': 'live', 'edge': 100.0, 't': T0 + 1000}, good)
+    assert st['state'] == 'confirmed' and st['tf'] == 'v1h' and st['t'] == T0 + 2000
+    assert A.discharge_state_v1h({'state': 'pending', 'edge': 100.0}, good)['state'] == 'confirmed'
+    # VOB 1H проти → чекаємо; хибний старт / пробою немає → не підтверджено
+    assert A.discharge_state_v1h({'state': 'live', 'edge': 100.0}, bad)['state'] == 'pending'
+    assert A.discharge_state_v1h({'state': 'false'}, good)['state'] == 'false'
+    assert A.discharge_state_v1h({'state': 'none'}, good)['state'] == 'none'
+    # обрано «📦 VOB 1H» → ворота E2 пропускають саме цей стан
+    s = A.ai_settings_norm({'discharge_tf': 'v1h'})
+    assert s['discharge_tf'] == 'v1h' and 'discharge_vob1h' not in s
     brain = {'ok': True, 'confidence': 70}
-    bad = A.vob1h_check({'latest_ob': ob('Bear', 3000)}, 'LONG')
-    why = A.ai_entry_block({}, 'LONG', s, brain, None, 0, [], None, 1e9,
-                           discharge={'state': 'confirmed', 'vob1h': bad}, scen_key='E2')
-    assert why.startswith('📦 VOB 1H') and 'проти' in why
+    both = {'1h': {'state': 'live', 'tf': '1h'}, 'v1h': st}
     assert A.ai_entry_block({}, 'LONG', s, brain, None, 0, [], None, 1e9,
-                            discharge={'state': 'confirmed'}, scen_key='E2').startswith('📦 VOB 1H')
-    # вимкнено → не діє; інші сценарії — не діє
-    s2 = A.ai_settings_norm({'discharge_vob1h': False})
-    assert A.ai_entry_block({}, 'LONG', s2, brain, None, 0, [], None, 1e9,
-                            discharge={'state': 'confirmed', 'vob1h': bad}, scen_key='E2') == ''
-    assert A.ai_entry_block({}, 'LONG', s, brain, None, 0, [], None, 1e9, scen_key='E1') == ''
-    # dis_pick переносить vob1h у стан обраного TF
-    d = A.dis_pick({'1h': {'state': 'confirmed', 'tf': '1h'}, 'vob1h': {'ok': True}}, '1h')
-    assert d['vob1h'] == {'ok': True}
-    # рушій: 1h-свічки з кешу (з живою) → детектор; результат — у discharge_both
+                            discharge=A.dis_pick(both, 'v1h'), scen_key='E2') == ''
+    pend = A.discharge_state_v1h({'state': 'live', 'edge': 100.0}, bad)
+    why = A.ai_entry_block({}, 'LONG', s, brain, None, 0, [], None, 1e9,
+                           discharge=A.dis_pick({'1h': {'state': 'live'}, 'v1h': pend}, 'v1h'), scen_key='E2')
+    assert why.startswith('💥 розряд не підтверджено') and 'VOB 1H' in why
+    # рушій: старт 1h + VOB 1H з кешу → стан 'v1h' і тінь
     NOW_E = 1.8e9
     eng = A.AiEngine(db=None, clock=lambda: NOW_E)
-    eng._ai_s = A.ai_settings_norm({})
+    eng._ai_s = A.ai_settings_norm({'discharge_tf': 'v1h'})
     eng._ai_s_at = 1e15
     eng._pro_bars['X'] = {'1h': (NOW_E, _bars(FLAT, t0=int(NOW_E) - 40 * 3600))}
-    eng._vob1h_obs = lambda sym: {'latest_ob': ob('Bull', 1000)}
-    assert eng.discharge_for('X', 'LONG', NOW_E, 100.5)['vob1h']['ok'] is True
-    assert eng.discharge_for('X', 'SHORT', NOW_E, 99.0)['vob1h']['ok'] is False
+    eng._vob1h_obs = lambda sym: {'latest_ob': ob('Bull', int(NOW_E) - 3600)}
+    b2 = eng.discharge_both('X', 'LONG', NOW_E, 100.5)
+    assert b2['v1h']['tf'] == 'v1h' and b2['vob1h']['ok'] is True
+    assert eng.discharge_for('X', 'LONG', NOW_E, 100.5)['tf'] == 'v1h'
+    assert 'v1h' in A.DIS_SHADOW_TFS
     src = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
-    assert 'aip-dis-vob1h' in src and 'discharge_vob1h:' in src and 'VOB1H:' in src
-
+    assert 'value="v1h"' in src and "row('v1h')" in src and 'aip-dis-vob1h' not in src
 
 if __name__ == '__main__':
     n = 0

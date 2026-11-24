@@ -73,10 +73,6 @@ AI_DEFAULTS = {
     'discharge_bars': 1,
     'discharge_tf': '1h',       # TF підтвердження розряду: '1h' | '15m' (рівень — коробка 1h)
     'discharge_bars_15m': 2,    # для 15m: закритих 15m-свічок утримали ціну за межею
-    # 📦 Друге підтвердження розряду (24.11): САМИЙ ОСТАННІЙ VOB 1H на графіку
-    # (той самий детектор і параметри «📦 Volumized OB Trend») мусить бути в бік,
-    # куди стартував розряд, і не зламаний. Немає / проти / breaker → не відкриваємо.
-    'discharge_vob1h': True,
     'false_start_exit': True,   # угода ШІ з E2: ціна повернулась у коробку → вихід
     # 🎯 Вихід на кульмінації (Виснаження) для угод ШІ (24.11): той самий
     # алгоритм і пороги, що в Exit Rules TM (`exh_exit_*`), незалежно від
@@ -88,6 +84,11 @@ AI_DEFAULTS = {
     'etalon_min_sim': 0.35,    # мозок еталонів: найближчий досвід не далі за цю схожість
     'etalon_min_p': 0.6,       # мозок еталонів: частка «відмінних» серед схожих входів ≥
     'cleanup_enabled': True,   # 🧹 автоочистка таблиць навчання
+    # 🎓 Самонавчання по всіх напрямках (24.11): тіньовий результат кожного
+    # рішення (вхід · вихід · TF розряду) → ваги сценаріїв, віртуальний досвід
+    # мозку еталонів, довіра до причин виходу. Вимкнено — журнал ведеться, але
+    # нічого не застосовується.
+    'self_learning': True,
 }
 AI_SL_SOURCES = ('plan', 'ob', 'pct')
 AI_RDY_FILTERS = ('off', 'banner', 'coin', 'both')
@@ -95,14 +96,22 @@ AI_RDY_FILTER_UA = {'off': 'вимк', 'banner': 'за банером', 'coin': 
                     'both': 'банер + вкладка монети'}
 DISCHARGE_LOOK = 6             # закритих 1h-свічок назад — шукаємо пробій коробки
 DISCHARGE_LOOK_LTF = 16        # закритих 15m-свічок назад (4 год)
-DISCHARGE_TFS = ('1h', '15m', '5m')  # TF підтвердження розряду (рівень — завжди коробка 1h)
-DISCHARGE_TF_UA = {'1h': '1H закриття', '15m': '15m закриття', '5m': '5m CHoCH+BOS'}
+# TF / спосіб підтвердження розряду (рівень — завжди коробка 1h). 'v1h' (24.11) —
+# звичайний старт розряду, підтверджений САМИМ ОСТАННІМ VOB 1H на графіку в його бік.
+DISCHARGE_TFS = ('1h', '15m', '5m', 'v1h')
+DISCHARGE_TF_UA = {'1h': '1H закриття', '15m': '15m закриття', '5m': '5m CHoCH+BOS',
+                   'v1h': '📦 VOB 1H у бік розряду',
+                   'auto': '🎓 авто (найкращий за тінню)'}
+SL_DB = 'ai_selflearn_v1'      # 🎓 журнал самонавчання (окремо від стану рушія)
+SL_LEARN_SEC = 600             # перерахунок ваг — раз на 10 хв
+SL_FOLLOW_MAX = 40             # монет тіньових записів, яким тягнемо 1h-свічки поза кандидатами
 # 📊 Тінь веде ще й «5m VOB» (24.11) — ЛИШЕ для порівняння, вибрати його для
 # входу не можна (DISCHARGE_TFS не змінено).
 # «5m VOB останній» (24.11) — те саме, але точка входу — НАЙНОВІШИЙ VOB 5m у бік
 # розряду після його старту (кожен новий блок — нова точка), а не перший.
 DIS_SHADOW_TFS = DISCHARGE_TFS + ('vob', 'vobl')
 DIS_SHADOW_UA = dict(DISCHARGE_TF_UA, vob='5m VOB', vobl='5m VOB останній')
+DISCHARGE_STARTED = ('live', 'pending', 'confirmed')   # 1h: розряд стартував (не 'none' / 'false')
 VOB_DEFAULTS = {'swing_length': 10, 'ob_end_method': 'Wick', 'max_atr_mult': 3.5}
 STRUCT_LOOK_SEC = 4 * 3600     # 5m-структура: CHoCH+BOS шукаємо за останні 4 год
 STRUCT_INTERNAL_SIZE = 5       # півоти внутрішньої структури (як у сканера за замовч.)
@@ -153,7 +162,7 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
     r = raw if isinstance(raw, dict) else {}
     for k in ('enabled', 'exit_enabled', 'allow_long', 'allow_short', 'learning_enabled',
               'etalon_enabled', 'cleanup_enabled', 'sl_enabled', 'discharge_confirm',
-              'false_start_exit', 'exh_exit', 'discharge_vob1h'):
+              'false_start_exit', 'exh_exit', 'self_learning'):
         if k in r:
             s[k] = bool(r[k])
     if r.get('exit_mode') in ('confirmed', 'all'):
@@ -162,7 +171,7 @@ def ai_settings_norm(raw: Optional[Dict]) -> Dict:
         s['book'] = r['book']
     if r.get('sl_source') in AI_SL_SOURCES:
         s['sl_source'] = r['sl_source']
-    if r.get('discharge_tf') in DISCHARGE_TFS:
+    if r.get('discharge_tf') in DISCHARGE_TFS + ('auto',):
         s['discharge_tf'] = r['discharge_tf']
     if r.get('rdy_filter') in AI_RDY_FILTERS:
         s['rdy_filter'] = r['rdy_filter']
@@ -219,10 +228,6 @@ def ai_entry_block(ep: Optional[Dict], side: str, s: Dict, brain: Optional[Dict]
         if ds.get('state') != 'confirmed':
             return '💥 розряд не підтверджено: ' + (ds.get('note') or
                                                    DISCHARGE_STATE_UA.get(ds.get('state'), 'немає даних'))
-        if s.get('discharge_vob1h', True):
-            v1 = ds.get('vob1h') or {}
-            if not v1.get('ok'):
-                return '📦 VOB 1H: ' + (v1.get('note') or 'останній VOB 1H не перевірено (немає даних)')
     rb = rdy_block(sd, rdy, s.get('rdy_filter') or 'off')
     if rb:
         return rb
@@ -669,6 +674,35 @@ def vob1h_check(obs: Optional[Dict], side: str) -> Dict:
         out['note'] = f'останній VOB 1H ({vs}) зламано — breaker'
     else:
         out.update(ok=True, note=f'останній VOB 1H — {vs}, у бік розряду')
+    return out
+
+
+def discharge_state_v1h(st_1h: Optional[Dict], v1: Optional[Dict]) -> Dict:
+    """📦 Підтвердження розряду САМИМ ОСТАННІМ VOB 1H (вимога 24.11). ЧИСТА.
+    «Має бути звичайний старт розряду, а підтвердженням — саме існуючий на
+    графіку VOB 1H в його сторону.» Старт — 1h-стан розряду (пробій коробки,
+    і на живій свічці теж), без вимоги утримання закритими свічками:
+    • старт є + останній VOB 1H у бік і не зламаний → 'confirmed';
+    • старт є, VOB 1H немає / проти / breaker → 'pending' (чекаємо блок);
+    • хибний старт 1h ('false') → 'false'; пробою немає → 'none'."""
+    st, v1 = dict(st_1h or {}), v1 or {}
+    out = {'state': 'none', 'tf': 'v1h', 'edge': st.get('edge'), 'box_hi': st.get('box_hi'),
+           'box_lo': st.get('box_lo'), 't': None, 'held': 0, 'need': 1, 'vob1h': v1,
+           'note': ''}
+    s1 = st.get('state')
+    if s1 == 'false':
+        out.update(state='false', note=st.get('note') or 'хибний старт: свічка закрилась назад у коробці')
+        return out
+    if s1 not in DISCHARGE_STARTED:
+        out['note'] = st.get('note') or 'пробою коробки 1h немає'
+        return out
+    if v1.get('ok'):
+        ts = [t for t in (st.get('t'), v1.get('t')) if t]
+        out.update(state='confirmed', held=1, t=max(ts) if ts else None,
+                   note='старт розряду + ' + (v1.get('note') or 'останній VOB 1H у бік розряду'))
+    else:
+        out.update(state='pending', t=st.get('t'),
+                   note='розряд стартував, чекаємо VOB 1H у бік: ' + (v1.get('note') or 'немає даних'))
     return out
 
 
@@ -1204,7 +1238,8 @@ ETALON_TP_CAPTURE = 0.8   # ціль = 0.8 × типовий пік схожих
 
 
 def etalon_brain(feat: Dict, good: List[Dict], anti: List[Dict], side: Optional[str] = None,
-                 s: Optional[Dict] = None, k: int = ETALON_K) -> Dict:
+                 s: Optional[Dict] = None, k: int = ETALON_K, vgood: Optional[List[Dict]] = None,
+                 vanti: Optional[List[Dict]] = None) -> Dict:
     """🏆🧠 ГОЛОВНИЙ МОЗОК ШІ — досвід самого ШІ (вимога 22.11: «база Еталон —
     основний мозок»). k найближчих угод з ОБОХ баз (відмінні + невдалі) того
     самого боку голосують зважено за близькістю:
@@ -1212,9 +1247,12 @@ def etalon_brain(feat: Dict, good: List[Dict], anti: List[Dict], side: Optional[
       exp_r  — очікуваний результат у R; tp_r — типовий пік схожих відмінних.
     `mature` — бази зібрані: тоді вердикт `take`/`skip` є ОСТАТОЧНИМ рішенням
     на вхід; до того `learning` — рішення за правилами (вони й наповнюють базу).
+    🎓 `vgood` / `vanti` (24.11) — ВІРТУАЛЬНИЙ досвід (тіньові входи, що дійшли
+    до +1.5R / −1R): голос і внесок у зрілість — вага VIRTUAL_W (½ реальної угоди).
     ЧИСТА."""
     s = s or {}
     sd = str(side or '').upper()
+    vw_ = 0.5
 
     def _pool(base, lab):
         rows = [e for e in (base or []) if isinstance(e, dict) and e.get('feat')]
@@ -1223,15 +1261,19 @@ def etalon_brain(feat: Dict, good: List[Dict], anti: List[Dict], side: Optional[
         return [(d, lab, e) for e in rows for d in [feat_distance(feat, e['feat'])] if d is not None]
     g_n = len([e for e in (good or []) if e.get('feat')])
     a_n = len([e for e in (anti or []) if e.get('feat')])
-    mature = g_n >= ETALON_MATURE_GOOD and a_n >= ETALON_MATURE_ANTI
-    out = {'n_good': g_n, 'n_anti': a_n, 'mature': mature, 'need_good': ETALON_MATURE_GOOD,
-           'need_anti': ETALON_MATURE_ANTI, 'p_good': None, 'exp_r': None, 'tp_r': None,
+    vg_n = len([e for e in (vgood or []) if e.get('feat')])
+    va_n = len([e for e in (vanti or []) if e.get('feat')])
+    mature = (g_n + vw_ * vg_n >= ETALON_MATURE_GOOD and a_n + vw_ * va_n >= ETALON_MATURE_ANTI)
+    out = {'n_good': g_n, 'n_anti': a_n, 'n_vgood': vg_n, 'n_vanti': va_n, 'mature': mature,
+           'need_good': ETALON_MATURE_GOOD, 'need_anti': ETALON_MATURE_ANTI,
+           'p_good': None, 'exp_r': None, 'tp_r': None,
            'nearest': [], 'verdict': 'learning', 'reason': ''}
-    pool = sorted(_pool(good, 1) + _pool(anti, 0), key=lambda x: x[0])[:max(1, k)]
+    pool = sorted(_pool(good, 1) + _pool(anti, 0) + _pool(vgood, 1) + _pool(vanti, 0),
+                  key=lambda x: x[0])[:max(1, k)]
     if not pool:
         out['reason'] = 'досвіду ще немає — вирішують правила'
         return out
-    ws = [max(0.02, 1.0 - min(1.0, d)) for d, _, _ in pool]
+    ws = [max(0.02, 1.0 - min(1.0, d)) * (vw_ if e.get('virtual') else 1.0) for d, _, e in pool]
     W = sum(ws)
     out['p_good'] = round(sum(w for w, (_, lab, _) in zip(ws, pool) if lab) / W, 3)
     rs = [(w, e.get('r')) for w, (_, _, e) in zip(ws, pool) if isinstance(e.get('r'), (int, float))]
@@ -1241,10 +1283,12 @@ def etalon_brain(feat: Dict, good: List[Dict], anti: List[Dict], side: Optional[
     if len(pk) >= 3:
         out['tp_r'] = round(ETALON_TP_CAPTURE * pk[len(pk) // 2], 2)
     out['nearest'] = [{'sym': e.get('sym'), 'side': e.get('side'), 'good': bool(lab), 'r': e.get('r'),
-                       'd': round(d, 3)} for d, lab, e in pool]
+                       'd': round(d, 3), 'virtual': bool(e.get('virtual'))} for d, lab, e in pool]
     if not mature:
         out['reason'] = (f'мозок еталонів вчиться: відмінних {g_n}/{ETALON_MATURE_GOOD}, '
-                         f'невдалих {a_n}/{ETALON_MATURE_ANTI} — вирішують правила')
+                         f'невдалих {a_n}/{ETALON_MATURE_ANTI}'
+                         + (f' (+ віртуальних 🎓 {vg_n}/{va_n} з вагою ½)' if vg_n or va_n else '')
+                         + ' — вирішують правила')
         return out
     p_min = float(s.get('etalon_min_p') or 0.6)
     sim_min = float(s.get('etalon_min_sim') or 0)
@@ -2503,8 +2547,17 @@ class AiEngine:
         self._hb_at = 0.0
         self._hb_key: tuple = ()
         self._cleanup_stat: Dict = {}
+        # 🎓 самонавчання (24.11)
+        self._sl_entries: List[Dict] = []
+        self._sl_exits: List[Dict] = []
+        self._sl_learned: Dict = {}
+        self._sl_vgood: List[Dict] = []
+        self._sl_vanti: List[Dict] = []
+        self._sl_at = 0.0
+        self._sl_dirty = False
         self._load()
         self._load_etalon()
+        self._sl_load()
 
     # джерела
     def _scn(self):
@@ -2665,10 +2718,11 @@ class AiEngine:
         except Exception as e:
             for k in ('vob', 'vobl'):
                 out.setdefault(k, {'state': 'none', 'tf': k, 'note': f'помилка VOB: {e}'[:120]})
-        try:        # 📦 друге підтвердження: самий останній VOB 1H у бік розряду
+        try:        # 📦 спосіб підтвердження «VOB 1H у бік розряду»
             out['vob1h'] = vob1h_check(self._vob1h_obs(symbol), side)
         except Exception as e:
             out['vob1h'] = {'ok': False, 'note': f'помилка VOB 1H: {e}'[:120]}
+        out['v1h'] = discharge_state_v1h(out.get('1h'), out['vob1h'])
         return out
 
     def _vob1h_obs(self, symbol: str) -> Optional[Dict]:
@@ -2728,7 +2782,7 @@ class AiEngine:
                       live_price=None) -> Dict:
         """💥 Стан розряду на ОБРАНОМУ TF (`discharge_tf`); поруч — `alt`
         (інший TF, для показу й тіньового порівняння)."""
-        tf = self.ai_settings().get('discharge_tf') or '1h'
+        tf = self.dis_tf(self.ai_settings())
         both = self.discharge_both(symbol, side, now, live_price)
         return dis_pick(both, tf)
 
@@ -2761,7 +2815,7 @@ class AiEngine:
                     pass
             if tf == '1h':
                 lead = {}
-                for ltf in ('15m', '5m', 'vob', 'vobl'):
+                for ltf in ('15m', '5m', 'vob', 'vobl', 'v1h'):
                     early = [r for r in self._dis_shadow if r.get('S') == S and r.get('side') == side
                              and r.get('tf') == ltf and 0 <= now - float(r.get('t') or 0) <= 4 * 3600]
                     if early:
@@ -3075,6 +3129,8 @@ class AiEngine:
                 return S, (None, None)
 
         pool = list(cand.keys()) + [S for S in subs if S not in cand]
+        _in = set(pool)
+        pool += [S for S in self._sl_open_syms() if S not in _in][:SL_FOLLOW_MAX]
         with ThreadPoolExecutor(max_workers=WORKERS) as ex:
             lives = dict(ex.map(load, pool))
         view = {}
@@ -3115,6 +3171,7 @@ class AiEngine:
                 pro = self._professional_snapshot(S, now)
                 bc = brain.entry_check(best['side'], best, pro, rec)
                 feat = entry_features(best['side'], best, rec, bc)
+                bc = self._sl_conf(bc, best, s)       # 🎓 множник сценарію з тіні
                 sim = etalon_similarity(feat, self._etalon, best['side']) if self._etalon else None
                 anti_sim = etalon_similarity(feat, self._anti, best['side']) if self._anti else None
                 view[S] = {'symbol': S, 'src': src, 'charge': rec.get('charge'),
@@ -3125,7 +3182,7 @@ class AiEngine:
                            'signal': (ep or {}).get('signal'),
                            'brain': bc, 'pick': best, 'ready': bool(ready and bc.get('ok')),
                            'feat': feat, 'sim': sim, 'anti_sim': anti_sim,
-                           'etalon': etalon_brain(feat, self._etalon, self._anti, best['side'], s)}
+                           'etalon': self._eb(feat, best['side'], s)}
                 view[S]['rank'] = ai_rank(view[S], sim)
                 view[S]['confidence'] = bc.get('confidence')
                 if view[S]['etalon'].get('mature') and view[S]['etalon'].get('verdict') != 'take':
@@ -3134,7 +3191,7 @@ class AiEngine:
                 ds = None
                 if _skey == 'E2':
                     _both = self.discharge_both(S, best['side'], now, _px(vw, rec))
-                    ds = dis_pick(_both, s.get('discharge_tf') or '1h')
+                    ds = dis_pick(_both, self.dis_tf(s))
                     self._dis_shadow_tick(S, best['side'], _both, _px(vw, rec), now)
                 rv = self.rdy_view(S) if (s.get('rdy_filter') or 'off') != 'off' else None
                 view[S]['discharge'] = ds
@@ -3156,6 +3213,16 @@ class AiEngine:
                                 ep[k] = int(now)
                                 _ev(ep, now, 'scenario', side=x['side'], key=sc.get('key'),
                                     name=sc.get('name'), score=x.get('score'))
+                try:      # 🎓 тінь: КОЖНА готова точка входу (обидва боки, усі сценарії)
+                    for x in (el, es):
+                        if entry_decide(x):
+                            same = x['side'] == best['side']
+                            self._sl_entry(S, x, rec, vw, now, bc if same else None,
+                                           feat if same else entry_features(x['side'], x, rec, None),
+                                           ds if same else None,
+                                           (view[S].get('block') or '') if same else '')
+                except Exception as e:
+                    self._stat['last_err'] = f'🎓 тінь {S}: {e}'[:200]
                 if s.get('enabled') and ep is not None and ready:
                     self._try_signal(S, best, rec, vw, ep, now, professional=pro, brain=bc,
                                      feat=feat, sim=sim, anti_sim=anti_sim, eb=view[S]['etalon'],
@@ -3175,6 +3242,11 @@ class AiEngine:
                                      if lv and (lv[0] or lv[1])}, now)
         except Exception as e:
             self._stat['last_err'] = f'тінь розряду: {e}'[:200]
+        try:
+            self._sl_follow(lives, now)
+            self._sl_learn(now)
+        except Exception as e:
+            self._stat['last_err'] = f'🎓 самонавчання: {e}'[:200]
         try:
             self._anom_personal(subs, scored, lives, anoms, now)
         except Exception as e:
@@ -3286,7 +3358,7 @@ class AiEngine:
         # 🏆🧠 ГОЛОВНИЙ МОЗОК — база еталонів: коли досвід зібрано, саме вона
         # ухвалює остаточне рішення на вхід (k-NN за відмінними й невдалими угодами).
         if eb is None and feat is not None:
-            eb = etalon_brain(feat, self._etalon, self._anti, side, s)
+            eb = self._eb(feat, side, s)
         _skey = (sc_res.get('scenario') or {}).get('key') or ''
         if discharge is None and _skey == 'E2':
             discharge = self.discharge_for(S, side, now, _px(vw, rec))
@@ -3711,6 +3783,166 @@ class AiEngine:
         self._stat['episodes_closed'] += 1
         self._dirty = True
 
+    # ── 🎓 самонавчання по всіх напрямках (24.11) ──
+    def _sl(self):
+        return _sib('ai_selflearn')
+
+    def _sl_on(self, s: Optional[Dict] = None) -> bool:
+        return bool((s or self.ai_settings()).get('self_learning', True))
+
+    def _eb(self, feat, side, s):
+        """🏆🧠 мозок еталонів + 🎓 віртуальний досвід тіні (коли самонавчання ✓)."""
+        if self._sl_on(s):
+            return etalon_brain(feat, self._etalon, self._anti, side, s,
+                                vgood=self._sl_vgood, vanti=self._sl_vanti)
+        return etalon_brain(feat, self._etalon, self._anti, side, s)
+
+    def dis_tf(self, s: Optional[Dict] = None) -> str:
+        """TF підтвердження розряду; «авто» → найкращий за тінню (інакше 1H)."""
+        tf = (s or self.ai_settings()).get('discharge_tf') or '1h'
+        if tf != 'auto':
+            return tf if tf in DISCHARGE_TFS else '1h'
+        best = ((self._sl_learned or {}).get('dis') or {}).get('best')
+        return best if best in DISCHARGE_TFS else '1h'
+
+    def _sl_conf(self, bc: Dict, x: Dict, s: Dict) -> Dict:
+        """Впевненість мозку × множник сценарію, вивчений на тіні."""
+        if not self._sl_on(s) or not bc or bc.get('confidence') is None:
+            return bc
+        key = (x.get('scenario') or {}).get('key') or ''
+        c, fac = self._sl().conf_adjust(bc.get('confidence'), key, x.get('side'), self._sl_learned)
+        if fac == 1.0:
+            return bc
+        return dict(bc, confidence=c, conf_raw=bc.get('confidence'), conf_learn=fac)
+
+    def _sl_entry(self, S, x, rec, vw, now, bc, feat, ds, block) -> bool:
+        sc = x.get('scenario') or {}
+        key = f"{S}|{x['side']}|{sc.get('key')}|{int(float(sc.get('last_t') or now))}"
+        if any(r.get('k') == key for r in self._sl_entries[-400:]):
+            return False
+        risk = ((bc or {}).get('plan') or {}).get('risk_pct')
+        r = self._sl().entry_new(S, x['side'], sc.get('key') or '', now, _px(vw, rec), risk, feat,
+                                 (bc or {}).get('conf_raw', (bc or {}).get('confidence')),
+                                 dis=ds, block=block)
+        if not r:
+            return False
+        r['k'] = key
+        self._sl_entries.append(r)
+        self._sl_entries = self._sl().keep_tail(self._sl_entries, self._sl().ENTRY_MAX)
+        self._sl_dirty = True
+        return True
+
+    def _sl_open_syms(self) -> List[str]:
+        out = []
+        for r in self._sl_entries + self._sl_exits:
+            if not r.get('done') and r.get('S') not in out:
+                out.append(r['S'])
+        return out
+
+    def _sl_follow(self, lives: Dict, now: float) -> None:
+        """Ведемо відкриті тіньові записи: 1h-свічки кешу (з живою) + ціна такту."""
+        sl = self._sl()
+        for rows, fn in ((self._sl_entries, sl.entry_update), (self._sl_exits, sl.exit_update)):
+            for r in rows:
+                if r.get('done'):
+                    continue
+                S = r.get('S')
+                lv = lives.get(S) or (None, None)
+                px = _px(lv[1], lv[0]) if (lv[0] or lv[1]) else None
+                with self._pro_lock:
+                    hit = (self._pro_bars.get(S) or {}).get('1h')
+                bars = list(hit[1]) if hit else []
+                if not bars and px is None:
+                    if now - float(r.get('t') or now) >= sl.HORIZON_SEC * 2:
+                        r.update(done=True, res=None, lost=True)      # даних не було — не рахуємо
+                        self._sl_dirty = True
+                    continue
+                if fn(r, bars, now, px):
+                    self._sl_dirty = True
+
+    def _sl_learn(self, now: float, force: bool = False) -> Dict:
+        if not force and now - self._sl_at < SL_LEARN_SEC:
+            return self._sl_learned
+        self._sl_at = now
+        sl = self._sl()
+        try:
+            dst = (self.dis_shadow_state() or {}).get('stats') or {}
+        except Exception:
+            dst = {}
+        self._sl_learned = sl.learn(self._sl_entries, self._sl_exits, dst)
+        self._sl_learned['at'] = int(now)
+        self._sl_vgood, self._sl_vanti = sl.virtual_etalons(self._sl_entries)
+        return self._sl_learned
+
+    def selflearn_exit(self, closed: Dict) -> bool:
+        """Угода ШІ закрилась → тінь «чи вийшли вчасно»."""
+        try:
+            ex = closed.get('ai_exit') or {}
+            r = self._sl().exit_new(closed.get('symbol'), closed.get('side'),
+                                    ex.get('verdict') or closed.get('reason'),
+                                    closed.get('exit_price'),
+                                    float(closed.get('closed_at') or self._clock()),
+                                    (closed.get('ai_plan') or {}).get('risk_pct'),
+                                    closed.get('reason'), closed.get('pnl_pct'))
+        except Exception:
+            r = None
+        if not r:
+            return False
+        if any(x.get('k') == r['k'] for x in self._sl_exits):
+            return False
+        self._sl_exits.append(r)
+        self._sl_exits = self._sl().keep_tail(self._sl_exits, self._sl().EXIT_MAX)
+        self._sl_dirty = True
+        self._sl_persist()
+        return True
+
+    def exit_trust(self, verdict: str) -> tuple:
+        """Чи може ця причина виходу закрити угоду САМА (досвід тіні)."""
+        if not self._sl_on():
+            return True, ''
+        return self._sl().exit_allowed(verdict, self._sl_learned)
+
+    def selflearn_state(self) -> Dict:
+        L = dict(self._sl_learned or {})
+        L['enabled'] = self._sl_on()
+        L['vgood'], L['vanti'] = len(self._sl_vgood), len(self._sl_vanti)
+        # лічильники журналу — живі (ваги перераховуються раз на 10 хв)
+        L['entries'] = {'n': len(self._sl_entries),
+                        'done': len([r for r in self._sl_entries if r.get('done') and r.get('res')]),
+                        'open': len([r for r in self._sl_entries if not r.get('done')])}
+        L['exits'] = {'n': len(self._sl_exits),
+                      'done': len([r for r in self._sl_exits if r.get('done') and r.get('res')])}
+        L['dis_tf'] = self.dis_tf()
+        L['last'] = [{k: r.get(k) for k in ('S', 'side', 'scen', 't', 'px', 'risk', 'res', 'r',
+                                            'mfe', 'mae', 'conf', 'vob1h', 'block')}
+                     for r in self._sl_entries[-12:]][::-1]
+        L['last_exits'] = [{k: r.get(k) for k in ('S', 'side', 'verdict', 't', 'px', 'res', 'mfe', 'mae')}
+                           for r in self._sl_exits[-8:]][::-1]
+        return L
+
+    def _sl_persist(self):
+        if not self._sl_dirty or not self.db:
+            return
+        self._sl_dirty = False
+        try:
+            self.db.set_setting(SL_DB, {'entries': self._sl_entries, 'exits': self._sl_exits})
+        except Exception:
+            pass
+
+    def _sl_load(self):
+        if not self.db:
+            return
+        try:
+            st = self.db.get_setting(SL_DB, None) or {}
+            if isinstance(st, str):
+                st = json.loads(st)
+            sl = self._sl()
+            self._sl_entries = [r for r in (st.get('entries') or []) if isinstance(r, dict) and r.get('k')][-sl.ENTRY_MAX:]
+            self._sl_exits = [r for r in (st.get('exits') or []) if isinstance(r, dict) and r.get('k')][-sl.EXIT_MAX:]
+            self._sl_learn(self._clock(), force=True)
+        except Exception:
+            self._sl_entries, self._sl_exits = [], []
+
     # стан
     def _persist(self):
         self._dirty = False
@@ -3726,6 +3958,7 @@ class AiEngine:
                                            'dis_shadow': self._dis_shadow[-DIS_SHADOW_MAX:]})
         except Exception:
             pass
+        self._sl_persist()
 
     def _load(self):
         if not self.db:
@@ -3842,6 +4075,7 @@ class AiEngine:
             rdy_stats = None
         return {'ok': True, 'settings': self.settings(), 'ai': self.ai_settings(),
                 'rdy_stats': rdy_stats, 'dis_shadow': self.dis_shadow_state(),
+                'selflearn': self.selflearn_state(),
                 'ai_defaults': AI_DEFAULTS, 'scenario_keys': list(AI_SCENARIOS),
                 'etalon': self.etalon_state(), 'cleanup': dict(self._cleanup_stat),
                 'cleanup_rules': CLEANUP_RULES, 'cleanup_rules_ua': CLEANUP_RULES_UA,
@@ -3905,6 +4139,10 @@ def ai_settings_now() -> Dict:
 def on_ai_trade_closed(closed: Dict) -> bool:
     """TM: закрилась угода ШІ → кандидат у еталони."""
     eng = get_ai_engine()
+    try:
+        eng and eng.selflearn_exit(closed)        # 🎓 тінь «чи вийшли вчасно»
+    except Exception as e:
+        print(f'[AI] selflearn exit: {e}')
     try:
         return bool(eng and eng.etalon_consider(closed))
     except Exception as e:

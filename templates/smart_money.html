@@ -5012,8 +5012,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
             <label class="sm-checkbox" title="💥 «Старт розряду» (E2) — лише ПІДТВЕРДЖЕНИЙ: пробій 24-год коробки має закритись 1h-свічкою, і ще N закритих свічок мусять утримати ціну за межею. Пробій лише на живій (незакритій) свічці або повернення в коробку = хибний старт, угоду не відкриваємо."><input type="checkbox" id="aip-dis-on" onchange="aipSave()"> 💥 розряд лише підтверджений</label>
-            <label class="sm-checkbox" title="📦 Друге підтвердження розряду: самий ОСТАННІЙ Volumized OB на 1H (той самий детектор і параметри «📦 Volumized OB Trend», свічки з живою — як на графіку) мусить бути в бік, куди стартував розряд, і не зламаний. Останнього VOB 1H немає, він проти розряду або став breaker → угоду не відкриваємо."><input type="checkbox" id="aip-dis-vob1h" onchange="aipSave()"> 📦 + останній VOB 1H у бік розряду</label>
-            <label title="TF, закриттям свічок якого підтверджується розряд. Рівень пробою — завжди межа 24-год коробки 1h (як і сама Пружина). 1H — надійніше, вхід до ~1-2 год пізніше; 15m — вхід на 30-45 хв раніше, але більше хибних стартів; 5m CHoCH+BOS — напрямок і сигнал дає внутрішня структура 5m: CHoCH у бік розряду, далі BOS, і свічка BOS закрилась за межею коробки 1h (CHoCH усередині коробки — шум, не сигнал); структура розвернулась після BOS — хибний старт. Вихід на хибному старті — завжди за закриттям 1h. Обидва варіанти бот веде в тіньовій статистиці нижче.">підтвердження <select id="aip-dis-tf" onchange="aipSave()"><option value="1h">1H (закриття)</option><option value="15m">15m (закриття)</option><option value="5m">5m CHoCH+BOS (структура)</option></select></label>
+            <label title="TF, закриттям свічок якого підтверджується розряд. Рівень пробою — завжди межа 24-год коробки 1h (як і сама Пружина). 1H — надійніше, вхід до ~1-2 год пізніше; 15m — вхід на 30-45 хв раніше, але більше хибних стартів; 5m CHoCH+BOS — напрямок і сигнал дає внутрішня структура 5m: CHoCH у бік розряду, далі BOS, і свічка BOS закрилась за межею коробки 1h (CHoCH усередині коробки — шум, не сигнал); структура розвернулась після BOS — хибний старт. Вихід на хибному старті — завжди за закриттям 1h. Обидва варіанти бот веде в тіньовій статистиці нижче.">підтвердження <select id="aip-dis-tf" onchange="aipSave()"><option value="1h">1H (закриття)</option><option value="15m">15m (закриття)</option><option value="5m">5m CHoCH+BOS (структура)</option><option value="v1h" title="Звичайний старт розряду (пробій коробки 24 год, утримувати закритими свічками не треба) + САМИЙ ОСТАННІЙ Volumized OB на 1H (детектор і параметри «📦 Volumized OB Trend», свічки з живою — як на графіку) у бік розряду і не зламаний">📦 VOB 1H у бік розряду</option><option value="auto">🎓 авто (найкращий за тінню)</option></select></label>
             <label id="aip-dis-bars-l" title="Скільки закритих 1h-свічок після пробою мусять утримати ціну за межею коробки">утримати ≥ <input type="number" id="aip-dis-bars" min="1" max="4" step="1" style="width:42px" onchange="aipSave()"> св. 1H</label>
             <label id="aip-dis-bars15-l" title="Скільки закритих 15m-свічок після пробою мусять утримати ціну за межею коробки 1h">утримати ≥ <input type="number" id="aip-dis-bars15" min="1" max="8" step="1" style="width:42px" onchange="aipSave()"> св. 15m</label>
             <label class="sm-checkbox" title="🪤 Угода ШІ, відкрита на «Старті розряду»: якщо закрита після входу 1h-свічка повернулась у коробку за межу пробою — розряду не було, вихід одразу (захисний, діє в обох режимах і попри заряд)."><input type="checkbox" id="aip-fs-exit" onchange="aipSave()"> 🪤 вихід на хибному старті</label>
@@ -5022,6 +5021,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
         </div>
         <div id="aip-rdy-stats" style="margin-top:8px;font-size:11px;color:#8b93a7"></div>
         <div id="aip-dis-stats" style="margin-top:6px;font-size:11px;color:#8b93a7"></div>
+        <div id="aip-sl-stats" style="margin-top:6px;font-size:11px;color:#8b93a7"></div>
         <div class="aip-grid" style="margin-top:8px;padding-top:8px;border-top:1px solid #2a2a2a">
             <label class="sm-checkbox" title="ШІ супроводжує й закриває СВОЇ угоди: аномалії + план угоди (стоп / ціль). Інші правила виходу бота угод ШІ не чіпають; Manual SL / TP працюють."><input type="checkbox" id="aip-exit" onchange="aipSave()"> вихід ШІ</label>
             <label title="Коли закривати">закривати: <select id="aip-exit-mode" onchange="aipSave()"><option value="confirmed">аномалії + підтвердження</option><option value="all">лише коли всі показники за вихід</option></select></label>
@@ -5033,6 +5033,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
             <label title="Мозок еталонів: найближча схожа угода мусить бути не далі цієї схожості (0..1)">схожість ≥ <input type="number" id="aip-et-sim" min="0" max="1" step="0.05" style="width:52px" onchange="aipSave()"></label>
             <label title="Мозок еталонів: серед схожих входів частка відмінних угод має бути не менша (0.3…0.95)">відмінних серед схожих ≥ <input type="number" id="aip-et-p" min="0.3" max="0.95" step="0.05" style="width:52px" onchange="aipSave()"></label>
             <label class="sm-checkbox" title="🎓 Раз на 15 хв модель мозку вчиться на нових закритих епізодах і угодах (champion / challenger)"><input type="checkbox" id="aip-learn" onchange="aipSave()"> 🎓 навчання</label>
+            <label class="sm-checkbox" title="🎓 Самонавчання по всіх напрямках: КОЖНА готова точка входу (і ті, що не стали угодою, і ⚠ сигнали) ведеться 8 год — що раніше: +1.5R чи −1R; КОЖЕН вихід ШІ — 4 год: чи пішла ціна ще на 1R у бік угоди (вийшли зарано). З цього бот сам: (1) підвищує / знижує впевненість сценаріїв E1–E4 за реальним результатом (0.6…1.4, від 15 випадків); (2) дає мозку еталонів віртуальний досвід (вага ½ від угоди); (3) причина виходу, що частіше була «зарано», перестає закривати сама; (4) «авто» TF підтвердження розряду обирає найкращий. Захисні виходи не змінюються ніколи."><input type="checkbox" id="aip-self" onchange="aipSave()"> 🎓 самонавчання по всіх напрямках</label>
             <label class="sm-checkbox" title="🧹 Раз на годину бот АНАЛІЗУЄ всі результати навчання і ПОЗНАЧАЄ на видалення найгірші (видно в картці «Очистка» і списком нижче), раз на 6 год — видаляє лише позначене. Результати (🏆 еталони, ❌ антибаза, дослідження угод ШІ, епізоди із сигналом) НЕ видаляються за датою: геть ідуть дублі кращих записів і найслабші, коли базу переповнено. Службові дані без результату (епізоди без сигналу, допоміжні аномалії, дослідження чужих угод) — за давністю."><input type="checkbox" id="aip-clean" onchange="aipSave()"> 🧹 автоочистка</label>
             <span style="margin-left:auto;display:flex;gap:6px">
                 <a class="vanom-btn" href="#" onclick="aipCleanup();return false" title="Запустити очистку таблиць навчання зараз">🧹 Очистити зараз</a>
@@ -6994,7 +6995,7 @@ function _aiDecision(c) {
 }
 // 💥 Стан розряду для «💥 Старт розряду» (E2): пробій закрито й утримано /
 // чекаємо підтвердження / лише жива свічка / 🪤 хибний старт (вимога 23.11).
-const _AI_DIS_TF = {'1h': '1H', '15m': '15m', '5m': '5m CHoCH+BOS', 'vob': '5m VOB', 'vobl': '5m VOB останній'};
+const _AI_DIS_TF = {'1h': '1H', '15m': '15m', '5m': '5m CHoCH+BOS', 'vob': '5m VOB', 'vobl': '5m VOB останній', 'v1h': '📦 VOB 1H', auto: '🎓 авто'};
 const _AI_DIS = {confirmed: ['💥 розряд підтверджено', '#4ade80'], pending: ['⏳ розряд: чекаємо підтвердження', '#fbbf24'],
     live: ['⏳ пробій лише на живій свічці', '#fbbf24'], false: ['🪤 хибний старт', '#f87171'], none: ['· пробою коробки немає', '#6b7280']};
 function _aiDisLine(c) {
@@ -7006,12 +7007,9 @@ function _aiDisLine(c) {
     const tip = (ds.note || '') + (ds.edge ? ' · межа пробою ' + fmtPriceJS(ds.edge) : '')
         + (ds.t ? ' · ' + _pcDM(ds.t) + ' ' + _pcHM(ds.t) : '')
         + alts.map(a => '\n' + nm(a.tf) + ' (тінь): ' + ((_AI_DIS[a.state] || [a.state])[0]) + (a.note ? ' — ' + a.note : '')).join('');
-    const altTxt = alts.filter(a => _AI_DIS[a.state]).map(a => ` <span style="color:#6b7280">· ${a.tf === '5m' ? '5M' : (a.tf === 'vob' ? 'VOB' : (a.tf === 'vobl' ? 'VOB↻' : String(a.tf).toUpperCase()))}:${a.state === 'confirmed' ? '✓' : (a.state === 'false' ? '🪤' : '⏳')}</span>`).join('');
-    const pend = ds.state === 'pending' && ds.tf !== '5m' ? ' ' + (ds.held || 0) + '/' + (ds.need || 1) : '';
-    // 📦 друге підтвердження — самий останній VOB 1H у бік розряду
-    const v1 = ds.vob1h;
-    const v1Txt = v1 ? ` <span style="color:${v1.ok ? '#4ade80' : '#f87171'}" title="📦 ${String(v1.note || '').replace(/"/g, '&quot;')}">· VOB1H:${v1.ok ? '✓' : (v1.side ? (v1.breaker ? '✕' : (v1.side === 'LONG' ? '▲' : '▼')) : '—')}</span>` : '';
-    return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t} <b>${nm(ds.tf || '1h')}</b>${pend}${v1Txt}${altTxt}</div>`;
+    const altTxt = alts.filter(a => _AI_DIS[a.state]).map(a => ` <span style="color:#6b7280">· ${a.tf === '5m' ? '5M' : (a.tf === 'vob' ? 'VOB' : (a.tf === 'vobl' ? 'VOB↻' : (a.tf === 'v1h' ? 'VOB1H' : String(a.tf).toUpperCase())))}:${a.state === 'confirmed' ? '✓' : (a.state === 'false' ? '🪤' : '⏳')}</span>`).join('');
+    const pend = ds.state === 'pending' && ds.tf !== '5m' && ds.tf !== 'v1h' ? ' ' + (ds.held || 0) + '/' + (ds.need || 1) : '';
+    return `<div class="ai-sub" style="color:${col}" title="${tip.replace(/"/g, '&quot;')}">${t} <b>${nm(ds.tf || '1h')}</b>${pend}${altTxt}</div>`;
 }
 // 🏆🧠 Вердикт ГОЛОВНОГО МОЗКУ (база еталонів) для монети.
 function _aiEtalonCell(e) {
@@ -7111,11 +7109,11 @@ function aipApply(d) {
         const ck = (id, v) => { const e = g(id); if (e && document.activeElement !== e) e.checked = !!v; };
         const vl = (id, v) => { const e = g(id); if (e && document.activeElement !== e && v != null) e.value = v; };
         ck('aip-enabled', a.enabled); ck('aip-exit', a.exit_enabled); ck('aip-etalon', a.etalon_enabled);
-        ck('aip-learn', a.learning_enabled); ck('aip-clean', a.cleanup_enabled);
+        ck('aip-learn', a.learning_enabled); ck('aip-clean', a.cleanup_enabled); ck('aip-self', a.self_learning !== false);
         vl('aip-min-charge', a.min_charge); vl('aip-book', a.book); vl('aip-max-open', a.max_open);
         vl('aip-max-30', a.max_per_30m); vl('aip-flip', a.flip_cooldown_min); vl('aip-slfb', a.sl_fallback_pct);
         vl('aip-exit-mode', a.exit_mode); vl('aip-hold', a.hold_pot); vl('aip-et-r', a.etalon_min_r);
-        ck('aip-sl-on', a.sl_enabled); ck('aip-dis-on', a.discharge_confirm !== false); ck('aip-dis-vob1h', a.discharge_vob1h !== false); ck('aip-fs-exit', a.false_start_exit !== false); ck('aip-exh-exit', a.exh_exit !== false);
+        ck('aip-sl-on', a.sl_enabled); ck('aip-dis-on', a.discharge_confirm !== false); ck('aip-fs-exit', a.false_start_exit !== false); ck('aip-exh-exit', a.exh_exit !== false);
         vl('aip-dis-bars', a.discharge_bars); vl('aip-dis-bars15', a.discharge_bars_15m);
         vl('aip-dis-tf', a.discharge_tf || '1h'); vl('aip-rdy', a.rdy_filter || 'off');
         vl('aip-sl-src', a.sl_source); vl('aip-sl-min', a.sl_min_pct); vl('aip-sl-max', a.sl_max_pct); vl('aip-min-conf', a.min_conf);
@@ -7134,6 +7132,8 @@ function aipApply(d) {
     if (rs) rs.innerHTML = _aipRdyStatsHTML(d.rdy_stats);
     const dsx = g('aip-dis-stats');
     if (dsx) dsx.innerHTML = _aipDisStatsHTML(d.dis_shadow);
+    const slx = g('aip-sl-stats');
+    if (slx) slx.innerHTML = _aipSelfLearnHTML(d.selflearn);
     const et = d.etalon || {}, cl = d.cleanup || {}, own = d.own_trades || [];
     const kp = g('aip-kpi');
     if (kp) {
@@ -7176,13 +7176,38 @@ function _aipSlSync() {
     const l1 = document.getElementById('aip-dis-bars-l'), l15 = document.getElementById('aip-dis-bars15-l');
     if (l1) l1.style.display = tf === '1h' ? '' : 'none';
     if (l15) l15.style.display = tf === '15m' ? '' : 'none';
-    ['aip-dis-bars', 'aip-dis-bars15', 'aip-dis-tf', 'aip-dis-vob1h'].forEach(id => {
+    ['aip-dis-bars', 'aip-dis-bars15', 'aip-dis-tf'].forEach(id => {
         const e = document.getElementById(id);
         if (e) { e.disabled = !dc; e.style.opacity = dc ? '' : '0.4'; }
     });
 }
 // 📊 Тіньове порівняння підтвердження розряду 1H проти 15m (23.11): кожна точка,
 // де розряд став «підтвердженим» на своєму TF, і рух ціни за 24 год у бік входу.
+// 🎓 Самонавчання по всіх напрямках (24.11): чого мозок навчився з тіні.
+const _AI_SCEN_NM = {E1: '🔁 E1', E2: '💥 E2', E3: '↗ E3', E4: '🪤 E4'};
+const _AI_EXV_NM = {close: 'аномалії + підтвердження', reversal: 'розворот', giveback: 'віддача піку', target: 'ціль плану', time: 'час'};
+function _aipSelfLearnHTML(L) {
+    if (!L) return '';
+    const en = L.entries || {}, ex = L.exits || {};
+    const head = `<b style="color:#c4b5fd">🎓 Самонавчання</b> ${L.enabled ? '' : '<span style="color:#f87171">(вимкнено — журнал ведеться, ваги не застосовуються)</span> '}`
+        + `· тіньових входів ${en.n || 0} (завершено ${en.done || 0}, ведуться ${en.open || 0}) · виходів ${ex.done || 0}/${ex.n || 0}`
+        + ` · віртуальний досвід 🏆 ${L.vgood || 0} / ❌ ${L.vanti || 0}`
+        + ` · TF розряду: <b>${(_AI_DIS_TF[L.dis_tf] || L.dis_tf || '1h')}</b>`;
+    const fc = f => f > 1 ? `<b style="color:#4ade80">×${f}</b>` : (f < 1 ? `<b style="color:#f87171">×${f}</b>` : '<span style="color:#6b7280">×1</span>');
+    const scen = Object.entries(L.scen || {}).map(([k, v]) => {
+        const [sk, sd] = k.split('|');
+        return `<span title="${v.n} випадків: ✅ ${v.win} · ❌ ${v.loss} · — ${v.flat} · очікувано ${v.exp_r}R. Множник впевненості з’являється від 15 випадків.">`
+            + `${_AI_SCEN_NM[sk] || sk} ${sd === 'LONG' ? '▲' : '▼'} ${v.wr}% · ${v.exp_r}R ${fc(v.factor)}</span>`;
+    }).join(' · ');
+    const exv = Object.entries(L.exit || {}).map(([k, v]) =>
+        `<span style="color:${v.ok ? '#cbd5e1' : '#f87171'}" title="${v.n} виходів: зарано ${v.early}, вчасно ${v.right}">${_AI_EXV_NM[k] || k}: вчасно ${Math.round((v.trust || 0) * 100)}%${v.ok ? '' : ' ⛔ сама не закриває'}</span>`).join(' · ');
+    const v1 = L.vob1h || {};
+    const v1t = (v1.ok || v1.no) ? `<div>📦 E2 з VOB 1H у бік: ${v1.ok ? v1.ok.wr + '% · ' + v1.ok.exp_r + 'R (' + v1.ok.n + ')' : '—'} · без: ${v1.no ? v1.no.wr + '% · ' + v1.no.exp_r + 'R (' + v1.no.n + ')' : '—'}</div>` : '';
+    return `<div>${head}</div>`
+        + (scen ? `<div>сценарії (тінь 8 год, ✅ = +1.5R раніше −1R): ${scen}</div>` : '<div style="color:#6b7280">сценарії: даних ще немає — кожна готова точка входу ведеться 8 год</div>')
+        + v1t
+        + (exv ? `<div>виходи (тінь 4 год): ${exv}</div>` : '');
+}
 function _aipDisStatsHTML(sh) {
     const st = (sh || {}).stats || {};
     const f = v => v == null ? '—' : ((v > 0 ? '+' : '') + v + '%');
@@ -7198,7 +7223,7 @@ function _aipDisStatsHTML(sh) {
             + (x.zone_n ? ` · 🛑 стоп за зоною VOB: ${x.avg_risk != null ? x.avg_risk + '%' : '—'}, вибило б <b>${x.zone_hit_pct}%</b>`
                 + (x.avg_mfe_r != null ? ` · макс ↑ ${x.avg_mfe_r}R` : '') : '') + '</span>';
     };
-    return `<div title="Угод не відкриває — лише записує, що було б, якби вхід підтверджувався кожним способом. Рух — % від ціни в момент підтвердження в бік входу, за 24 год; 🪤 хибний — закрита після цього 1h-свічка повернулась у коробку. 5m VOB — перший блок, що народився за межею коробки; 5m VOB останній — САМИЙ ОСТАННІЙ блок на графіку (той, що бот малює останнім) уже стоїть у бік розряду, що стартував; старіший блок не підставляється. Обидва лише для порівняння (для входу не обираються); стоп за зоною блоку: середня відстань від входу і як часто ціна до неї доходила.">📊 <b>Тінь розряду 1H / 15m / 5m CHoCH+BOS / 5m VOB / 5m VOB останній</b>:<div>${row('1h')}</div><div>${row('15m')}</div><div>${row('5m')}</div><div>${row('vob')}</div><div>${row('vobl')}</div></div>`;
+    return `<div title="Угод не відкриває — лише записує, що було б, якби вхід підтверджувався кожним способом. Рух — % від ціни в момент підтвердження в бік входу, за 24 год; 🪤 хибний — закрита після цього 1h-свічка повернулась у коробку. 5m VOB — перший блок, що народився за межею коробки; 5m VOB останній — САМИЙ ОСТАННІЙ блок на графіку (той, що бот малює останнім) уже стоїть у бік розряду, що стартував; старіший блок не підставляється. Обидва лише для порівняння (для входу не обираються); стоп за зоною блоку: середня відстань від входу і як часто ціна до неї доходила.">📊 <b>Тінь розряду 1H / 15m / 5m CHoCH+BOS / 5m VOB / 5m VOB останній / 📦 VOB 1H</b>:<div>${row('1h')}</div><div>${row('15m')}</div><div>${row('5m')}</div><div>${row('vob')}</div><div>${row('vobl')}</div><div>${row('v1h')}</div></div>`;
 }
 // 📊 Закриті угоди за банером «МММ-Готовність» на вході (вимога 23.11).
 function _aipRdyStatsHTML(st) {
@@ -7232,7 +7257,7 @@ async function aipSave() {
         book: (g('aip-book') || {}).value || 'auto', max_open: n('aip-max-open', 5),
         max_per_30m: n('aip-max-30', 3), flip_cooldown_min: n('aip-flip', 180), hold_pot: n('aip-hold', 40),
         sl_fallback_pct: n('aip-slfb', 2), sl_source: (g('aip-sl-src') || {}).value || 'ob',
-        sl_enabled: !!(g('aip-sl-on') || {}).checked, discharge_confirm: !!(g('aip-dis-on') || {}).checked, discharge_vob1h: !!(g('aip-dis-vob1h') || {}).checked,
+        sl_enabled: !!(g('aip-sl-on') || {}).checked, discharge_confirm: !!(g('aip-dis-on') || {}).checked,
         discharge_bars: n('aip-dis-bars', 1), false_start_exit: !!(g('aip-fs-exit') || {}).checked,
         exh_exit: !!(g('aip-exh-exit') || {}).checked,
         discharge_tf: (g('aip-dis-tf') || {}).value || '1h', discharge_bars_15m: n('aip-dis-bars15', 2),
@@ -7240,6 +7265,7 @@ async function aipSave() {
         sl_min_pct: n('aip-sl-min', 0.8), sl_max_pct: n('aip-sl-max', 4), min_conf: n('aip-min-conf', 40), learning_enabled: !!(g('aip-learn') || {}).checked,
         etalon_enabled: !!(g('aip-etalon') || {}).checked, etalon_min_r: n('aip-et-r', 1.5),
         etalon_min_sim: n('aip-et-sim', 0.35), etalon_min_p: n('aip-et-p', 0.6), cleanup_enabled: !!(g('aip-clean') || {}).checked,
+        self_learning: !!(g('aip-self') || {}).checked,
     };
     if (scen.length) body.scenarios = scen;
     if (body.enabled && !(_aipLast && (_aipLast.ai || {}).enabled) && body.book !== 'paper'

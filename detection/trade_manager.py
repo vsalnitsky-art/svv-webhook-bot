@@ -4774,6 +4774,20 @@ class TradeManager:
                           'plan': m['plan'], 'r': m['r'], 'peak_r': m['peak_r'],
                           'data_ok': m['data_ok'], 'charge': m.get('charge'),
                           'plan_src': 'ai' if pos.get('ai_plan') else ('chart' if m['plan'] else None)}
+        # 🎓 Самонавчання (24.11): причина виходу, яка в тіні частіше виявлялась
+        # «зарано», сама угоду не закриває. Захисні — завжди.
+        if m['close']:
+            try:
+                eng1 = ai_signals.get_ai_engine()
+                ok1, why1 = eng1.exit_trust(m['verdict']) if eng1 is not None and hasattr(
+                    eng1, 'exit_trust') else (True, '')
+            except Exception:
+                ok1, why1 = True, ''
+            if not ok1:
+                m = dict(m, close=False)
+                pos['ai_exit']['ready'] = False
+                pos['ai_exit']['learn_hold'] = why1
+                pos['ai_exit']['notes'] = ([why1] + list(pos['ai_exit'].get('notes') or []))[:8]
         if not m['close']:
             return None
         _sct = r.get('scenario_text') if m['verdict'] == 'scenario' else ''
