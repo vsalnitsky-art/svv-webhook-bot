@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=238">
+  <link rel="stylesheet" href="css/style.css?v=252">
 </head>
 <body class="perm-no-sec_paper">
   <svg class="svg-sprite" aria-hidden="true">
@@ -54,23 +54,27 @@
   <div class="boot-loader" aria-label="Loading terminal"><span class="boot-mark"><img src="img/logo-loading.svg?v=214" alt="VSV"></span><b>LOADING</b><span class="boot-spin" aria-hidden="true"></span></div>
 
   <header class="topbar">
-    <a class="brand" href="#forecast" aria-label="VSV — на головну">
-      <span class="brand-mark"><img src="img/logo.png" alt="VSV"></span>
-      <span class="brand-copy"><b>VSV</b><small>TRADING INTELLIGENCE</small></span>
-    </a>
-    <nav class="main-nav" aria-label="Основна навігація">
-      <a href="#iw-layout" class="active pm-sec_terminal">Термінал</a>
-      <a href="#rec-card" class="pm-sec_signals">Сигнали</a>
-      <a href="#pp-card" class="pm-sec_paper">P&amp;L</a>
-      <a href="#trade-card" class="pm-trade">Торгівля</a>
-      <a href="#" id="nav-cabinet" class="nav-cab" hidden title="Особистий кабінет: профіль, Telegram, пароль, доступ">Мій кабінет</a>
-    </nav>
-    <div class="top-actions">
-      <button id="site-search" class="top-icon" type="button" title="Пошук інструмента" aria-label="Знайти монету"><svg><use href="#i-search"/></svg></button>
-      <button id="theme-btn" class="top-icon" type="button" title="Світла / темна тема" aria-label="Змінити тему"><svg><use href="#i-sun"/></svg></button>
-      <div id="conn" class="conn conn--wait" role="status">● підключення…</div>
-      <nav id="auth-links" class="auth-links" aria-label="Акаунт"></nav>
+    <div class="topbar-main">
+      <a class="brand" href="#forecast" aria-label="VSV — на головну">
+        <span class="brand-mark"><img src="img/logo.png" alt="VSV"></span>
+        <span class="brand-copy"><b>VSV</b><small>TRADING INTELLIGENCE</small></span>
+      </a>
+      <nav class="main-nav" aria-label="Основна навігація">
+        <a href="#iw-layout" class="active pm-sec_terminal">Термінал</a>
+        <a href="#rec-card" class="pm-sec_signals">Сигнали</a>
+        <a href="#pp-card" class="pm-sec_paper">P&amp;L</a>
+        <a href="#trade-card" class="pm-trade">Торгівля</a>
+        <a href="#" id="nav-cabinet" class="nav-cab" hidden title="Особистий кабінет: профіль, Telegram, пароль, доступ">Мій кабінет</a>
+      </nav>
+      <div class="top-actions">
+        <div id="top-language" class="language-slot"></div>
+        <button id="site-search" class="top-icon" type="button" title="Пошук інструмента" aria-label="Знайти монету"><svg><use href="#i-search"/></svg></button>
+        <button id="theme-btn" class="top-icon" type="button" title="Світла / темна тема" aria-label="Змінити тему"><svg><use href="#i-sun"/></svg></button>
+        <div id="conn" class="conn conn--wait" role="status">● підключення…</div>
+        <nav id="auth-links" class="auth-links" aria-label="Акаунт"></nav>
+      </div>
     </div>
+    <div class="spb-mm4 market-menu" id="spb-mm4" hidden aria-label="Чотири банери VSV бота"></div>
   </header>
 
   <main class="wrap">
@@ -87,15 +91,15 @@
         </div>
         <div class="spb-side spb-side-right" id="spb-wl"></div>
       </div>
-      <div class="spb-mm4" id="spb-mm4" hidden aria-label="Чотири банери МММ бота"></div>
     </section>
 
     <section class="card hero" id="auth-hero" style="display:none">
       <div class="hero-inner">
+        <div id="auth-language" class="language-slot language-auth"></div>
         <span class="hero-mark"><img src="img/logo.png" alt="VSV"></span>
         <p class="hero-kicker">PROFESSIONAL CRYPTO TERMINAL</p>
         <h1 class="hero-title">Ваш ринок.<br><span>Ваші правила.</span></h1>
-        <p class="hero-copy">Увійдіть, щоб відкрити персональний watchlist, прогнози VSV і результати тестових угод.</p>
+        <p class="hero-copy">Ваше рішення — першочергове. VSV не замінює ваше мислення, а лише підтверджує власний торговий задум фактами ринку. Незалежність думки, дисципліна й відповідальність за кожен вибір — це справжній шлях до зрілості трейдера та зростання капіталу. Якщо ж ви шукаєте бота, який думатиме замість вас, або гарантоване збагачення без власної роботи — не реєструйтеся.</p>
         <p class="hero-deny" id="auth-deny" style="display:none"></p>
         <div class="hero-actions">
           <a id="hero-login" class="btn btn-primary" href="/login">Увійти в термінал</a>
@@ -273,11 +277,14 @@
     (function(){var k="vsv-info-theme",s=null;try{s=localStorage.getItem(k)}catch(e){}document.documentElement.setAttribute("data-theme",s||"dark");document.addEventListener("click",function(e){if(!e.target.closest||!e.target.closest("#theme-btn"))return;var c=document.documentElement.getAttribute("data-theme")||"dark",n=c==="dark"?"light":"dark";document.documentElement.setAttribute("data-theme",n);try{localStorage.setItem(k,n)}catch(x){}})})();
   </script>
   <script src="js/vendor/lightweight-charts.js"></script>
-  <script src="js/config.js?v=76"></script>
-  <script src="js/demo.js?v=9"></script>
-  <script src="js/app.js?v=251"></script>
-  <script src="js/chart-pro.js?v=213"></script>
-  <script src="js/chart-tools.js?v=213"></script>
-  <script src="js/ui.js?v=201"></script>
+  <script src="js/demo.js?v=11"></script>
+  <script src="js/config.js?v=77"></script>
+  <script src="js/i18n-dictionaries.js?v=260"></script>
+  <script src="js/i18n-patterns.js?v=260"></script>
+  <script src="js/i18n.js?v=260"></script>
+  <script src="js/app.js?v=260"></script>
+  <script src="js/chart-pro.js?v=214"></script>
+  <script src="js/chart-tools.js?v=214"></script>
+  <script src="js/ui.js?v=202"></script>
 </body>
 </html>

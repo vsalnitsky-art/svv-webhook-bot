@@ -105,8 +105,8 @@
       inner + "</a>";
   }
 
-  var SIGNAL_BADGES_JS = { "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS", "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB", "mm_vob": "🧮 VOB з МММ-монітора", "liq_vob": "💧 VOB + Сканер ліквідності", "ob_alert": "🆕 Новий OB", "ai": "🤖 Сигнал ШІ", "anom": "⚠ Аномалії обсягу", "poc": "🎯 POC-сетап", "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний", "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний" };
-  var ENGINE_BADGES_JS = { "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4", "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап", "MMM": "🧮 МММ-монітор", "MMN": "🧮 МММ-Trend", "MMC": "⚡ МММ-CTR", "MMF": "🔮 МММ-Local", "MMP": "🧭 МММ-Pull", "MMD": "🧠 МММ-Decision", "MMR": "🧩 МММ-Готовність", "MMS": "🔔 МММ-SBR", "XSPR": "🔭 Пружина-скан", "SPR": "🌀 Пружина", "MIR": "🪞 Дзеркало бота", "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий" };
+  var SIGNAL_BADGES_JS = { "choch": "🟦 CHoCH", "choch_bos": "🟦 CHoCH+BOS", "vob_alert": "🟪 Volumized OB", "vob": "💰 Volumized OB", "mm_vob": "🧮 VOB з VSV-монітора", "liq_vob": "💧 VOB + Сканер ліквідності", "ob_alert": "🆕 Новий OB", "ai": "🤖 Сигнал ШІ", "anom": "⚠ Аномалії обсягу", "poc": "🎯 POC-сетап", "opp": "🔄 Реверс", "external": "🔌 Зовнішня", "manual": "✋ Ручний", "manual_ui": "✋ Ручний", "manual_ui_overflow": "✋ Ручний" };
+  var ENGINE_BADGES_JS = { "Q1": "🎯 Черга-1", "Q2": "🎯 Черга-2", "Q3": "🎯 Готовність", "Q4": "🎯 Черга-4", "Q3-VOB(funding)": "💰 VOB+Шари", "POC-сетап": "🎯 POC-сетап", "MMM": "🧮 VSV-монітор", "MMN": "🧮 VSV-Trend", "MMC": "⚡ VSV-CTR", "MMF": "🔮 VSV-Local", "MMP": "🧭 VSV-Pull", "MMD": "🧠 VSV-Decision", "MMR": "🧩 VSV-Готовність", "MMS": "🔔 VSV-SBR", "XSPR": "🔭 Пружина-скан", "SPR": "🌀 Пружина", "MIR": "🪞 Дзеркало бота", "EXH": "🔥 Виснаженість", "FF": "🔥 FF", "direct": "⚡ Прямий" };
   var SIGNAL_ICON_JS = { "choch": "🟦", "choch_bos": "🟦", "vob_alert": "🟪", "vob": "💰", "mm_vob": "🧮", "liq_vob": "💧", "ob_alert": "🆕", "ai": "🤖", "anom": "⚠", "poc": "🎯", "opp": "🔄", "external": "🔌", "manual": "✋", "manual_ui": "✋", "manual_ui_overflow": "✋", "Q3-VOB(funding)": "💰", "POC-сетап": "🎯", "EXH": "🔥", "FF": "🔥", "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
   var ENGINE_ICON_OVERRIDE_JS = { "MMM": "🧮", "MMN": "🧮", "MMC": "⚡", "MMF": "🔮", "MMP": "🧭", "MMD": "🧠", "MMR": "🧩", "MMS": "🔔", "XSPR": "🔭", "SPR": "🌀" };
   
@@ -181,7 +181,7 @@
         '<p><b>👤 Особисто вам</b> (чат із ботом): сигнали <b>🔔 SBR</b> по монетах вашого ' +
         'WATCHLIST — натисніть 🔔 біля монети й оберіть <b>1H</b> та/або <b>4H</b>. ' +
         (nSub ? "Зараз підписано монет: <b>" + nSub + "</b>." : "Зараз підписок немає.") + "</p>" +
-        '<p><b>👥 У Telegram-групі</b> (теми): <b>🧮 МММ-монітор</b> — зміни банерів МММ, ' +
+        '<p><b>👥 У Telegram-групі</b> (теми): <b>🧮 VSV-монітор</b> — зміни банерів VSV, ' +
         '<b>🔔 Сигнали</b> — SBR 1H/4H по основних монетах, <b>📈 Угоди</b> — відкриття й закриття угод бота. ' +
         'Група — лише для читання.</p>' +
         '<p>Доступ до групи — <b>після реєстрації та схвалення адміністратором</b>; посилання прийде автоматично. ' +
@@ -245,6 +245,7 @@
     var none = p.sec_terminal === false && p.sec_signals === false && p.sec_paper === false;
     var pn = $("#perm-note"); if (pn) pn.style.display = none ? "" : "none";
     if (was === now) return;
+    if (!started) return;
     if (p.ly_liq === false && typeof LQ !== "undefined" && LQ.on && typeof liqOff === "function") liqOff();
     renderTfBar(); renderList(); IW.sig = ""; loadCoin(true); loadRec(); loadPaper(); loadRows();
   }
@@ -776,10 +777,10 @@
   function mmTip(sym) {
     if (MM_SYMS.indexOf(sym) < 0) return sym;
     var m = (IW.rows[sym] || {}).mm;
-    if (!m) return "МММ (ліквідність): даних немає";
-    if (m.dir === "LONG") return "МММ (ліквідність): кластери ліквідацій над ціною — тяга вгору, перевага LONG · сила " + m.str + "%";
-    if (m.dir === "SHORT") return "МММ (ліквідність): кластери ліквідацій під ціною — тяга вниз, перевага SHORT · сила " + m.str + "%";
-    return "МММ (ліквідність) ⚖ баланс — вираженої тяги немає · сила " + m.str + "%";
+    if (!m) return "VSV (ліквідність): даних немає";
+    if (m.dir === "LONG") return "VSV (ліквідність): кластери ліквідацій над ціною — тяга вгору, перевага LONG · сила " + m.str + "%";
+    if (m.dir === "SHORT") return "VSV (ліквідність): кластери ліквідацій під ціною — тяга вниз, перевага SHORT · сила " + m.str + "%";
+    return "VSV (ліквідність) ⚖ баланс — вираженої тяги немає · сила " + m.str + "%";
   }
 
   var IW_SORT = "default";
@@ -820,6 +821,13 @@
     var host = $("#iw-list"); if (!host) return;
     host.querySelectorAll(".iw-row[data-sym]").forEach(function (row) {
       var sym = row.getAttribute("data-sym"), r = IW.rows[sym] || {}, px = livePx(sym);
+      var name = row.querySelector(".iw-sym");
+      if (name) {
+        var title = mmTip(sym);
+        if (name.title !== title) name.title = title;
+        name.classList.toggle("mm-long", !!(r.mm && r.mm.dir === "LONG"));
+        name.classList.toggle("mm-short", !!(r.mm && r.mm.dir === "SHORT"));
+      }
       var price = row.querySelector(".iw-price"), chgEl = row.querySelector(".iw-chg");
       if (price) {
         var pt = px ? fmtPrice(px) : "—", pc = "iw-price" + dirCls(sym);
@@ -993,16 +1001,17 @@
     if (!IW.wl.length || !pOk("sec_terminal")) return Promise.resolve();
     return api("/api/info/rows?symbols=" + encodeURIComponent(IW.wl.join(","))).then(function (d) {
       (d.rows || []).forEach(function (r) { IW.rows[r.symbol] = r; });
-      renderList(); renderHead();
+      renderQuotes(); renderHead();
     }).catch(function () {});
   }
 
   function loadUniverse() {
-    api("/api/info/universe").then(function (d) {
+    return api("/api/info/universe").then(function (d) {
       IW.universe = d.symbols || [];
       var dl = $("#iw-universe");
       if (dl) dl.innerHTML = IW.universe.map(function (s) { return '<option value="' + esc(s.replace(/USDT$/, "")) + '">' + esc(s) + "</option>"; }).join("");
-    }).catch(function () {});
+      return d;
+    }).catch(function () { return null; });
   }
 
   document.addEventListener("submit", function (e) {
@@ -2622,10 +2631,10 @@
 
   var coinBusy = false;
   function loadCoin(force, keepBars) {
-    if (!pOk("sec_terminal")) return;
+    if (!pOk("sec_terminal")) return Promise.resolve(null);
     var sym = curSym();
-    if (!sym) { setNote("оберіть монету зі списку"); renderHead(); return; }
-    if (coinBusy && !force && !keepBars) return;
+    if (!sym) { setNote("оберіть монету зі списку"); renderHead(); return Promise.resolve(null); }
+    if (coinBusy && !force && !keepBars) return Promise.resolve(null);
     coinBusy = true;
     if (force) {
       setLoading();
@@ -2635,13 +2644,14 @@
     }
     var want = iwKey();
     var q = "/api/info/coin?symbol=" + encodeURIComponent(sym) + "&tf=" + IW.tf + "&ob_tf=" + IW.ob_tf + "&vob_tf=" + IW.vob_tf + "&poc_days=" + IW.poc_days + "&poc_tf=" + IW.poc_tf + "&hl_tf=" + IW.hl_tf + "&sbr_tf=" + IW.sbr_tf + "&shl_tf=" + IW.shl_tf + (IW.show_anom ? "&anom=1" : "") + (VOL.on ? "&vol=1" : "") + (IW.sig && !force ? "&sig=" + encodeURIComponent(IW.sig) : "");
-    api(q).then(function (c) {
-      if (want !== iwKey() || c.same) return;
+    return api(q).then(function (c) {
+      if (want !== iwKey() || c.same) return c;
       IW.coin = c; IW.sig = c.sig || "";
-      renderHead(); renderList(); drawCoin(c, force);
+      renderHead(); renderQuotes(); drawCoin(c, force);
       if (!c.ok || c.ob_wait || c.vob_wait || c.hl_wait || c.sbr_wait || c.vol_wait || (c.vsplit && c.vsplit.fill)) setTimeout(function () { if (want === iwKey()) loadCoin(false, true); }, 4000);
-    }).catch(function () { setNote("не вдалося завантажити графік"); })
-      .then(function () { coinBusy = false; });
+      return c;
+    }).catch(function () { setNote("не вдалося завантажити графік"); return null; })
+      .then(function (result) { coinBusy = false; return result; });
   }
 
   document.addEventListener("click", function (e) {
@@ -2879,7 +2889,7 @@
         '<td class="r pp-timer" data-since="' + Math.floor(p.opened_at || 0) + '">' + (p.opened_at ? ppTimer(p.opened_at) : "—") + "</td></tr>";
     }).join("");
   }
-  var PP_REASON = { manual: "✋ Закрито вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit", manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 Автопілот: ціль досягнута", breakeven: "🟰 Беззбиток", breakeven_close: "⚖️ Беззбиток", sbr_exit: "🔔 Протилежний сигнал SBR", sbr_trail_exit: "🔔⏳ Трейл після SBR", opposite_ob_exit: "🧱 Новий протилежний OB", mm_flat_exit: "🧮 МММ LiQ ⚖ рівновага", mm_against_exit: "🧮 МММ LiQ проти", reverse_signal: "🔄 Протилежний сигнал (реверс)", mirror_close: "🪞 Дзеркало: бот закрив угоду", reverse_smc: "🔄 Розворот структури", exh_exit: "🎯 Досягнення вершини", spring_fired_exit: "💥 Пружина вистрілила", ai_exit: "🤖 Вихід ШІ", ai_pro_exit: "🧠 Проф. вихід ШІ", forecast_1h_exit: "🔮 Прогноз 1H проти", forecast_4h_exit: "🔮 Прогноз 4H проти", forecast_1h_confluence: "🔮 Прогноз 1H + розворот", decision_exit: "🧠 Decision проти", signal_exit_and: "🔗 Усі вердикти проти", htf_flip: "📡 Розворот старшого TF", time_stop: "⏱ Вихід за часом", trailing_stop: "📈 Трейлінг-стоп", external_close: "🌐 Закрито на біржі", auto_gate_wait: "⏸ Пауза Auto-gate", bos_2_partial: "✂️ Часткове BOS-2", bos_3_partial: "✂️ Часткове BOS-3", bos_4_partial: "✂️ Часткове BOS-4", fuel_flipped: "⛽ МММ розвернувся", fuel_faded: "⛽ МММ згас" };
+  var PP_REASON = { manual: "✋ Закрито вручну", stop_loss: "🛡 Stop Loss", take_profit: "🎯 Take Profit", manual_sl: "🛡 Manual SL", manual_tp: "🎯 Manual TP-2", pilot_target: "🎯 Автопілот: ціль досягнута", breakeven: "🟰 Беззбиток", breakeven_close: "⚖️ Беззбиток", sbr_exit: "🔔 Протилежний сигнал SBR", sbr_trail_exit: "🔔⏳ Трейл після SBR", opposite_ob_exit: "🧱 Новий протилежний OB", mm_flat_exit: "🧮 VSV LiQ ⚖ рівновага", mm_against_exit: "🧮 VSV LiQ проти", reverse_signal: "🔄 Протилежний сигнал (реверс)", mirror_close: "🪞 Дзеркало: бот закрив угоду", reverse_smc: "🔄 Розворот структури", exh_exit: "🎯 Досягнення вершини", spring_fired_exit: "💥 Пружина вистрілила", ai_exit: "🤖 Вихід ШІ", ai_pro_exit: "🧠 Проф. вихід ШІ", forecast_1h_exit: "🔮 Прогноз 1H проти", forecast_4h_exit: "🔮 Прогноз 4H проти", forecast_1h_confluence: "🔮 Прогноз 1H + розворот", decision_exit: "🧠 Decision проти", signal_exit_and: "🔗 Усі вердикти проти", htf_flip: "📡 Розворот старшого TF", time_stop: "⏱ Вихід за часом", trailing_stop: "📈 Трейлінг-стоп", external_close: "🌐 Закрито на біржі", auto_gate_wait: "⏸ Пауза Auto-gate", bos_2_partial: "✂️ Часткове BOS-2", bos_3_partial: "✂️ Часткове BOS-3", bos_4_partial: "✂️ Часткове BOS-4", fuel_flipped: "⛽ VSV розвернувся", fuel_faded: "⛽ VSV згас" };
   // 🎯 «Досягнення вершини»: частка піку угоди, взята на виході (результат ÷ пік).
   function ppPeakShare(c) {
     if (!c || c.reason !== "exh_exit") return null;
@@ -2909,17 +2919,18 @@
   }
   function ppClosedApply() { var on = false; try { on = localStorage.getItem(PP_CL) === "1"; } catch (e) {} $("#pp-closed-body").style.display = on ? "" : "none"; $("#pp-closed-head").setAttribute("aria-expanded", on ? "true" : "false"); }
   function loadPaper() {
-    var card = $("#pp-card"); if (!card || PP.busy || !pOk("sec_paper")) return;
-    var r = ppRange(PP.period); if (!r) return;
+    var card = $("#pp-card"); if (!card || PP.busy || !pOk("sec_paper")) return Promise.resolve(null);
+    var r = ppRange(PP.period); if (!r) return Promise.resolve(null);
     var q = r.from != null ? "?from=" + r.from + "&to=" + r.to : "";
     PP.busy = true;
-    api("/api/info/paper" + q).then(function (d) {
-      PP.busy = false; if (!d || !d.ok) { card.style.display = "none"; return; }
+    return api("/api/info/paper" + q).then(function (d) {
+      if (!d || !d.ok) { card.style.display = "none"; return d; }
       card.style.display = ""; var cs = (d.closed || []).length + "|" + ((d.closed || [])[0] || {}).closed_at;
       if (cs !== PP.closedSig) { PP.closedSig = cs; PP.daysAt = 0; }
       PP.last = d; PP.label = r.label; ppSync(); ppClosedApply(); $("#pp-note").textContent = r.label;
       var sa = d.account || {}; $("#pp-inline").innerHTML = ppInlineHTML(sa); ppRenderKpis(d, r.label); ppRenderOpen(d); ppRenderClosed(d);
-    }, function () { PP.busy = false; });
+      return d;
+    }).catch(function () { return null; }).then(function (result) { PP.busy = false; return result; });
   }
   function ppRerender() { if (PP.last) { ppSync(); ppRenderKpis(PP.last, PP.label || ""); ppRenderOpen(PP.last); ppRenderClosed(PP.last); } }
   function ppOpenCal(inp) {
@@ -3094,7 +3105,10 @@
       '<div class="spb-bar' + (dir ? "" : " mute") + '" title="' + esc(tip) + '" style="background:' + grad + '">' + labels + "</div>";
   }
   function spbRender(d) {
-    var card = $("#spb-card"); if (!card) return;
+    var card = $("#spb-card");
+    /* The bot integrates the terminal without the InfoSite spring banner.
+       Its two-row menu metrics still consume the same server payload. */
+    if (!card) { mm4Render(d && d.mm4); return; }
     var bs = (d && d.banners) || [];
     if (!bs.length) { card.style.display = "none"; return; }
     if (d.ts) SPB.skew = Date.now() / 1000 - Number(d.ts);
@@ -3115,9 +3129,17 @@
       else { tm.removeAttribute("data-since"); tm.innerHTML = '<span class="muted">—</span>'; }
     }
   }
-  // 🧭 ЧОТИРИ БАНЕРИ БОТА (25.11): 🧮 МММ-Trend · 🔮 МММ-Local · 🧠 МММ-Decision ·
-  // 🧩 МММ-Готовність — загальний відсоток (середній важіль) + збіг усіх чотирьох.
+  // 🧭 Компактне зведення чотирьох VSV-модулів у панелі меню.
   var MM4_SHORT = { "new": "Trend", "fc": "Local", "dec": "Decision", "rdy": "Готовність" };
+  var MM4_ICONS = {
+    total: '<path d="M4 17h3V9H4v8Zm6 0h4V4h-4v13Zm7 0h3v-6h-3v6Z"/><path class="mm4-signal" d="m3 6 5-3 5 4 7-5"/>',
+    "new": '<path d="M3 17 9 8l4 4 8-9"/><path class="mm4-signal" d="M16 3h5v5"/>',
+    fc: '<circle cx="12" cy="12" r="3"/><circle class="mm4-signal" cx="12" cy="12" r="8"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/>',
+    dec: '<path d="M8 4a4 4 0 0 0-4 4v2a4 4 0 0 0 2 7v3h5V4H8Zm8 0a4 4 0 0 1 4 4v2a4 4 0 0 1-2 7v3h-5V4h3Z"/><path class="mm4-signal" d="M11 8h2m-2 4h2m-2 4h2"/>',
+    rdy: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path class="mm4-signal" d="m16 3 1 2 2 1-2 1-1 2-1-2-2-1 2-1 1-2Z"/>',
+    agree: '<path d="m12 2 2.4 5.2L20 8l-4 4 .9 5.8L12 15.2l-4.9 2.6L8 12 4 8l5.6-.8L12 2Z"/><path class="mm4-signal" d="m9 11 2 2 4-4"/>'
+  };
+  function mm4Icon(key) { return '<svg class="mm4-ic" viewBox="0 0 24 24" aria-hidden="true">' + (MM4_ICONS[key] || MM4_ICONS.total) + "</svg>"; }
   function mm4Dur(sec) {
     sec = Math.max(0, Math.floor(sec)); var d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60), s = sec % 60;
     return (d ? d + "д " : "") + p2(h) + ":" + p2(m) + ":" + p2(s);
@@ -3128,37 +3150,41 @@
     return dir === "LONG" ? '<span class="mm4-v up">▲ LONG' + p + "</span>" : dir === "SHORT" ? '<span class="mm4-v dn">▼ SHORT' + p + "</span>" : '<span class="mm4-v flat">⚖' + p + "</span>";
   }
   function mm4Chip(it) {
-    var nm = MM4_SHORT[it.key] || it.name, tip = it.icon + " " + it.name + " — ";
-    if (!it.on) return '<span class="mm4-chip off" title="' + esc(tip + "блок вимкнено в боті — у зведенні не бере участі") + '">' + it.icon + " " + esc(nm) + ' <span class="mm4-v flat">вимк</span></span>';
-    if (!it.data) return '<span class="mm4-chip off" title="' + esc(tip + "даних ще немає") + '">' + it.icon + " " + esc(nm) + ' <span class="mm4-v flat">—</span></span>';
-    var cls = it.dir === "LONG" ? "up" : it.dir === "SHORT" ? "dn" : "flat";
+    var nm = MM4_SHORT[it.key] || String(it.name || "").replace(/^VSV-?/, "VSV-"), tip = String(it.name || nm).replace(/VSV/g, "VSV") + " — ";
+    if (!it.on) return '<span class="mm4-chip off" title="' + esc(tip + "блок вимкнено в боті — у зведенні не бере участі") + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + '</span><span class="mm4-v flat">вимк</span></span>';
+    if (!it.data) return '<span class="mm4-chip off" title="' + esc(tip + "даних ще немає") + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + '</span><span class="mm4-v flat">—</span></span>';
+    var cls = it.dir === "LONG" ? "up" : it.dir === "SHORT" ? "dn" : "flat", pct = Math.max(0, Math.min(100, Number(it.pct) || 0));
     tip += (it.dir === "LONG" ? "LONG" : it.dir === "SHORT" ? "SHORT" : "⚖ рівновага") + " · важіль " + (it.pct != null ? Number(it.pct).toFixed(0) + "%" : "—") + (it.coins ? " · монет " + it.coins : "");
-    return '<span class="mm4-chip ' + cls + '" title="' + esc(tip) + '">' + it.icon + " " + esc(nm) + " " + mm4DirTxt(it.dir, it.pct) + "</span>";
+    return '<span class="mm4-chip ' + cls + '" title="' + esc(tip) + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + "</span>" + mm4DirTxt(it.dir, it.pct) +
+      '<span class="mm4-chip-meter" aria-hidden="true"><i style="--p:' + pct.toFixed(0) + '"></i></span></span>';
   }
   function mm4Render(m) {
     var box = $("#spb-mm4"), card = $("#spb-card"); if (!box) return;
     var items = (m && m.items) || [];
-    if (!items.length) { box.hidden = true; if (card) card.classList.remove("mm4-up", "mm4-dn"); return; }
+    if (!items.length) { box.hidden = true; box.innerHTML = ""; if (card) card.classList.remove("mm4-up", "mm4-dn"); return; }
     box.hidden = false;
-    var t = m.total, lp = t ? Number(t.long_pct) : 50, tc = t && t.dir === "LONG" ? "up" : t && t.dir === "SHORT" ? "dn" : "flat";
+    var t = m.total, lp = t ? Math.max(0, Math.min(100, Number(t.long_pct) || 0)) : 50, tc = t && t.dir === "LONG" ? "up" : t && t.dir === "SHORT" ? "dn" : "flat";
     var tTip = t ? "Загальний відсоток чотирьох банерів = середній важіль (Σ сила LONG − Σ сила SHORT) / Σ сила кожного банера; ⚖ — коли перевага менша за 10%. Банерів з даними: " + t.n + " з " + m.n + " · ▲ " + t.n_long + " · ▼ " + t.n_short + " · ⚖ " + t.n_flat : "Немає даних жодного банера";
-    var html = '<div class="mm4-total" title="' + esc(tTip) + '"><span class="mm4-lbl">МММ · ЗАГАЛОМ</span>' +
-      '<span class="mm4-bar"><i class="l" style="width:' + lp.toFixed(1) + '%"></i><i class="s" style="width:' + (100 - lp).toFixed(1) + '%"></i><b></b></span>' +
-      '<span class="mm4-tot ' + tc + '">' + (t ? mm4DirTxt(t.dir, t.pct) : '<span class="mm4-v flat">—</span>') + "</span></div>" +
-      '<div class="mm4-chips">' + items.map(mm4Chip).join("") + "</div>";
+    var html = '<div class="mm4-row mm4-summary"><div class="mm4-total" title="' + esc(tTip) + '">' + mm4Icon("total") + '<span class="mm4-lbl">VSV · ЗАГАЛОМ</span>' +
+      '<span class="mm4-bar" role="img" aria-label="LONG ' + lp.toFixed(0) + '%, SHORT ' + (100 - lp).toFixed(0) + '%"><i class="l" style="width:' + lp.toFixed(1) + '%"></i><i class="s" style="width:' + (100 - lp).toFixed(1) + '%"></i><b></b></span>' +
+      '<span class="mm4-tot ' + tc + '">' + (t ? mm4DirTxt(t.dir, t.pct) : '<span class="mm4-v flat">—</span>') + "</span></div>";
     var ag = m.agree;
     if (ag) {
       var ac = ag === "LONG" ? "up" : "dn";
-      html += '<div class="mm4-agree ' + ac + '" title="Усі чотири банери бота підтверджують один напрямок — найсильніший збіг. Таймер — відколи зійшовся останній."><span class="mm4-star">✦</span> ЗБІГ 4/4 · ' + (ag === "LONG" ? "▲ LONG" : "▼ SHORT") + ' <span class="mm4-tm" data-since="' + Number(m.agree_since || 0) + '"></span></div>';
+      html += '<div class="mm4-agree ' + ac + '" title="Усі чотири банери бота підтверджують один напрямок — найсильніший збіг. Таймер — відколи зійшовся останній.">' + mm4Icon("agree") + '<span>ЗБІГ 4/4</span> · ' + (ag === "LONG" ? "▲ LONG" : "▼ SHORT") + ' <span class="mm4-tm" data-since="' + Number(m.agree_since || 0) + '"></span></div>';
     }
+    html += '</div><div class="mm4-row mm4-chips">' + items.map(mm4Chip).join("") + "</div>";
     box.innerHTML = html;
     box.querySelectorAll(".mm4-tm[data-since]").forEach(mm4Tick);
     if (card) { card.classList.toggle("mm4-up", ag === "LONG"); card.classList.toggle("mm4-dn", ag === "SHORT"); }
   }
   setInterval(function () { document.querySelectorAll(".spb-tm[data-since]").forEach(spbFlipTick); document.querySelectorAll(".mm4-tm[data-since]").forEach(mm4Tick); }, 1000);
   function loadRec() {
-    var card = $("#rec-card"); if (!card || !pOk("sec_signals")) return;
-    api("/api/info/recommended").then(function (d) { if (!d || !d.ok) { card.style.display = "none"; spbRender(null); return; } card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recRender(); spbRender(d); }, function () {});
+    var card = $("#rec-card"); if (!card || !pOk("sec_signals")) return Promise.resolve(null);
+    return api("/api/info/recommended").then(function (d) {
+      if (!d || !d.ok) { card.style.display = "none"; spbRender(null); return d; }
+      card.style.display = ""; REC.rows = d.rows || []; REC.meta = d; recRender(); spbRender(d); return d;
+    }).catch(function () { return null; });
   }
   document.addEventListener("click", function (e) {
     if (!e.target.closest) return;
@@ -3174,7 +3200,6 @@
     not_active: "⏳ Акаунт очікує схвалення адміністратора."
   };
   function showData(ok, code) {
-    document.body.classList.add("app-ready");
     var hero = $("#auth-hero"); if (hero) hero.style.display = ok ? "none" : "";
     var dn = $("#auth-deny"); if (dn) { dn.textContent = (!ok && DENY_TXT[code]) || ""; dn.style.display = (!ok && DENY_TXT[code]) ? "" : "none"; }
     var lay = $("#iw-layout"); if (lay) lay.style.display = ok ? "" : "none";
@@ -3185,12 +3210,33 @@
     var tb = $(".topbar"); if (tb) tb.style.display = ok ? "" : "none";
   }
 
+  var appRevealed = false;
+  function revealApp() {
+    if (appRevealed) return Promise.resolve();
+    var language = window.VSV_I18N && window.VSV_I18N.ready ? window.VSV_I18N.ready : Promise.resolve();
+    var fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
+    return Promise.all([
+      Promise.resolve(language).catch(function () { return null; }),
+      Promise.resolve(fonts).catch(function () { return null; })
+    ]).then(function () {
+      return new Promise(function (resolve) {
+        requestAnimationFrame(function () { requestAnimationFrame(resolve); });
+      });
+    }).then(function () {
+      if (appRevealed) return;
+      appRevealed = true;
+      document.body.classList.add("app-ready");
+      document.dispatchEvent(new CustomEvent("vsv:terminal-ready"));
+    });
+  }
+
   var started = false;
   function boot() {
     loadMine().then(function () {
       showData(true); setConn("ok", "онлайн");
+      var initial = Promise.all([loadUniverse(), loadRows(), loadCoin(true), loadPaper(), loadRec()]);
       if (!started) {
-        started = true; loadUniverse(); loadRows(); loadCoin(true); loadPaper(); loadRec();
+        started = true;
         setInterval(function () { if (!document.hidden) loadRec(); }, 30000);
         setInterval(function () { if (!document.hidden) loadPaper(); }, REFRESH);
         document.addEventListener("visibilitychange", function () { if (!document.hidden) loadPaper(); });
@@ -3198,7 +3244,10 @@
         setInterval(function () { if (!document.hidden) loadCoin(false); }, COIN_MS);
         setInterval(function () { if (!document.hidden) { refreshAuth(); refreshNotify(); refreshTrade(); } }, 60000);
       }
-      var lu = $("#last-update"); if (lu) lu.textContent = "оновлено: " + new Date().toLocaleTimeString("uk-UA");
+      return initial.then(function () {
+        var lu = $("#last-update"); if (lu) lu.textContent = "оновлено: " + new Date().toLocaleTimeString(window.VSV_I18N ? window.VSV_I18N.locale() : "uk-UA");
+        return revealApp();
+      });
     }).catch(function (e) {
       if (e && (e.status === 401 || e.status === 403)) {
         var deny = e.status === 403 && DENY_TXT[e.code];
@@ -3206,6 +3255,7 @@
         showData(false, deny ? e.code : "");
         setConn(deny ? "err" : "wait", deny ? "доступ закрито" : "потрібен вхід");
       } else { showData(true); setConn("err", "бот недоступний"); setTimeout(boot, 10000); }
+      return revealApp();
     });
     refreshAuth(); refreshNotify(); refreshTrade();
   }
