@@ -1505,6 +1505,38 @@ def _record_fail(email):
         _login_fails.setdefault(key, []).append(time.time())
 
 
+def cabinet_home(bot_ok, from_info, info_url):
+    """ЧИСТА: головна сторінка авторизованого користувача — куди веде «← На
+    головну» і куди повертає прямий вхід у кабінет. Користувач без доступу до
+    бота (або прийшов з інфосайту) → інфосайт, інакше → дашборд бота."""
+    if from_info or not bot_ok:
+        return (info_url + '/') if info_url else '/info/'
+    return '/'
+
+
+def cabinet_entry_ok(referer, sec_fetch_site, host, info_url):
+    """ЧИСТА (вимога 24.11): кабінет відкривається ЛИШЕ переходом зі сторінки
+    авторизованого користувача — бота (той самий хост) або інфосайту
+    (`INFO_SITE_URL`). Прямий вхід (набраний / збережений URL, посилання
+    ззовні) → False → редирект на головну сторінку."""
+    if (sec_fetch_site or '').lower() == 'same-origin':
+        return True
+    try:
+        from urllib.parse import urlparse
+        ref = urlparse(referer or '')
+    except Exception:
+        return False
+    if not ref.netloc:
+        return False
+    if ref.netloc.lower() == (host or '').lower():
+        return True
+    try:
+        inf = urlparse(info_url or '').netloc.lower()
+    except Exception:
+        inf = ''
+    return bool(inf) and ref.netloc.lower() == inf
+
+
 # ==================================================================
 # Routes
 # ==================================================================
@@ -1764,196 +1796,48 @@ def register_auth_routes(app):
                      extra=f'<div class="links">{u.email} · '
                            f'<a href="/logout">Вийти</a></div>'))
 
-    # ---- personal cabinet (any active user) ----
+    # ---- 👤 personal cabinet (any active user) ----
+    # Вимога 24.11: «Особистий кабінет користувача зроби повною сторінкою і з
+    # доступом лише із головної сторінки авторизованого користувача.»
+    # Повна сторінка — `admin_pages.render_cabinet`; вхід — лише переходом зі
+    # сторінки авторизованого користувача (бот / інфосайт), інакше — на головну.
     @app.route('/cabinet')
     def auth_cabinet():
         u = current_user()
-        role = 'Адміністратор' if u.is_admin else 'Користувач (перегляд)'
-        # Куди веде «← Назад»: якщо в кабінет прийшли з інфо-сайту (?from=info),
-        # повертаємо на інфо-сайт (INFO_SITE_URL) — і робимо це в ТІЙ САМІЙ вкладці,
-        # щоб не плодити «осиротілі» вкладки. Інакше — на дашборд бота.
-        _from_info = (request.args.get('from') == 'info')
         _info_url = (os.getenv('INFO_SITE_URL') or '').rstrip('/')
-        if _from_info and _info_url:
-            _back_href, _back_lbl = _info_url, '← На інфо-панель'
-        else:
-            _back_href, _back_lbl = '/', '← На дашборд'
+        _bot_ok = bool(u.is_admin or getattr(u, 'bot_access', False))
+        home = cabinet_home(_bot_ok, request.args.get('from') == 'info', _info_url)
+        if not cabinet_entry_ok(request.headers.get('Referer', ''),
+                                request.headers.get('Sec-Fetch-Site', ''),
+                                request.host, _info_url):
+            return redirect(home)
         tgu = getattr(u, 'telegram_username', None)
         tgn = getattr(u, 'telegram_name', None)
         tgc = getattr(u, 'telegram_chat_id', None)
-        tg_line = ''
-        if tgu or tgn:
-            # Show the human name and/or @handle, whichever we have.
-            label = ' '.join(x for x in [tgn, (f'@{tgu}' if tgu else '')] if x)
-            tg_line = f'<p class="sub" style="margin-top:-8px">📨 Telegram: <b>{label}</b></p>'
-        elif tgc:
-            tg_line = f'<p class="sub" style="margin-top:-8px">📨 Telegram: <b>прив’язано</b></p>'
-        _bot = 'так' if (u.is_admin or getattr(u, 'bot_access', False)) else 'ні (лише інфо-сайт)'
         _prefs = _load_prefs(u)
-        _btc_ck = 'checked' if _prefs.get('notify_btc') else ''
-        _fnd_ck = 'checked' if _prefs.get('notify_funding') else ''
-        _tg_ok = bool(tgc)
-        _tgv = (' '.join(x for x in [tgn, (f'@{tgu}' if tgu else '')] if x) or 'прив’язано') if tgc else '—'
-        # 🔔 Модель сповіщень: ринкові сигнали йдуть у ГРУПУ (не персонально).
-        # Для АДМІНА лишаємо 2 перемикачі груповими темами (₿/💰) — вони реально
-        # гейтять групу через notify_category(admin_pref). Для звичайного юзера
-        # перемикачі нічого не гейтили (per-user розсилки більше немає) → лише
-        # інфо про групу.
-        if u.is_admin:
-            _ntf_section = (
-                '<div class="sect2"><div class="seclbl">📢 Групові теми (керування)</div>'
-                '<p class="sub" style="margin-top:-4px">Ринкові сигнали йдуть у '
-                '<b>Telegram-групу</b>. Ці перемикачі вмикають / вимикають відповідну '
-                'тему в групі для всіх учасників.</p>'
-                f'<div class="crow"><span class="t">🧮 МММ-монітор — банер · ₿ сеанс</span>'
-                f'<label class="sw"><input type="checkbox" id="nbtc" {_btc_ck} onchange="saventf()">'
-                '<span class="tr"></span></label></div>'
-                f'<div class="crow"><span class="t">💰 Funding — поява монети з ММ</span>'
-                f'<label class="sw"><input type="checkbox" id="nfnd" {_fnd_ck} onchange="saventf()">'
-                '<span class="tr"></span></label></div>'
-                '<div id="nm" class="msg" style="display:none"></div></div>'
-            )
+        au = getattr(u, 'access_until', None)
+        if u.is_admin or not au:
+            access = 'безлімітний'
         else:
-            _ntf_section = (
-                '<div class="sect2"><div class="seclbl">🔔 Сповіщення в Telegram</div>'
-                '<p class="sub" style="margin-top:-4px">Ринкові сигнали (🧮 МММ-монітор, '
-                '💰 Funding, 🎯 рекомендації, 🚀 аномальний ріст, угоди) приходять у '
-                '<b>Telegram-групу</b>, а не в приватний чат. Доступ до групи — '
-                '<b>після реєстрації та схвалення адміністратором</b>; посилання на '
-                'вхід прийде автоматично.</p>'
-                + ('' if _tg_ok else
-                   '<p class="sub" style="color:#f5b544;margin-top:-4px">'
-                   '⚠️ Telegram ще не прив’язано — натисніть «🔗 Привʼязати Telegram» вище.</p>')
-                + '</div>'
-            )
-        # 🤖 Торгівля і 🔐 ключі біржі (вимога 24.11: «не бачу, де вводяться
-        # ключі і де торгівля»). Ключі — лише адміністратор (це ключі БОТА);
-        # торгівля — кому адміністратор дав право (🛡 Керування користувачами).
+            left = (au - datetime.utcnow()).total_seconds() / 86400
+            access = (f'до {au.strftime("%d.%m.%Y")} · ще {left:.0f} дн' if left > 0
+                      else f'завершився {au.strftime("%d.%m.%Y")}')
         _pm = _perms_eff(u)
-        _info_home = (_info_url or '/info') + '/#trade-card'
-        if u.is_admin or _pm.get('trade_paper') or _pm.get('trade_real'):
-            _trade_section = (
-                '<div class="sect2" id="trade"><div class="seclbl">'
-                + ('🤖 Торгівля з кабінету' if u.is_admin else '👤 Мій Trade Manager') + '</div>'
-                + ('' if u.is_admin else
-                   '<p class="sub" style="margin-top:-4px">Особистий Trade Manager — дзеркало бота, що '
-                   'торгує ЛИШЕ на вашому рахунку Bybit вашими ключами. Зʼявиться на інфосайті після '
-                   'підключення <b>ваших</b> ключів API.</p>')
-                + '<p class="sub" style="margin-top:-4px">Сигнал — ⚠ «Аномалії обсягу · сценарій входу». '
-                'Немає угоди → відкрити · той самий бік → нічого · протилежний → закрити й відкрити нову.</p>'
-                '<div id="trs" class="sub">⏳ …</div>'
-                f'<a href="{_info_home}" style="display:inline-block;margin-top:6px">'
-                '⚙ Налаштувати монети й книги (paper / реальна) на інфосайті →</a></div>')
-            if u.is_admin:
-                _trade_section += (
-                    '<div class="sect2" id="keys"><div class="seclbl">🔐 API-ключі біржі (Bybit)</div>'
-                    '<div id="kst" class="sub">⏳ …</div>'
-                    '<input id="kk" type="password" autocomplete="off" spellcheck="false" placeholder="API Key">'
-                    '<input id="ks" type="password" autocomplete="off" spellcheck="false" placeholder="API Secret" style="margin-top:8px">'
-                    '<button onclick="ksave()">🔐 Зашифрувати і зберегти</button>'
-                    '<div style="display:flex;gap:8px;margin-top:6px">'
-                    '<button onclick="kact(\'test\')" style="margin-top:0">🧪 Перевірити</button>'
-                    '<button onclick="kact(\'clear\')" style="margin-top:0;background:#3b1d1d">🗑 Видалити з бота</button></div>'
-                    '<div id="km" class="msg" style="display:none"></div>'
-                    '<p class="sub" style="font-size:.72rem;margin-top:8px">Ключі шифруються на сервері (Fernet, '
-                    '<code>ENCRYPTION_KEY</code>) і зберігаються в базі бота — відкритий текст не повертається. '
-                    'Це ті самі ключі, якими торгує бот. Дозволи: Read + Trade, без виводу.</p></div>')
-        else:
-            _trade_section = ''
-        body = (f'<h1>👤 Особистий кабінет</h1>'
-                f'<p class="sub">{role}</p>'
-                f'<div class="sect2" style="border-top:none;margin-top:6px;padding-top:0">'
-                f'<div class="idrow"><span class="k">Логін</span><span class="v">{u.email}</span></div>'
-                f'<div class="idrow"><span class="k">📨 Telegram</span><span class="v">{_tgv}</span></div>'
-                f'<div class="idrow"><span class="k">🤖 Доступ до бота</span><span class="v">{_bot}</span></div>'
-                + ('<button onclick="tglink()" style="margin-top:8px">'
-                   + ('🔗 Перепривʼязати Telegram' if _tg_ok else '🔗 Привʼязати Telegram')
-                   + '</button><div id="tgm" class="msg" style="display:none"></div>')
-                + f'</div>'
-                f'{_ntf_section}'
-                + _trade_section
-                + f'<div class="sect2"><div class="seclbl">🔑 Змінити пароль</div>'
-                f'<input id="np" type="password" placeholder="Новий пароль (мін. 8)">'
-                f'<input id="np2" type="password" placeholder="Повторіть пароль" style="margin-top:8px">'
-                f'<button onclick="chpw()">Змінити пароль</button>'
-                f'<div id="m" class="msg" style="display:none"></div></div>'
-                f'<div class="links">'
-                + ('<a href="/admin/users">🛡 Адмін-панель</a> · ' if u.is_admin else '')
-                + f'<a href="{_back_href}">{_back_lbl}</a> · <a href="/logout">Вийти</a></div>')
-        script = """
-        async function chpw(){
-          const p=document.getElementById('np').value, p2=document.getElementById('np2').value;
-          const m=document.getElementById('m'); m.style.display='block';
-          const r=await fetch('/api/me/password',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({password:p,password2:p2})});
-          const d=await r.json();
-          m.className='msg '+(d.ok?'ok':'err'); m.textContent=d.ok?'Пароль змінено.':(d.error||'Помилка');
-          if(d.ok){document.getElementById('np').value='';document.getElementById('np2').value='';}
+        trade_href = (_info_url or '/info') + '/#trade-card'
+        from web.admin_pages import render_cabinet
+        ctx = {
+            'email': u.email, 'is_admin': bool(u.is_admin),
+            'role': 'Адміністратор' if u.is_admin else 'Користувач',
+            'tg': ((' '.join(x for x in [tgn, (f'@{tgu}' if tgu else '')] if x) or 'прив’язано')
+                   if tgc else '—'),
+            'tg_linked': bool(tgc), 'bot_ok': _bot_ok,
+            'bot': 'так' if _bot_ok else 'ні (лише інфосайт)', 'access': access,
+            'ntf_btc': bool(_prefs.get('notify_btc')), 'ntf_fnd': bool(_prefs.get('notify_funding')),
+            'trade': bool(u.is_admin or _pm.get('trade_paper') or _pm.get('trade_real')),
+            'trade_href': trade_href, 'home': home,
+            'home_lbl': '← На головну' if home != '/' else '← На дашборд',
         }
-        async function tglink(){
-          const m=document.getElementById('tgm'); m.style.display='block';
-          m.className='msg'; m.textContent='⏳ …';
-          const r=await fetch('/api/me/tg-link',{method:'POST'});
-          const d=await r.json().catch(()=>({}));
-          if(!d.ok||!d.url){m.className='msg err'; m.textContent=d.error||'Помилка'; return;}
-          m.className='msg ok';
-          m.innerHTML='Відкрийте бота і натисніть «Start» — Telegram привʼяжеться до цього акаунта. '
-            +'<a href="'+d.url+'" target="_blank" rel="noopener"><b>Відкрити @'+d.bot+'</b></a> '
-            +'(посилання діє 30 хв, одноразове).';
-          try{window.open(d.url,'_blank');}catch(e){}
-        }
-        const TRB={paper:'🧪 paper',real:'🏦 реальна'};
-        async function trload(){
-          const el=document.getElementById('trs'); if(!el) return;
-          try{
-            const d=await (await fetch('/api/me/trading')).json();
-            if(!d.allowed){ el.textContent='🔒 '+(d.reason||'немає доступу'); return; }
-            const cs=Object.keys(d.coins||{});
-            const tm=d.tm||{};
-            el.innerHTML='Стан: <b style="color:'+(d.enabled?'#86efac':'#fca5a5')+'">'+(d.enabled?'увімкнено':'вимкнено')+'</b>'+
-              ' · монет: <b>'+cs.length+'</b>'+(cs.length?' ('+cs.map(s=>s.replace(/USDT$/,'')+' '+(TRB[d.coins[s]]||d.coins[s])).join(', ')+')':'')+
-              '<br>Дозволені книги: '+(d.books||[]).map(b=>TRB[b]||b).join(', ')+
-              ' · Trade Manager: '+(tm.enabled?'✓':'✗')+' · Test Mode: '+(tm.test_mode?'✓':'✗')+' · ключі: '+(tm.has_key?'є':'немає');
-          }catch(e){ el.textContent='⚠️ не вдалося завантажити'; }
-        }
-        async function kload(){
-          const el=document.getElementById('kst'); if(!el) return;
-          const SRC={db_encrypted:'🟢 збережено в боті (зашифровано)',env_plain:'🟡 змінна середовища (без шифрування)',
-                     env_encrypted:'🟢 змінна середовища (зашифровано)',none:'🔴 не задано'};
-          try{
-            const k=await (await fetch('/api/me/keys')).json();
-            el.innerHTML='Джерело: <b>'+(SRC[k.source]||k.source||'—')+'</b> · API Key: <code>'+(k.key_preview||'none')+'</code>'+
-              (k.encryption_key_set?'':'<br><span style="color:#fbbf24">⚠️ На сервері не задано ENCRYPTION_KEY — зберегти ключі неможливо.</span>');
-          }catch(e){ el.textContent='⚠️ не вдалося завантажити'; }
-        }
-        function kmsg(t,ok){ const m=document.getElementById('km'); m.style.display='block'; m.className='msg '+(ok?'ok':'err'); m.textContent=t; }
-        async function ksave(){
-          const k=document.getElementById('kk'), s=document.getElementById('ks');
-          const r=await fetch('/api/me/keys',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify({api_key:k.value.trim(),api_secret:s.value.trim()})});
-          const d=await r.json().catch(()=>({}));
-          if(d.ok){ k.value=''; s.value=''; kmsg('✅ '+(d.message||'Збережено'),true); kload(); trload(); }
-          else kmsg('⚠️ '+(d.error||'не вдалося зберегти'),false);
-        }
-        async function kact(a){
-          if(a==='clear'&&!confirm('Видалити ключі Bybit з бота?'))return;
-          const r=await fetch('/api/me/keys/'+a,{method:'POST'});
-          const d=await r.json().catch(()=>({}));
-          if(a==='test') kmsg(d.ok?'✅ '+(d.message||'Ключі робочі'):'⚠️ '+(d.friendly||d.error||d.ret_msg||'перевірка не вдалась'),!!d.ok);
-          else { kmsg(d.ok?'✅ '+(d.message||'Видалено'):'⚠️ '+(d.error||'не вдалося'),!!d.ok); kload(); trload(); }
-        }
-        trload(); kload();
-        async function saventf(){
-          const nb=document.getElementById('nbtc'), nf=document.getElementById('nfnd');
-          if(!nb||!nf) return;   // звичайний юзер: перемикачів немає
-          const nm=document.getElementById('nm'); if(nm) nm.style.display='block';
-          const body={notify_btc:nb.checked, notify_funding:nf.checked};
-          const r=await fetch('/api/me/notify',{method:'POST',headers:{'Content-Type':'application/json'},
-            body:JSON.stringify(body)});
-          const d=await r.json();
-          if(nm){nm.className='msg '+(d.ok?'ok':'err'); nm.textContent=d.ok?'Збережено.':(d.error||'Помилка');}
-        }"""
-        return _page('Кабінет', body, script=script, width=500)
+        return render_cabinet(ctx, (_info_url + '/') if _info_url else '/info/')
 
     @app.route('/api/me')
     def api_me():

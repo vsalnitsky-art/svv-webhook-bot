@@ -501,8 +501,9 @@ def test_defaults_are_on_and_validation_coerces():
 def test_the_cabinet_still_calls_the_topic_by_its_new_name():
     """Кабінет адміна — єдине місце майстер-вимикача теми; він мусить
     називати її так само, як сама тема, інакше вимкнути «не те» дуже легко."""
-    src = open(os.path.join(_HERE, 'web', 'auth.py'), encoding='utf-8').read()
-    i = src.find("id=\"nbtc\"")
+    # 24.11: кабінет — повна сторінка (`web/admin_pages.render_cabinet`)
+    src = open(os.path.join(_HERE, 'web', 'admin_pages.py'), encoding='utf-8').read()
+    i = src.find('id="nbtc"')
     _check(i > 0, 'тумблер теми зник із кабінету')
     _check('МММ-монітор' in src[i - 400:i],
            'підпис тумблера мусить назвати 🧮 МММ-монітор')

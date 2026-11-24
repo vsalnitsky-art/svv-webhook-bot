@@ -159,6 +159,8 @@ details.more .body{font-size:12px;color:var(--txt-dim);line-height:1.6;margin-to
   .presets,.seg{grid-template-columns:1fr 1fr}.form-grid{grid-template-columns:1fr}.hero .side{margin-left:0;text-align:left}}
 """
 
+# Базові хелпери — для ВСІХ сторінок; ADMIN_JS — лише сторінкам адмін-панелі
+# (у кабінет користувача адмінський JS не потрапляє).
 COMMON_JS = r"""
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function fmt(s){return s?String(s).slice(0,16).replace('T',' '):'—';}
@@ -167,6 +169,9 @@ let _toastT=null;
 function toast(msg,ok){let t=document.getElementById('toast');if(!t){t=document.createElement('div');t.id='toast';document.body.appendChild(t);}
   t.className='toast '+(ok===false?'err':'ok');t.textContent=msg;requestAnimationFrame(()=>t.classList.add('show'));
   clearTimeout(_toastT);_toastT=setTimeout(()=>t.classList.remove('show'),3200);}
+"""
+
+ADMIN_JS = r"""
 async function act(id,a,extra){
   const r=await fetch('/api/admin/users/'+id,{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(Object.assign({action:a},extra||{}))});
@@ -197,9 +202,11 @@ function roleBadge(u){return u.is_admin?'<span class="badge b-adm">адмін</s
 """
 
 
-def _shell(title, active, me_email, info_url, body, script):
-    nav = [('/admin/users', '🛡 Користувачі', 'users'), ('/cabinet', '👤 Кабінет', 'cab'),
-           ('/', '📊 Дашборд', 'dash'), ((info_url or '/info/'), '🛰 Інфосайт', 'info')]
+def _shell(title, active, me_email, info_url, body, script, nav=None, brand='ADMIN',
+           home='/admin/users', admin_js=True):
+    if nav is None:
+        nav = [('/admin/users', '🛡 Користувачі', 'users'), ('/cabinet', '👤 Кабінет', 'cab'),
+               ('/', '📊 Дашборд', 'dash'), ((info_url or '/info/'), '🛰 Інфосайт', 'info')]
     nav_html = ''.join(f'<a href="{escape(h)}" class="{"active" if k == active else ""}">{escape(t)}</a>'
                        for h, t, k in nav)
     return ('<!doctype html><html lang="uk"><head><meta charset="utf-8">'
@@ -209,14 +216,14 @@ def _shell(title, active, me_email, info_url, body, script):
             '<link rel="preconnect" href="https://fonts.googleapis.com">'
             f'<link rel="stylesheet" href="{FONTS}">'
             f'<style>{CSS}</style></head><body>'
-            '<header class="topbar"><a class="brand" href="/admin/users">'
+            f'<header class="topbar"><a class="brand" href="{escape(home)}">'
             '<img src="/favicon.ico" alt="" onerror="this.style.display=\'none\'">'
-            '<span>VSV<small>ADMIN</small></span></a>'
+            f'<span>VSV<small>{escape(brand)}</small></span></a>'
             f'<nav class="nav">{nav_html}</nav>'
             f'<div class="who" id="nav-user-chip"><span>👤 <b>{escape(me_email or "")}</b></span>'
             '<a class="btn btn-sm btn-danger" href="/logout">Вийти</a></div></header>'
             f'<main class="wrap">{body}</main>'
-            f'<script>{COMMON_JS}{script}</script></body></html>')
+            f'<script>{COMMON_JS}{ADMIN_JS if admin_js else ""}{script}</script></body></html>')
 
 
 # ── 1. список користувачів ───────────────────────────────────────────────
@@ -431,3 +438,164 @@ load();setInterval(()=>{if(!document.hidden&&!document.activeElement.matches('in
 def render_user(uid, me_email, info_url):
     body = f'<div id="upage" data-uid="{int(uid)}" style="display:grid;gap:14px"><div class="card empty">Завантаження…</div></div>'
     return _shell('Користувач', 'users', me_email, info_url, body, USER_JS)
+
+
+# ── 3. 👤 ОСОБИСТИЙ КАБІНЕТ (вимога 24.11) ───────────────────────────────
+# «Особистий кабінет користувача зроби повною сторінкою і з доступом лише із
+# головної сторінки авторизованого користувача.» Повна сторінка в стилі
+# інфосайту (ті самі токени й шапка, що адмін-панель); дані з сервера —
+# екрановані, дії — ті самі API (`/api/me/*`). Гейт входу — `auth.cabinet_entry_ok`.
+CAB_CSS = """
+.cab-sect+.cab-sect{margin-top:14px}
+.cab-row{display:flex;align-items:center;gap:14px;padding:10px 0}
+.cab-row+.cab-row{border-top:1px solid var(--line-soft)}
+.cab-row .t{flex:1;min-width:0}.cab-row .t b{display:block;font-weight:600;font-size:13px}
+.cab-row .t small{display:block;color:var(--muted);font-size:11.5px;line-height:1.45;margin-top:1px}
+.cab-msg{margin-top:8px;font-size:12px;min-height:0}.cab-msg.ok{color:var(--long)}.cab-msg.err{color:var(--short)}
+.cab-stack{display:grid;gap:8px}
+"""
+
+CAB_JS = r"""
+function msg(id,t,ok){const m=document.getElementById(id);if(!m)return;m.className='cab-msg '+(ok===false?'err':(ok?'ok':''));m.textContent=t||'';}
+async function j(url,opt){const r=await fetch(url,opt);return r.json().catch(()=>({ok:false,error:'HTTP '+r.status}));}
+function post(url,body){return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});}
+async function chpw(){
+  const p=document.getElementById('np'),p2=document.getElementById('np2');
+  const d=await post('/api/me/password',{password:p.value,password2:p2.value});
+  msg('pwm',d.ok?'✅ Пароль змінено':'⚠️ '+(d.error||'Помилка'),!!d.ok);
+  if(d.ok){p.value='';p2.value='';toast('Пароль змінено');}}
+async function tglink(){
+  msg('tgm','⏳ …');
+  const d=await j('/api/me/tg-link',{method:'POST'});
+  if(!d.ok||!d.url){msg('tgm','⚠️ '+(d.error||'Помилка'),false);return;}
+  document.getElementById('tgm').className='cab-msg ok';
+  document.getElementById('tgm').innerHTML='Відкрийте бота і натисніть «Start» — Telegram привʼяжеться до цього акаунта. '
+    +'<a href="'+esc(d.url)+'" target="_blank" rel="noopener"><b>Відкрити @'+esc(d.bot)+'</b></a> (посилання діє 30 хв, одноразове).';
+  try{window.open(d.url,'_blank');}catch(e){}}
+async function saventf(){
+  const nb=document.getElementById('nbtc'),nf=document.getElementById('nfnd');if(!nb||!nf)return;
+  const d=await post('/api/me/notify',{notify_btc:nb.checked,notify_funding:nf.checked});
+  toast(d.ok?'Збережено':(d.error||'Помилка'),!!d.ok);}
+const TRB={paper:'🧪 paper',real:'🏦 реальна'};
+async function trload(){
+  const el=document.getElementById('trs');if(!el)return;
+  try{
+    const d=await j('/api/me/trading');
+    if(!d.allowed){el.innerHTML='<span class="c-dim">🔒 '+esc(d.reason||'немає доступу')+'</span>';return;}
+    const cs=Object.keys(d.coins||{}),tm=d.tm||{};
+    const kv=(k,v)=>'<span class="k">'+k+'</span><span class="v">'+v+'</span>';
+    let h='<div class="kv">'+kv('Торгівля за сигналами',d.enabled?'<span class="c-long">увімкнено</span>':'<span class="c-short">вимкнено</span>')+
+      kv('Монет',cs.length?cs.map(x=>esc(x.replace(/USDT$/,''))+(d.is_admin?' '+(TRB[d.coins[x]]||esc(d.coins[x])):'')).join(', '):'—');
+    if(d.is_admin) h+=kv('Дозволені книги',(d.books||[]).map(b=>TRB[b]||esc(b)).join(', '))+
+      kv('Trade Manager бота',tm.enabled?'<span class="c-long">увімкнено</span>':'<span class="c-short">вимкнено</span>')+
+      kv('Test Mode',tm.test_mode?'<span class="c-long">увімкнено</span>':'<span class="c-dim">вимкнено</span>');
+    else h+=kv('Ваші ключі',tm.need_keys?'<span class="c-warn">не підключено</span>':'<span class="c-long">підключено</span>')+
+      kv('Ваш Trade Manager',tm.need_keys?'<span class="c-dim">зʼявиться після ключів</span>':(tm.enabled?'<span class="c-long">реальна торгівля увімкнена</span>':'<span class="c-dim">реальна торгівля вимкнена</span>'));
+    el.innerHTML=h+'</div>';
+  }catch(e){el.textContent='⚠️ не вдалося завантажити';}}
+const SRC={db_encrypted:'🟢 збережено в боті (зашифровано)',env_plain:'🟡 змінна середовища (без шифрування)',
+  env_encrypted:'🟢 змінна середовища (зашифровано)',none:'🔴 не задано'};
+async function kload(){
+  const el=document.getElementById('kst');if(!el)return;
+  try{const k=await j('/api/me/keys');
+    el.innerHTML='<div class="kv"><span class="k">Джерело</span><span class="v">'+esc(SRC[k.source]||k.source||'—')+'</span>'+
+      '<span class="k">API Key</span><span class="v mono">'+esc(k.key_preview||'none')+'</span></div>'+
+      (k.encryption_key_set?'':'<div class="alert warn" style="margin-top:8px">⚠️ На сервері не задано ENCRYPTION_KEY — зберегти ключі неможливо.</div>');
+  }catch(e){el.textContent='⚠️ не вдалося завантажити';}}
+async function ksave(){
+  const k=document.getElementById('kk'),s=document.getElementById('ks');
+  const d=await post('/api/me/keys',{api_key:k.value.trim(),api_secret:s.value.trim()});
+  if(d.ok){k.value='';s.value='';msg('km','✅ '+(d.message||'Збережено'),true);kload();trload();}
+  else msg('km','⚠️ '+(d.error||'не вдалося зберегти'),false);}
+async function kact(a){
+  if(a==='clear'&&!confirm('Видалити ключі Bybit з бота?'))return;
+  const d=await j('/api/me/keys/'+a,{method:'POST'});
+  if(a==='test') msg('km',d.ok?'✅ '+(d.message||'Ключі робочі'):'⚠️ '+(d.friendly||d.error||d.ret_msg||'перевірка не вдалась'),!!d.ok);
+  else{msg('km',d.ok?'✅ '+(d.message||'Видалено'):'⚠️ '+(d.error||'не вдалося'),!!d.ok);kload();trload();}}
+trload();kload();
+"""
+
+
+def render_cabinet(c, info_url):
+    """👤 Повна сторінка особистого кабінету. `c` — дані з сервера (email,
+    is_admin, role, tg, tg_linked, bot, access, ntf_btc, ntf_fnd, trade,
+    home, home_lbl)."""
+    e = escape
+    adm = bool(c.get('is_admin'))
+    home, home_lbl = c.get('home') or '/', c.get('home_lbl') or '← На головну'
+    if adm:
+        nav = None
+    else:
+        nav = [((info_url or '/info/'), '🛰 Головна', 'info'), ('/cabinet', '👤 Кабінет', 'cab')]
+        if c.get('bot_ok'):
+            nav.append(('/', '📊 Дашборд', 'dash'))
+    tg_btn = '🔗 Перепривʼязати Telegram' if c.get('tg_linked') else '🔗 Привʼязати Telegram'
+    left = (
+        '<section class="card"><div class="card-h">👤 Профіль</div>'
+        '<div class="hero" style="margin-bottom:14px">'
+        f'<div class="ava lg">{e((c.get("email") or "?")[:1].upper())}</div>'
+        f'<div><h1 style="font-size:18px">{e(c.get("email") or "")}</h1>'
+        f'<div class="meta">{e(c.get("role") or "")}</div></div></div>'
+        '<div class="kv">'
+        f'<span class="k">Логін</span><span class="v">{e(c.get("email") or "")}</span>'
+        f'<span class="k">📨 Telegram</span><span class="v">{e(c.get("tg") or "—")}</span>'
+        f'<span class="k">⏳ Доступ</span><span class="v">{e(c.get("access") or "—")}</span>'
+        f'<span class="k">🤖 Доступ до бота</span><span class="v">{e(c.get("bot") or "—")}</span>'
+        '</div>'
+        f'<div class="btns"><button class="btn" onclick="tglink()">{e(tg_btn)}</button></div>'
+        '<div id="tgm" class="cab-msg"></div>'
+        + ('' if c.get('tg_linked') else
+           '<div class="alert warn" style="margin-top:10px">⚠️ Telegram ще не привʼязано — сповіщення не дійдуть.</div>')
+        + '</section>'
+        '<section class="card"><div class="card-h">🔑 Змінити пароль</div><div class="cab-stack">'
+        '<input class="inp" id="np" type="password" placeholder="Новий пароль (мін. 8)" autocomplete="new-password">'
+        '<input class="inp" id="np2" type="password" placeholder="Повторіть пароль" autocomplete="new-password">'
+        '<button class="btn btn-primary" onclick="chpw()">Змінити пароль</button></div>'
+        '<div id="pwm" class="cab-msg"></div></section>')
+    if adm:
+        ntf = ('<section class="card"><div class="card-h">📢 Групові теми Telegram<span class="r">для всіх учасників</span></div>'
+               '<div class="cab-row"><div class="t"><b>🧮 МММ-монітор — банер · ₿ сеанс</b>'
+               '<small>Майстер-вимикач теми в групі.</small></div>'
+               f'<label class="sw"><input type="checkbox" id="nbtc" {"checked" if c.get("ntf_btc") else ""} onchange="saventf()"><span class="tr"></span></label></div>'
+               '<div class="cab-row"><div class="t"><b>💰 Funding — поява монети з ММ</b>'
+               '<small>Тема 💰 у групі.</small></div>'
+               f'<label class="sw"><input type="checkbox" id="nfnd" {"checked" if c.get("ntf_fnd") else ""} onchange="saventf()"><span class="tr"></span></label></div>'
+               '</section>')
+    else:
+        ntf = ('<section class="card"><div class="card-h">🔔 Сповіщення в Telegram</div>'
+               '<p class="note" style="margin:0">Ринкові сигнали приходять у <b>Telegram-групу</b>, особисті '
+               '(🔔 SBR, ⚠ Аномалії обсягу) — у приватний чат бота; підписки по монетах — у '
+               'WATCHLIST на головній сторінці. Доступ до групи — після схвалення адміністратором.</p></section>')
+    trade = ''
+    if c.get('trade'):
+        trade = ('<section class="card" id="trade"><div class="card-h">'
+                 + ('🤖 Торгівля з кабінету' if adm else '👤 Мій Trade Manager')
+                 + '</div>'
+                 + ('' if adm else
+                    '<p class="note" style="margin:0 0 10px">Особистий Trade Manager — дзеркало бота, що торгує '
+                    'ЛИШЕ на вашому рахунку Bybit вашими ключами.</p>')
+                 + '<div id="trs" class="note">⏳ …</div>'
+                 f'<div class="btns"><a class="btn" href="{e(c.get("trade_href") or "/info/#trade-card")}">'
+                 + ('⚙ Монети й книги на інфосайті →' if adm else '⚙ Керувати на головній сторінці →')
+                 + '</a></div></section>')
+        if adm:
+            trade += ('<section class="card" id="keys"><div class="card-h">🔐 API-ключі біржі (Bybit)<span class="r">ключі БОТА</span></div>'
+                      '<div id="kst" class="note">⏳ …</div><div class="cab-stack" style="margin-top:12px">'
+                      '<input class="inp" id="kk" type="password" autocomplete="off" spellcheck="false" placeholder="API Key">'
+                      '<input class="inp" id="ks" type="password" autocomplete="off" spellcheck="false" placeholder="API Secret">'
+                      '<button class="btn btn-primary" onclick="ksave()">🔐 Зашифрувати і зберегти</button>'
+                      '<div class="btns two" style="margin-top:0"><button class="btn" onclick="kact(\'test\')">🔎 Перевірити</button>'
+                      '<button class="btn btn-danger" onclick="kact(\'clear\')">🗑 Видалити з бота</button></div></div>'
+                      '<div id="km" class="cab-msg"></div>'
+                      '<p class="note" style="margin:10px 0 0">Ключі шифруються на сервері (Fernet, <code>ENCRYPTION_KEY</code>) — '
+                      'відкритий текст не повертається. Це ті самі ключі, якими торгує бот. Дозволи: Read + Trade, без виводу.</p></section>')
+    body = (
+        '<div class="page-h"><div><h1>👤 Особистий кабінет</h1>'
+        f'<p>{e(c.get("role") or "")}</p></div>'
+        f'<div class="act"><a class="btn" href="{e(home)}">{e(home_lbl)}</a>'
+        + ('<a class="btn" href="/admin/users">🛡 Адмін-панель</a>' if adm else '')
+        + '</div></div>'
+        f'<div class="grid2"><div class="col">{left}</div><div class="col">{ntf}{trade}</div></div>')
+    page = _shell('Кабінет', 'cab', c.get('email'), info_url, body, CAB_JS, nav=nav,
+                  brand=('ADMIN' if adm else 'КАБІНЕТ'), home=home, admin_js=False)
+    return page.replace('</style>', CAB_CSS + '</style>', 1)

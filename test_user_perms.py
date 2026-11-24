@@ -43,7 +43,26 @@ def test_user_defaults_and_dependency():
     e = P.effective(False, {'sec_terminal': False, 'trade_paper': True, 'ly_ob': True})
     # без Термінала немає ні шарів, ні сповіщень, ні торгівлі
     assert not any(e[k] for k in P.KEYS if k.startswith(('ly_', 'ntf_', 'trade_')))
-    assert e['sec_signals'] and e['sec_paper']
+    assert e['sec_signals'] and not e['sec_paper']             # 🧪 paper — лише адмін (24.11)
+
+
+def test_paper_is_admin_only():
+    """🧪 24.11: «paper — розрахований лише для роботи адміністратора»."""
+    assert set(P.ADMIN_ONLY) == {'sec_paper', 'trade_paper'}
+    e = P.effective(False, {k: True for k in P.KEYS})
+    assert not e['sec_paper'] and not e['trade_paper'] and e['trade_real']
+    assert P.books(e) == ('real',)
+    a = P.effective(True, {})
+    assert a['sec_paper'] and a['trade_paper']
+    d = P.defs()
+    assert not any(x['key'] in P.ADMIN_ONLY for x in d['perms'])
+    assert set(d['admin_only']) == set(P.ADMIN_ONLY)
+    js = open(os.path.join(ROOT, 'infosite/js/app.js'), encoding='utf-8').read()
+    assert 'var PERM_ADMIN_ONLY = ["sec_paper", "trade_paper"]' in js
+    assert 'return !!(PERMS && PERMS[k] === true)' in js         # paper лише явним «так»
+    assert 'b.classList.toggle("perm-no-" + k, !pOk(k))' in js
+    html = open(os.path.join(ROOT, 'infosite/index.html'), encoding='utf-8').read()
+    assert '<body class="perm-no-sec_paper">' in html            # P&L не блимає до прав
 
 
 def test_norm_apply_books():
@@ -108,7 +127,7 @@ def test_admin_panel_has_perms():
     assert "'perms': _perms_raw(u)" in auth and 'function permsHTML(u)' in ui
     assert 'Адміністратор — доступ до всього' in ui
     # кабінет бота: торгівля + ключі (адмін)
-    assert 'id="keys"' in auth and "fetch('/api/me/keys')" in auth and 'id="trade"' in auth
+    assert 'id="keys"' in ui and "j('/api/me/keys')" in ui and 'id="trade"' in ui   # 24.11: повна сторінка
 
 
 def test_infosite_hides_by_perms():
