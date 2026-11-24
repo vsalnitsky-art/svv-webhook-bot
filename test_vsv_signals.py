@@ -92,6 +92,73 @@ def test_infosite_info_button_and_no_direction():
     assert re.search(r'demo\.js\?v=\d+', IDX) and 'demo.js?v=6' not in IDX
 
 
+def test_tg_new_coins_only_after_base_and_with_cooldown():
+    r = lambda S: {'symbol': S, 'score': 80, 'grade': 'A', 'charge': 85}
+    new, st = IP.vsv_tg_new([r('A'), r('B')], {}, 1000)
+    assert new == [] and st['init'] and st['in'] == ['A', 'B'], 'перший прохід — тиха база'
+    new, st2 = IP.vsv_tg_new([], st, 1060)
+    assert new == [] and st2 == st, 'порожній список — немає даних, стан не чіпаємо'
+    new, st = IP.vsv_tg_new([r('A'), r('B'), r('C')], st, 1100)
+    assert [x['symbol'] for x in new] == ['C']
+    new, st = IP.vsv_tg_new([r('A'), r('B')], st, 1200)          # C вийшла
+    new, st = IP.vsv_tg_new([r('A'), r('B'), r('C')], st, 1300)  # блимнула назад
+    assert new == [], 'та сама монета не частіше за cooldown'
+    new, st = IP.vsv_tg_new([r('A')], st, 1400)
+    new, st = IP.vsv_tg_new([r('A'), r('C')], st, 1300 + IP.VSV_TG_COOLDOWN)
+    assert [x['symbol'] for x in new] == ['C']
+
+
+def test_tg_text_has_no_direction():
+    rows, _ = IP.vsv_signal_rows({'AAAUSDT': _rec(92, sq=20, rank=8, vr=0.6)}, [], {}, 'binance')
+    t = IP.vsv_tg_text(rows)
+    assert '#AAAUSDT' in t and 'VSV' in t and 'Напрямок не вказується' in t
+    for w in ('LONG', 'SHORT', '🟢', '🔴', 'SL', 'TP'):
+        assert w not in t, w
+
+
+def test_tg_tick_sends_new_coins_to_signals_theme():
+    sent = []
+    IP._vsv_tg.update({'boot': 0, 'set': {'enabled': True}, 'st': {'init': True, 'in': ['AAAUSDT'], 'sent': {}}})
+    rows = [{'symbol': 'AAAUSDT', 'score': 70}, {'symbol': 'BBBUSDT', 'score': 66}]
+    old = IP.recommended_payload
+    try:
+        IP.recommended_payload = lambda now=None: {'rows': rows}
+        assert IP.vsv_tg_tick(now=10_000, send=lambda t: sent.append(t) or True) == ['BBBUSDT']
+        assert len(sent) == 1 and '#BBBUSDT' in sent[0] and '#AAAUSDT' not in sent[0]
+        IP._vsv_tg['set'] = {'enabled': False}
+        rows.append({'symbol': 'CCCUSDT', 'score': 66})
+        assert IP.vsv_tg_tick(now=10_100, send=lambda t: sent.append(t) or True) == []
+        assert len(sent) == 1, 'тумблер вимкнено — нічого не шлемо'
+    finally:
+        IP.recommended_payload = old
+        IP._vsv_tg['set'] = None
+    src = open(os.path.join(ROOT, 'web', 'info_portal.py'), encoding='utf-8').read()
+    assert "notify_category('sbr'" in src and "'/api/vsv-signals/settings'" in src
+    assert "VSV_TG_SET_KEY" in src and "{'enabled': True}" in src, 'дефолт — увімкнено'
+    html = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
+    assert 'id="vsv-tg"' in html and 'function vsvTgSave' in html and '/api/vsv-signals/settings' in html
+
+
+def test_dblclick_fullscreen_chart_and_vsv_row():
+    assert 'function chartDblFree(' in APP and 'setFull(!isFull())' in APP
+    f = APP[APP.index('function chartDblFree('):APP.index('function recOpenOnChart(')]
+    assert 'hitAt' in f and 'VOL_TOP' in f and '#iw-sig' in f, 'позначки, Σ-зона і картка — не чистий простір'
+    assert '" data-sym="' in APP and 'esc(r.symbol)' in APP
+    assert '#rec-tbl tr.rec-row[data-sym]' in APP and 'recOpenOnChart(tr.getAttribute("data-sym"))' in APP
+    r = APP[APP.index('function recOpenOnChart('):APP.index('function setFull(')]
+    assert 'IW.view = sym' in r and 'setFull(true)' in r and 'saveMine({ sel: sym })' in r
+    sf = APP[APP.index('function setFull('):APP.index('function isFull(')]
+    assert 'IW.view = ""' in sf, 'вихід із повного екрана повертає вашу монету'
+    assert 'function curSym()' in APP and 'var sym = curSym();\n    if (!sym) { setNote(' in APP
+
+
+def test_menu_cabinet_and_anom_telegram_label():
+    assert 'id="nav-cabinet"' in IDX and 'Мій кабінет' in IDX
+    assert 'nc.href = botUrl("/cabinet?from=info")' in APP
+    assert '.main-nav a[hidden]{display:none}' in CSS
+    assert '⚠ Аномалії обсягу у Telegram' in APP
+
+
 if __name__ == '__main__':
     n = 0
     for k, f in list(globals().items()):

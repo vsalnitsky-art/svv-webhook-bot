@@ -621,11 +621,13 @@
       var uname = me.email ? me.email.split('@')[0] : "Користувач";
       document.title = uname + " - Мій кабінет";
       
+      var nc = $("#nav-cabinet"); if (nc) { nc.href = botUrl("/cabinet?from=info"); nc.hidden = false; }
       el.innerHTML =
         '<a class="who" href="' + botUrl("/cabinet?from=info") + '" title="Мій кабінет">👤 ' +
           esc(me.email || "") + (me.is_admin ? " · адмін" : "") + '</a>' +
         '<a href="#" class="lo">Вихід</a>';
     } else {
+      var nc0 = $("#nav-cabinet"); if (nc0) nc0.hidden = true;
       var reg = BOT_LINK || botUrl("/register");
       var ext = BOT_LINK ? ' target="_blank" rel="noopener"' : "";
       el.innerHTML = '<a href="' + botUrl("/info-login") + '">Вхід</a>' +
@@ -653,7 +655,10 @@
   var SBR_MARK_PX = 14;                 // розмір позначки S/B на графіку (css px)
   /* 🔔 SBR на графіку — на ВСІХ TF графіка (вимога 16.11): «chart» = TF графіка. */
   var SBR_CHART_TFS = ["15m", "30m", "1h", "4h", "1d"];
-  function iwKey(o) { o = o || IW; return [o.sel, o.tf, o.ob_tf, o.vob_tf, o.poc_days, o.poc_tf, o.hl_tf, o.sbr_tf, o.shl_tf, o.show_anom ? 1 : 0].join("|"); }
+  /* 👁 25.11: монета, відкрита подвійним кліком із VSV SIGNALS (може бути поза
+     вашим WATCHLIST) — показується замість обраної, доки графік на весь екран. */
+  function curSym() { return IW.view || IW.sel; }
+  function iwKey(o) { o = o || IW; return [o.view || o.sel, o.tf, o.ob_tf, o.vob_tf, o.poc_days, o.poc_tf, o.hl_tf, o.sbr_tf, o.shl_tf, o.show_anom ? 1 : 0].join("|"); }
   function sbrTfOk(tf) { return SBR_TFS.indexOf(String(tf || "").toLowerCase()) >= 0; }
   function sbrEff() { return IW.sbr_tf && IW.sbr_tf !== "chart" ? IW.sbr_tf : IW.tf; }
   function sbrCtl() {
@@ -872,7 +877,7 @@
           (okS ? '<div class="t t2">SBR у Telegram</div><div class="iw-bell-tfs">' + SBR_TFS.map(function (tf) {
             return '<label><input type="checkbox" data-belltf="' + tf + '"' + (tfs.indexOf(tf) >= 0 ? " checked" : "") + "> " + tf.toUpperCase() + "</label>";
           }).join("") + "</div>" : "") +
-          (okA ? '<div class="t t2">⚠ Аномалії обсягу</div>' +
+          (okA ? '<div class="t t2">⚠ Аномалії обсягу у Telegram</div>' +
           '<label class="iw-bell-anom" title="Сетап на вхід за order flow: сценарій ШІ підтверджено (climax / абсорбція / follow-through), тригер свіжий — не старший за 2 свічки, фон order flow за 6 год не проти позиції."><input type="checkbox" data-bellanom="1"' + (an ? " checked" : "") + '><span class="iw-bell-anom-t">сценарій входу<small>LONG / SHORT</small></span></label>' +
           (an ? '<div class="iw-bell-fmt" title="Формат алерту в Telegram (для всіх інструментів): коротке — напрямок, інструмент, ціна сигналу й сетап; повне — ще й етапи сетапу та фон order flow за 6 год.">' +
             ["short", "full"].map(function (f) {
@@ -951,7 +956,7 @@
   function applyMine(d) {
     if (!d) return;
     IW.wl = d.wl || []; IW.max = d.max || IW.max;
-    var changed = iwKey({ sel: d.sel, tf: d.tf || IW.tf, ob_tf: d.ob_tf || IW.ob_tf, vob_tf: d.vob_tf || IW.vob_tf, poc_days: d.poc_days || IW.poc_days, poc_tf: d.poc_tf || IW.poc_tf, hl_tf: d.hl_tf || IW.hl_tf, sbr_tf: d.sbr_tf || IW.sbr_tf, shl_tf: d.shl_tf || IW.shl_tf, show_anom: typeof d.show_anom === "boolean" ? d.show_anom : IW.show_anom }) !== iwKey();
+    var changed = iwKey({ view: IW.view, sel: d.sel, tf: d.tf || IW.tf, ob_tf: d.ob_tf || IW.ob_tf, vob_tf: d.vob_tf || IW.vob_tf, poc_days: d.poc_days || IW.poc_days, poc_tf: d.poc_tf || IW.poc_tf, hl_tf: d.hl_tf || IW.hl_tf, sbr_tf: d.sbr_tf || IW.sbr_tf, shl_tf: d.shl_tf || IW.shl_tf, show_anom: typeof d.show_anom === "boolean" ? d.show_anom : IW.show_anom }) !== iwKey();
     IW.sel = d.sel || "";
     if (d.tf) IW.tf = d.tf;
     if (d.ob_tf) IW.ob_tf = d.ob_tf;
@@ -1075,8 +1080,8 @@
     var row = e.target.closest ? e.target.closest(".iw-row[data-sym]") : null;
     if (row) {
       var sym = row.getAttribute("data-sym");
-      if (sym === IW.sel) return;
-      IW.sel = sym; IW.sig = ""; IW.coin = null;
+      if (sym === IW.sel && !IW.view) return;
+      IW.sel = sym; IW.view = ""; IW.sig = ""; IW.coin = null;
       renderList(); loadCoin(true); saveMine({ sel: sym });
     }
   });
@@ -1186,14 +1191,14 @@
   function liqFromServer(sym, st) { return api("/api/info/liq?symbol=" + encodeURIComponent(sym) + "&exchange=" + LQ.ex + "&bars=" + LQ.bars + "&res=" + LQ.res + (st ? "&step=" + st : "")); }
   function liqSrcLbl(d) { return d.src === "browser" ? '<span class="src" title="Дані завантажено з біржі напряму (браузер)">🖥</span>' : '<span class="src" title="Дані з кешу сервера">☁ ' + (Number(d.age) || 0) + "с</span>"; }
   function liqLoad() {
-    var sym = IW.sel; if (!sym || !pOk("ly_liq")) return;
+    var sym = curSym(); if (!sym || !pOk("ly_liq")) return;
     var tok = ++LQ.seq;
     LQ.on = true; LQ.sym = sym; LQ.busy = tok; liqUi();
     liqStatus('<span class="wait">⏳ рахую ' + esc(sym) + "…</span>");
     var st = liqStepFromChart();
     liqFromBrowser(sym, st).then(null, function (e) { if (e && e.data) return { ok: false, reason: e.message }; return liqFromServer(sym, st); })
       .then(function (d) {
-        if (LQ.busy !== tok || !LQ.on || LQ.sym !== IW.sel) return;
+        if (LQ.busy !== tok || !LQ.on || LQ.sym !== curSym()) return;
         LQ.busy = 0;
         if (!d || !d.ok) { LQ.data = null; if (IW.prim) IW.prim.setLiq(null); liqStatus('<span class="bad">' + esc((d && d.reason) || "немає даних") + "</span>"); liqUi(); return; }
         LQ.data = d; if (IW.prim) IW.prim.setLiq(d); liqOffset(true); liqLevelTitles();
@@ -1597,9 +1602,14 @@
     }, true);
     window.addEventListener("pointerup", function () { y0 = null; }, true);
     box.addEventListener("dblclick", function (e) {
-      var r = box.getBoundingClientRect(), psw = 0; try { psw = IW.chart.priceScale("right").width(); } catch (er) {}
-      if (psw > 0 && e.clientX - r.left >= r.width - psw) { setAutoScale(true); }
-      setTimeout(function () { var b = $("#iw-auto"); if (b) b.classList.toggle("on", autoScaleOn()); }, 0);
+      var r = box.getBoundingClientRect(), psw = 0, tsh = 0; try { psw = IW.chart.priceScale("right").width(); tsh = IW.chart.timeScale().height(); } catch (er) {}
+      var x = e.clientX - r.left, y = e.clientY - r.top;
+      if (psw > 0 && x >= r.width - psw) {
+        setAutoScale(true);
+        setTimeout(function () { var b = $("#iw-auto"); if (b) b.classList.toggle("on", autoScaleOn()); }, 0);
+        return;
+      }
+      if (chartDblFree(e, x, y, r.height - tsh)) setFull(!isFull());
     });
     box.addEventListener("wheel", function (e) {
       if (!IW.chart || !IW.series || (e.target.closest && e.target.closest("#iw-sig"))) return;
@@ -1617,9 +1627,37 @@
     box.appendChild(b);
   }
 
+  /* 🖱 25.11: подвійний клік по ЧИСТОМУ простору графіка → на весь екран і назад.
+     Не чіпаємо: шкалу часу, кнопки / картку сигналу, позначки S/B (клік по
+     них відкриває картку) і зону обсягу (там подвійний клік — «Σ від свічки»). */
+  function chartDblFree(e, x, y, plotH) {
+    if (e.target && e.target.closest && e.target.closest("#iw-sig, #iw-sig-arrow, button, a, input, select, label")) return false;
+    if (!(plotH > 0) || y < 0 || y > plotH) return false;
+    if (VOL.on && y >= plotH * VOL_TOP - 12) return false;
+    try { if (IW.prim && IW.prim.hitAt(x, y)) return false; } catch (er) {}
+    return true;
+  }
+  /* 🛰 25.11: подвійний клік по рядку VSV SIGNALS → ця монета на графіку на весь
+     екран. Монета з вашого WATCHLIST стає обраною; інша — показується, доки
+     графік розгорнутий (вихід із повного екрана повертає вашу монету). */
+  function recOpenOnChart(sym) {
+    sym = String(sym || "").toUpperCase(); if (!sym || !pOk("sec_terminal")) return;
+    if ((IW.wl || []).indexOf(sym) >= 0) {
+      if (sym !== IW.sel || IW.view) { IW.sel = sym; IW.view = ""; IW.sig = ""; IW.coin = null; renderList(); loadCoin(true); saveMine({ sel: sym }); }
+    } else if (sym !== curSym()) { IW.view = sym; IW.sig = ""; IW.coin = null; renderList(); loadCoin(true); }
+    setFull(true);
+  }
+  document.addEventListener("dblclick", function (e) {
+    var tr = e.target && e.target.closest ? e.target.closest("#rec-tbl tr.rec-row[data-sym]") : null;
+    if (!tr) return;
+    try { var sel = window.getSelection && window.getSelection(); if (sel) sel.removeAllRanges(); } catch (er) {}
+    recOpenOnChart(tr.getAttribute("data-sym"));
+  });
+
   function setFull(on) {
     var card = $("#iw-chart"), b = $("#iw-fs"); if (!card) return;
     on = !!on; card.classList.toggle("iw-full", on); document.body.classList.toggle("iw-full-on", on);
+    if (!on && IW.view) { IW.view = ""; IW.sig = ""; IW.coin = null; renderList(); loadCoin(true); }
     if (b) { b.setAttribute("aria-pressed", on ? "true" : "false"); b.textContent = on ? "✕" : "⛶"; b.title = on ? "Згорнути (Esc)" : "На весь екран"; }
   }
   function isFull() { var c = $("#iw-chart"); return !!(c && c.classList.contains("iw-full")); }
@@ -1907,7 +1945,7 @@
   function renderHead(quotesOnly) {
     var h = $("#iw-head"), lg = $("#iw-legend");
     if (!h) return;
-    var sym = IW.sel;
+    var sym = curSym();
     if (!sym) { h.innerHTML = '<span class="iw-title">—</span>'; IW.layerLg = ""; if (lg) legendPaint(); return; }
     var c = IW.coin || {}, px = livePx(sym);
     if (quotesOnly) {
@@ -1925,6 +1963,7 @@
        її не домальовувало наступне оновлення. Тепер той самий вузол
        переноситься в нову розмітку, а незмінна шапка не чіпається взагалі. */
     var headHtml = '<span class="iw-title' + mmCls(sym) + '" title="' + esc(mmTip(sym)) + '">' + tvSym(sym, !!(c.src && c.src !== "ext")) + "</span>" +
+      (IW.view ? '<span class="iw-peek" title="Відкрито подвійним кліком із VSV SIGNALS. Вихід із повного екрана (Esc / ✕ / подвійний клік) повертає вашу монету.">🛰 VSV SIGNALS</span>' : "") +
       '<span class="iw-px' + dirCls(sym) + '">' + (px ? fmtPrice(px) : "—") + "</span>" + (pOk("ly_pd") ? pdBadge(c.pd) : "") + (pOk("ly_poc") ? pocBadge(c.poc, c.poc_state) : "") +
       (c.src === "ext" ? '<span class="bdg warn ext-badge" title="Поза WATCHLIST бота — розрахунок окремим потоком">🛰 NOT IN BOT</span>' : "");
     var keepLg = document.getElementById("tv-ohlc"), keepCoin = document.getElementById("iw-head-coin");
@@ -2540,7 +2579,7 @@
     if (!VOL.on) { VOL.tape = null; VOL.base = null; }   // потік угод зупиняється → у стрічці була б діра
     volEnsure();
     if (IW.coin) { liveSet(IW.coin); if (VOL.on) volApply(IW.coin); }
-    if (VOL.on && !was && IW.sel) { IW.sig = ""; try { loadCoin(false, true); } catch (e) {} }
+    if (VOL.on && !was && curSym()) { IW.sig = ""; try { loadCoin(false, true); } catch (e) {} }
   }
 
   function drawCoin(c, fit) {
@@ -2584,7 +2623,7 @@
   var coinBusy = false;
   function loadCoin(force, keepBars) {
     if (!pOk("sec_terminal")) return;
-    var sym = IW.sel;
+    var sym = curSym();
     if (!sym) { setNote("оберіть монету зі списку"); renderHead(); return; }
     if (coinBusy && !force && !keepBars) return;
     coinBusy = true;
@@ -2951,7 +2990,7 @@
     var icon = '<span class="rec-ic" title="' + (ex === "binance" ? "Binance" : "Bybit") + " · " + (r.src === "scan" ? "скан біржі" : "WATCHLIST бота") + '">' + (SPB_ICON[ex] || "") + "</span>";
     var nb = r.bybit === false ? ' <span class="rec-nb" title="Інструмент не торгується на Bybit">⚠</span>' : "";
     var aiCell = '<span class="rec-ai-slot">' + (r.ai_ready ? '<span class="rec-ai on" title="' + esc("VSV·AI бачить сформований сетап" + (r.ai_scenario ? " · " + r.ai_scenario : "")) + '">' + AI_BRAND + "<b>СЕТАП</b></span>" : "") + "</span>";
-    return '<tr class="rec-row' + (r.impulse ? " imp" : "") + (r.ai_ready ? " ai-pick" : "") + '"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td>" +
+    return '<tr class="rec-row' + (r.impulse ? " imp" : "") + (r.ai_ready ? " ai-pick" : "") + '" data-sym="' + esc(r.symbol) + '" title="Подвійний клік — відкрити на графіку на весь екран"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td>" +
       '<td class="r">' + recScoreCell(r) + '</td><td class="r">' + recChargeCell(r) + '</td><td class="r">' + recSqCell(r) + '</td><td class="r">' + recVolatCell(r) +
       '</td><td class="r">' + recVolCell(r) + '</td><td class="r">' + recAmpCell(r) + "</td><td>" + recPhaseCell(r) + "</td></tr>";
   }

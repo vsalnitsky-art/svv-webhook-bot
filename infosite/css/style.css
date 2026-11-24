@@ -551,3 +551,8 @@ body.perm-no-sec_terminal .pm-sec_terminal,body.perm-no-sec_signals .pm-sec_sign
 .rec-phase.acc{color:var(--txt-dim)}
 .rec-note{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt-dim);font-size:10.5px}
 .rec-row.imp td:first-child{box-shadow:inset 3px 0 0 #ff6ec7}
+
+/* 25.11: «Мій кабінет» у меню · VSV-перегляд на графіку · рядки VSV SIGNALS */
+.main-nav a[hidden]{display:none}
+.iw-peek{margin-left:8px;font:600 10px var(--font);color:var(--accent-2);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);border-radius:999px;padding:1px 8px;white-space:nowrap}
+#rec-tbl tr.rec-row{cursor:zoom-in}

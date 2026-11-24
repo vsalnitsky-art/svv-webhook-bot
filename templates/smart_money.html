@@ -3132,6 +3132,7 @@ details[open] .sm-settings-summary::before { transform: rotate(90deg); }
                 <input type="text" inputmode="numeric" id="xspr-auto-min" value="30" onchange="xsprSaveSettings()" style="width:36px;text-align:right" title="Інтервал автоскану, хвилин (5…1440)"> хв
                 <label title="Лише для скану BINANCE: показувати монети, яких немає на Bybit (USDT-перпетуал). Бот торгує на Bybit, тож відкрити угоду по такій монеті не вийде. ВИМК (дефолт) — такі монети не беруться в роботу взагалі (і не коштують запиту барів); УВІМК — показуються з позначкою «⚠ не на Bybit»." style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="xspr-nonbybit" onchange="xsprSaveSettings()"> 🅱 показувати монети, яких немає на Bybit</label>
                 <label title="📡 Сканер сигналів (CHoCH / VOB / 🆕 Новий OB) веде монети цієї таблиці РАЗОМ із WATCHLIST — інакше вони не дають жодного сигналу і ворота «Через Пружину скан» нічого не пропускають. До 40 монет (найсильніший заряд першим), лише ті, що є на Bybit. Кожна монета додає ~кілька секунд до циклу сканера. Реальна угода по монеті поза WATCHLIST іде за правилом TRD (немає TRD → paper)." style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="xspr-signals" onchange="xsprSaveSignals()" checked> 📡 сигнали по монетах таблиці</label>
+                <label title="📨 VSV SIGNALS → Telegram: щойно в радарі волатильності VSV SIGNALS (інфосайт) зʼявляється НОВА монета з обох «Пружин» — коротке повідомлення в спільну групу, тема «🔔 Сигнали» (VSV Score, заряд, squeeze, амплітуда; без напрямку). Перші 5 хв після старту бота — тиха база; та сама монета — не частіше ніж раз на 6 год. Майстер-вимикач теми — у кабінеті адміна." style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="vsv-tg" onchange="vsvTgSave()" checked> 🛰 VSV SIGNALS у Telegram «🔔 Сигнали»</label>
                 <button class="xs-btn xs-btn-clr" id="xspr-clear" onclick="xsprClear()" title="🗑 Очистити всю таблицю (разом із кнопками 📨 1H/4H усіх монет). Наступний скан знову додасть заряджені монети.">🗑 Очистити</button>
                 <span id="xspr-cost" style="color:#6b7280"></span>
             </div>
@@ -9053,6 +9054,26 @@ function _smMmGateSync() {
     }
 }
 // 🌀 Окремі ворота «Через Пружину» (налаштування сканера, деф. УВІМК).
+// 📨 VSV SIGNALS → Telegram «🔔 Сигнали» (деф. УВІМК, вимога 25.11)
+async function vsvTgLoad() {
+    const el = document.getElementById('vsv-tg');
+    if (!el) return;
+    try {
+        const d = await (await fetch('/api/vsv-signals/settings')).json();
+        if (d && d.ok && document.activeElement !== el) el.checked = !!(d.settings || {}).enabled;
+        const l = d && d.last;
+        if (l && l.syms) el.parentElement.title = el.parentElement.title.split('\n\nОстаннє:')[0] +
+            '\n\nОстаннє: ' + (l.ok ? '✅ ' : '⚠ ') + l.syms.join(', ') + (l.why ? ' — ' + l.why : '');
+    } catch (e) {}
+}
+async function vsvTgSave() {
+    const el = document.getElementById('vsv-tg');
+    try {
+        const r = await fetch('/api/vsv-signals/settings', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: !!(el && el.checked)})});
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+    } catch (err) { alert('Не збережено: ' + err); }
+}
 async function xsprSaveSignals() {
     const el = document.getElementById('xspr-signals');
     try {
@@ -19217,6 +19238,7 @@ function _xsSchedule() {
     _xsPollT = setTimeout(() => { xsprLoad(false); }, _xsProg.running ? 1000 : 15000);
 }
 async function xsprLoad(force) {
+    if (!window._vsvTgLoaded) { window._vsvTgLoaded = true; vsvTgLoad(); }
     const collapsed = (typeof _qCollapsed === 'function') && _qCollapsed('xspr');
     if (!force && (collapsed || (typeof document !== 'undefined' && document.hidden)) && !_xsProg.running) { _xsSchedule(); return; }
     try {

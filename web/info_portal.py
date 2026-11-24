@@ -2543,6 +2543,175 @@ def recommended_payload(now=None):
     return p
 
 
+# ─── 📨 VSV SIGNALS → Telegram «🔔 Сигнали» (вимога 25.11) ─────────────────
+# Поява НОВОЇ монети у списку VSV SIGNALS (той самий `recommended_payload`, що
+# малює сайт) → коротке повідомлення в спільну групу, тема «🔔 Сигнали»
+# (категорія `sbr`). Без напрямку — як і на сайті. Тумблер — у боті (деф. УВІМК).
+VSV_TG_SET_KEY = 'vsv_signals_tg_settings'   # {enabled}
+VSV_TG_KEY = 'vsv_signals_tg_v1'             # {init, in, sent}
+VSV_TG_TICK_SEC = 60
+VSV_TG_WARMUP_SEC = 300       # після старту бота дані Пружин ще доїжджають
+VSV_TG_COOLDOWN = 6 * 3600    # монета, що «блимає» на межі списку, — не частіше
+VSV_TG_MAX_LINES = 15
+_vsv_tg = {'boot': time.time(), 'thread': None, 'st': None, 'set': None,
+           'last': None}
+
+
+def _vsv_db():
+    try:
+        from storage.db_operations import get_db
+        return get_db()
+    except Exception:
+        return None
+
+
+def vsv_tg_settings():
+    s = _vsv_tg.get('set')
+    if s is None:
+        s = {'enabled': True}
+        db = _vsv_db()
+        try:
+            raw = db.get_setting(VSV_TG_SET_KEY, None) if db is not None else None
+            if isinstance(raw, dict) and 'enabled' in raw:
+                s['enabled'] = bool(raw.get('enabled'))
+        except Exception:
+            pass
+        _vsv_tg['set'] = s
+    return dict(s)
+
+
+def vsv_tg_set(enabled):
+    s = {'enabled': bool(enabled)}
+    _vsv_tg['set'] = s
+    db = _vsv_db()
+    try:
+        if db is not None:
+            db.set_setting(VSV_TG_SET_KEY, s)
+    except Exception:
+        pass
+    return dict(s)
+
+
+def vsv_tg_new(rows, st, now, cooldown=VSV_TG_COOLDOWN):
+    """ЧИСТА: які монети ЩОЙНО зʼявились у VSV SIGNALS → (нові рядки, новий стан).
+    Перший прохід (стану ще немає) — тиха база; порожній список — «немає даних»,
+    а не «усі пішли» (стан не чіпаємо); монета, про яку вже сказано менше ніж
+    `cooldown` тому, не повторюється (блимання на межі топу)."""
+    st = dict(st or {})
+    syms = [str((r or {}).get('symbol') or '').upper() for r in rows or []]
+    syms = [s for s in syms if s]
+    if not syms:
+        return [], st
+    sent = {k: float(v) for k, v in (st.get('sent') or {}).items()}
+    if not st.get('init'):
+        return [], {'init': True, 'in': syms, 'sent': sent}
+    prev = set(st.get('in') or [])
+    new = []
+    for r in rows:
+        S = str((r or {}).get('symbol') or '').upper()
+        if S and S not in prev and (S not in sent or now - sent[S] >= cooldown):
+            new.append(r)
+            sent[S] = now
+    sent = {k: v for k, v in sent.items() if now - v < 2 * cooldown}
+    if len(sent) > 300:
+        sent = dict(sorted(sent.items(), key=lambda kv: kv[1])[-300:])
+    return new, {'init': True, 'in': syms, 'sent': sent}
+
+
+def vsv_tg_text(rows):
+    """ЧИСТА: повідомлення для теми «🔔 Сигнали» — БЕЗ напрямку."""
+    lines = ['🛰 <b>VSV SIGNALS</b> · нові інструменти в радарі волатильності']
+    for r in (rows or [])[:VSV_TG_MAX_LINES]:
+        S = str(r.get('symbol') or '').upper()
+        ph = '💥' if r.get('impulse') else '🌀'
+        bits = [f"{ph} #{S}", f"VSV <b>{float(r.get('score') or 0):.0f}</b> ({r.get('grade') or 'C'})"]
+        if r.get('charge') is not None:
+            bits.append(f"заряд {float(r['charge']):.0f}")
+        sq = int(_vsv_f(r.get('squeeze_bars'), 0) or 0)
+        if sq > 0:
+            bits.append(f"squeeze {sq} год")
+        if r.get('amp_pct') is not None:
+            bits.append(f"±{float(r['amp_pct']):.2f}%")
+        if r.get('ai_ready'):
+            bits.append('🤖 сетап')
+        lines.append(' · '.join(bits))
+    if len(rows or []) > VSV_TG_MAX_LINES:
+        lines.append(f"… і ще {len(rows) - VSV_TG_MAX_LINES}")
+    lines.append('ℹ️ Напрямок не вказується: пробій діапазону можливий в обидва боки. '
+                 'Інформаційний watchlist, не торгова рекомендація.')
+    return '\n'.join(lines)
+
+
+def vsv_tg_tick(now=None, send=None):
+    """Один прохід: нові монети → Telegram. Повертає список надісланих символів."""
+    now = time.time() if now is None else now
+    if not vsv_tg_settings().get('enabled'):
+        return []
+    if now - _vsv_tg['boot'] < VSV_TG_WARMUP_SEC:
+        return []
+    st = _vsv_tg.get('st')
+    if st is None:
+        db = _vsv_db()
+        try:
+            raw = db.get_setting(VSV_TG_KEY, None) if db is not None else None
+        except Exception:
+            raw = None
+        st = raw if isinstance(raw, dict) else {}
+    rows = (recommended_payload(now) or {}).get('rows') or []
+    new, st2 = vsv_tg_new(rows, st, now)
+    if st2 != st:
+        _vsv_tg['st'] = st2
+        db = _vsv_db()
+        try:
+            if db is not None:
+                db.set_setting(VSV_TG_KEY, st2)
+        except Exception:
+            pass
+    else:
+        _vsv_tg['st'] = st
+    if not new:
+        return []
+    syms = [str(r.get('symbol') or '').upper() for r in new]
+    ok, why = False, ''
+    try:
+        if send is not None:
+            ok = bool(send(vsv_tg_text(new)))
+        else:
+            from web import tg_bot
+            ok = bool(tg_bot.notify_category('sbr', vsv_tg_text(new)))
+            if not ok:
+                why = (getattr(tg_bot, 'last_send_error', lambda: '')() or '')
+    except Exception as e:
+        why = f'{type(e).__name__}: {e}'
+    _vsv_tg['last'] = {'t': now, 'syms': syms, 'ok': ok, 'why': why}
+    try:
+        from detection.activity_log import log_activity
+        txt = (f"🛰 VSV SIGNALS → Telegram «🔔 Сигнали»: {', '.join(syms)}" if ok
+               else f"📨 Telegram НЕ прийняв VSV SIGNALS ({', '.join(syms)}): {why or 'тему вимкнено або не налаштовано'}")
+        log_activity(syms[0] if len(syms) == 1 else 'VSV', 'signal', txt, source='VSV',
+                     extra={'vsv': syms, 'ok': ok})
+    except Exception:
+        pass
+    return syms if ok else []
+
+
+def _vsv_tg_loop():
+    while True:
+        try:
+            vsv_tg_tick()
+        except Exception as e:
+            print(f"[VSV-TG] {type(e).__name__}: {e}")
+        time.sleep(VSV_TG_TICK_SEC)
+
+
+def vsv_tg_start():
+    t = _vsv_tg.get('thread')
+    if t is None or not t.is_alive():
+        t = threading.Thread(target=_vsv_tg_loop, name='vsv-signals-tg', daemon=True)
+        _vsv_tg['thread'] = t
+        t.start()
+
+
 def register_info_portal(app):
     from flask import jsonify, request
 
@@ -2558,6 +2727,21 @@ def register_info_portal(app):
         """🛡 403, коли адміністратор не дав користувачу це право."""
         return jsonify({'ok': False, 'error': 'no_perm', 'perm': key,
                         'reason': 'Адміністратор не надав доступ до цього розділу'}), 403
+
+    # 📨 VSV SIGNALS → Telegram «🔔 Сигнали»: тумблер живе в боті (шлях поза
+    # /api/info і /api/me → гейт пускає лише користувачів із доступом до бота).
+    @app.route('/api/vsv-signals/settings', methods=['GET', 'POST'])
+    def api_vsv_signals_settings():
+        if request.method == 'POST':
+            body = request.get_json(silent=True) or {}
+            vsv_tg_set(bool(body.get('enabled')))
+        return jsonify({'ok': True, 'settings': vsv_tg_settings(), 'last': _vsv_tg.get('last'),
+                        'in': len(((_vsv_tg.get('st') or {}).get('in')) or [])})
+
+    try:
+        vsv_tg_start()
+    except Exception as e:
+        print(f"[VSV-TG] start: {e}")
 
     @app.route('/api/info/universe')
     def api_info_universe():

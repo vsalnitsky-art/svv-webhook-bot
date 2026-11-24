@@ -812,7 +812,7 @@ def test_liq_frontend_contract():
            'обсяг у доларах — як на сервері')
     lc = js.split('function loadCoin')[1][:1500]
     _check('LQ.sym !== sym) liqOff()' in lc, 'інша монета → профіль прибрано')
-    _check('LQ.sym !== IW.sel) return' in js, 'запізніла відповідь для іншої монети ігнорується')
+    _check('LQ.sym !== curSym()) return' in js, 'запізніла відповідь для іншої монети ігнорується (curSym — і монета з VSV SIGNALS)')
     _check('X2 = XR -' in js and '(XR - w - (LW ? 10 : 8) * hr)' in js, 'зони й VOB-чипи лівіше профілю')
     _check('rightOffset' in js.split('function liqOffset')[1][:600], 'свічки не під профілем')
     _check('"&step=" + st' in js and 'function liqStepFromChart' in js, 'крок — з видимого діапазону графіка')
