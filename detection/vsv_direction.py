@@ -28,8 +28,8 @@
 from typing import Dict, List, Optional
 
 W = {'spring': 0.35, 'flow': 0.35, 'ai': 0.20, 'trend': 0.10}
-SRC_UA = {'spring': '🌀 натяг Пружини', 'flow': '⚠ order flow 6 год',
-          'ai': '🤖 сетап VSV·AI', 'trend': '📈 рух за 24 год'}
+SRC_UA = {'spring': 'Потенціал «Пружини»', 'flow': 'Order flow · 6 год',
+          'ai': 'Сценарій VSV·AI', 'trend': 'Контекст руху · 24 год'}
 FLAT = 0.15            # |net| нижче — ⚖ напрямок не визначено
 MIN_COVER = 0.35       # мінімум ваги присутніх джерел (Пружина або order flow)
 P_MAX = 92.0           # стеля впевненості моделі — 100% не буває
@@ -62,20 +62,22 @@ def _side_of(s: float) -> Optional[str]:
 
 def evidence(rec: Dict, adir: Optional[Dict] = None, ai: Optional[Dict] = None) -> List[Dict]:
     """Голоси джерел: [{k, label, s (−1…+1, + = LONG), w, txt}]. Відсутнє
-    джерело голосу не дає (а не голосує «за нуль»)."""
+    джерело голосу не дає (а не голосує «за нуль»). Формулювання описують
+    ринкові докази, а не видають імовірнісну оцінку за торгову рекомендацію."""
     rec = rec if isinstance(rec, dict) else {}
     out = []
     fired = rec.get('fired') if isinstance(rec.get('fired'), dict) else None
     fs = (fired or {}).get('side')
     if rec.get('state') == 'fired' and fs in ('LONG', 'SHORT'):
         s = 1.0 if fs == 'LONG' else -1.0
-        out.append({'k': 'spring', 's': s, 'txt': f'💥 імпульс уже пішов {fs}'})
+        out.append({'k': 'spring', 's': s, 'txt': f'імпульс підтверджує {fs}'})
     else:
         pl = _f(rec.get('prob_long'))
         if pl is not None and rec.get('state') not in (None, 'flat') and rec.get('lean'):
             s = _clamp((pl - 50.0) / 50.0)
+            side = 'LONG' if s > 0 else 'SHORT'
             out.append({'k': 'spring', 's': s,
-                        'txt': f'натяг {"вгору" if s > 0 else "вниз"} {max(pl, 100 - pl):.0f}%'})
+                        'txt': f'оцінка {side}: {max(pl, 100 - pl):.0f}%'})
     a = adir if isinstance(adir, dict) else None
     if a and a.get('state') in ('dir', 'weak', 'mixed'):
         up, dn = _f(a.get('up'), 0.0), _f(a.get('dn'), 0.0)
@@ -84,10 +86,10 @@ def evidence(rec: Dict, adir: Optional[Dict] = None, ai: Optional[Dict] = None) 
             s *= 0.5
         if a.get('state') == 'mixed':
             s = 0.0
-            txt = 'суперечливі реакції обсягу (обидва боки сильні)'
+            txt = 'конфлікт агресії: обидва боки активні, переваги немає'
         else:
-            txt = (f'{"покупці" if s > 0 else "продавці"} домінують'
-                   + (' (слабко)' if a.get('state') == 'weak' else '')) if s else 'рівновага'
+            txt = ('ініціатива ' + ('покупців' if s > 0 else 'продавців')
+                   + (' · слабке підтвердження' if a.get('state') == 'weak' else '')) if s else 'паритет агресії'
         out.append({'k': 'flow', 's': s, 'txt': txt})
     x = ai if isinstance(ai, dict) else None
     if x and x.get('ready') and x.get('side') in ('LONG', 'SHORT'):
@@ -95,11 +97,11 @@ def evidence(rec: Dict, adir: Optional[Dict] = None, ai: Optional[Dict] = None) 
         k = _clamp((conf / 100.0) if conf is not None else 0.7, 0.3, 1.0)
         s = k if x['side'] == 'LONG' else -k
         out.append({'k': 'ai', 's': s,
-                    'txt': f'сетап {x["side"]}' + (f' · {x["scenario_name"]}' if x.get('scenario_name') else '')})
+                    'txt': f'підтверджений сценарій {x["side"]}' + (f' · {x["scenario_name"]}' if x.get('scenario_name') else '')})
     m24 = _f(rec.get('move24_pct'))
     if m24 is not None:
         s = _clamp(m24 / TREND_DIV)
-        out.append({'k': 'trend', 's': s, 'txt': f'{m24:+.2f}% за 24 год'})
+        out.append({'k': 'trend', 's': s, 'txt': f'зміна {m24:+.2f}%'})
     for e in out:
         e['w'] = W[e['k']]
         e['label'] = SRC_UA[e['k']]
@@ -115,7 +117,7 @@ def direction(rec: Dict, adir: Optional[Dict] = None, ai: Optional[Dict] = None)
     base = {'side': None, 'prob': None, 'net': 0.0, 'agree': 0, 'against': 0,
             'total': len(ev), 'cover': round(cover, 2), 'parts': ev}
     if cover < MIN_COVER or not any(e['k'] in ('spring', 'flow') for e in ev):
-        return dict(base, why='недостатньо даних (немає ні натягу Пружини, ні order flow)')
+        return dict(base, why='недостатньо підтверджень: потрібен потенціал «Пружини» або order flow')
     net = sum(e['w'] * e['s'] for e in ev) / cover
     side = _side_of(net) if abs(net) >= FLAT else None
     sign = 1 if net > 0 else -1
@@ -125,10 +127,10 @@ def direction(rec: Dict, adir: Optional[Dict] = None, ai: Optional[Dict] = None)
     prob = round(min(P_MAX, 50.0 + 42.0 * abs(net) * (0.6 + 0.4 * cov_k)), 0)
     out = dict(base, net=round(net, 3), agree=agree, against=against)
     if side is None:
-        out['why'] = 'джерела врівноважують одне одного — ⚖ напрямок не визначено'
+        out['why'] = 'докази компенсують одне одного — ⚖ ринкової переваги немає'
         return out
     out.update(side=side, prob=prob,
-               why=f'{agree} з {len(ev)} джерел за {side}' + (f', {against} проти' if against else ''))
+               why=f'{agree} з {len(ev)} джерел підтверджують {side}' + (f', {against} спростовують' if against else ''))
     return out
 
 

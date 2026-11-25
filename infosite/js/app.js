@@ -159,7 +159,7 @@
     return out.join(" → ") + tail;
   }
   // 🤖 Фірмова іконка ШІ (вимога 22.11): усі дані ШІ — головним логотипом.
-  var AI_BRAND = '<img class="ai-brand" src="img/logo.png" alt="ШІ">';
+  var AI_BRAND = '<img class="ai-brand" src="img/logo.svg?v=271" alt="VSV AI">';
   function aiBrand(title) { return '<span class="ai-mark" title="' + esc(title || "ШІ бота") + '">' + AI_BRAND + "</span>"; }
   function signalIconHtml(raw) {
     if (!raw) return "";
@@ -3079,7 +3079,7 @@
   }
   function recNoteHtml(txt) {
     return esc(txt)
-      .replace(/🤖/g, '<img class="ai-brand rec-note-ic" src="img/logo.svg" alt="VSV AI">')
+      .replace(/🤖/g, '<img class="ai-brand rec-note-ic" src="img/logo.svg?v=271" alt="VSV AI">')
       .replace(/💥/g, '<img class="rec-note-ic" src="img/forecast-mark.svg" alt="Breakout">');
   }
   function recPhaseIcon(kind) {
@@ -3110,7 +3110,7 @@
       tip.push(recT(e.label) + ": " + recT(e.txt) + " (" + (s > 0 ? "▲ " : s < 0 ? "▼ " : "· ") + Math.abs(s * 100).toFixed(0) + "%, " + recT("вага") + " " + Math.round((Number(e.w) || 0) * 100) + "%)");
     });
     if (h.why) tip.push("→ " + recT(h.why));
-    tip.push(recT("Напрямок перераховується постійно і може змінитися: хибний пробій, збір ліквідності, новий учасник чи рух BTC розвертають картину. Не 100% і не остаточний — див. «ⓘ Що це?»."));
+    tip.push(recT("Оцінка напрямку оновлюється з новими ринковими даними. Хибний пробій, збір ліквідності, зміна order flow або імпульс BTC можуть скасувати поточний сценарій. Це ймовірнісна оцінка, а не гарантія чи рекомендація до входу; підтверджуйте власною структурою ринку та ризик-менеджментом."));
     var fl = h.flip ? '<small class="rec-flip" title="' + esc(recT("Напрямок розвернувся") + " " + locHM(h.flip.t)) + '">🔄 ' + recT("був") + " " + esc(h.flip.prev) + " · " + (h.flip.ago_min < 60 ? h.flip.ago_min + " " + recT("хв") : Math.floor(h.flip.ago_min / 60) + " " + recT("год")) + "</small>" : "";
     if (!h.side) return '<span class="rec-dir" title="' + esc(tip.join("\n")) + '"><span class="rec-dir-n">' + recT("⚖ не визначено") + '</span>' + fl + "</span>";
     var L = h.side === "LONG", a = h.acc || {}, acc;
@@ -3125,7 +3125,9 @@
   }
   function recRow(r) {
     var ex = String(r.ex || (r.src === "scan" ? "binance" : "bybit")).toLowerCase();
-    var icon = '<span class="rec-ic" title="' + (ex === "binance" ? "Binance" : "Bybit") + " · " + recT(r.src === "scan" ? "скан біржі" : "WATCHLIST бота") + '">' + (SPB_ICON[ex] || "") + "</span>";
+    var exName = ex === "binance" ? "Binance" : "Bybit";
+    var exTitle = esc(exName + " · " + recT(r.src === "scan" ? "скан біржі" : "WATCHLIST бота"));
+    var icon = '<span class="rec-coin">' + coinIcon(r.symbol) + '<span class="rec-ex" title="' + exTitle + '">' + (SPB_ICON[ex] || "") + "</span></span>";
     var nb = r.bybit === false ? ' <span class="rec-nb" title="' + esc(recT("Інструмент не торгується на Bybit")) + '">⚠</span>' : "";
     var aiCell = '<span class="rec-ai-slot">' + (r.ai_ready ? '<span class="rec-ai on" title="' + esc(recT("VSV·AI бачить сформований сетап") + (r.ai_scenario ? " · " + recT(r.ai_scenario) : "")) + '">' + AI_BRAND + "<b>" + recT("СЕТАП") + "</b></span>" : "") + "</span>";
     return '<tr class="rec-row' + (r.impulse ? " imp" : "") + (r.ai_ready ? " ai-pick" : "") + '" data-sym="' + esc(r.symbol) + '" title="' + esc(recT("Подвійний клік — відкрити на графіку на весь екран")) + '"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td><td>" + recDirCell(r) + "</td>" +
@@ -3144,7 +3146,12 @@
     var grade = $("#rec-grade"); if (grade && grade.value !== REC.grade) grade.value = REC.grade;
     var vis = gradeRows.filter(function (r) { return recPass(r, REC.f); }), tb = $("#rec-tbl tbody");
     var empty = !rows.length ? "Зараз немає монет у фазі стиснення — список оновиться, щойно «Пружина» зарядиться" : !gradeRows.length ? "У цій вкладці немає монет обраного класу" : "У цій вкладці зараз немає монет";
-    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="9" class="muted rec-empty">' + recT(empty) + "</td></tr>";
+    if (tb) {
+      var oldIcons = {};
+      tb.querySelectorAll(".coin-ic[data-coin]").forEach(function (el) { oldIcons[el.getAttribute("data-coin")] = el; });
+      tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="9" class="muted rec-empty">' + recT(empty) + "</td></tr>";
+      keepCoinIcons(tb, oldIcons);
+    }
     var c = (REC.meta || {}).counts || {}, rn = $("#rec-note");
     var da = (REC.meta || {}).dir_acc || {};
     if (rn) rn.title = da.acc != null ? "Фактична точність напрямку: " + da.acc + "% (✅ " + da.win + " · ❌ " + da.loss + " · без руху " + (da.flat || 0) + " · перевіряється " + (da.open || 0) + ")" : "Точність напрямку: збираємо статистику (" + (da.n || 0) + "/" + (da.min_n || 20) + ")";

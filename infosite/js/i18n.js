@@ -48,7 +48,9 @@
   }
   function signature(source) {
     var values = [];
-    var key = clean(source).replace(/\b[A-Z][A-Z0-9]{1,15}USDT\b/g, function (value) {
+    var key = clean(source).replace(/\b[A-Z]{3,12}:[A-Z0-9]{1,24}(?:\.P)?\b/g, function (value) {
+      values.push(value); return "{}";
+    }).replace(/\b[A-Z][A-Z0-9]{1,15}USDT\b/g, function (value) {
       values.push(value); return "{}";
     }).replace(/\d{1,3}(?:[ ,]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?/g, function (value) {
       values.push(value); return "{}";
@@ -74,6 +76,25 @@
       return out.split(key).join(value);
     }
   }
+  function phraseEntries(code) {
+    /* Таблиці складають текст із окремих фраз, чисел і знаків. Використовуємо
+       весь словник, а не короткий _phrases: інакше кожна нова комбінація
+       залишалася українською. Кеш залежить від версії обох словників, тож
+       віддалені й додаткові переклади одразу потрапляють до складених рядків. */
+    var cache = phraseEntries.cache || (phraseEntries.cache = {}), key = normal(code);
+    var local = dict(key), english = dict("en"), cached = cache[key];
+    if (cached && cached.local === local && cached.en === english) return cached.list;
+    var seen = {}, out = [];
+    [local, english].forEach(function (d) {
+      Object.keys(d).forEach(function (source) {
+        if (source === "_phrases" || seen[source] || !/[А-Яа-яЇїІіЄєҐґ]/.test(source)) return;
+        seen[source] = true; out.push(source);
+      });
+    });
+    out.sort(function (a, b) { return b.length - a.length; });
+    cache[key] = { local: local, en: english, list: out };
+    return out;
+  }
   function translate(source, code) {
     code = code || current;
     if (code === "uk") return String(source == null ? "" : source);
@@ -81,8 +102,28 @@
     if (direct != null) return direct;
     var dynamic = patternLookup(raw, code);
     if (dynamic != null) return dynamic;
-    var phrases = (dict(code)._phrases || dict("en")._phrases || []).slice().sort(function (a, b) { return b.length - a.length; });
-    var out = raw;
+    /* Підказки й коментарі таблиць складаються з незалежних фрагментів.
+       Спочатку рядки, далі назва поля перед двокрапкою, потім роздільник.
+       Так динамічні значення й числа не губляться у складеному title. */
+    if (/\r?\n/.test(raw)) {
+      return raw.split(/(\r?\n)/).map(function (line) {
+        return /^\r?\n$/.test(line) || !line ? line : translate(line, code);
+      }).join("");
+    }
+    if (raw.indexOf("→ ") === 0) return "→ " + translate(raw.slice(2), code);
+    var metrics = raw.match(/^(.*) \(([▲▼·].*)\)$/);
+    if (metrics) {
+      return translate(metrics[1], code) + " (" + translate(metrics[2], code) + ")";
+    }
+    var colon = raw.indexOf(": ");
+    if (colon > 0 && lookup(raw.slice(0, colon), code) != null) {
+      return translate(raw.slice(0, colon), code) + ": " + translate(raw.slice(colon + 2), code);
+    }
+    if (raw.indexOf(" · ") >= 0) {
+      return raw.split(" · ").map(function (part) { return translate(part, code); }).join(" · ");
+    }
+    if (!/[А-Яа-яЇїІіЄєҐґ]/.test(raw)) return raw;
+    var phrases = phraseEntries(code), out = raw;
     for (var i = 0; i < phrases.length; i++) {
       var key = phrases[i], value = lookup(key, code);
       if (value && out.indexOf(key) >= 0) out = replacePhrase(out, key, value);
