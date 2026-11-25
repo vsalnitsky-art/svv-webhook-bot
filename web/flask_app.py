@@ -210,6 +210,10 @@ def create_app():
     
     app.secret_key = os.getenv('FLASK_SECRET_KEY', 'sleeper-ob-bot-secret-key-change-me')
 
+    # Публічна версія клієнта + заборона кешування HTML. Реєструється до auth-gate.
+    from web.versioning import register_versioning
+    register_versioning(app)
+
     # ── CORS for the read-only info site ──────────────────────────────────
     # The separate informational dashboard (infosite/) lives on another origin
     # and only ever READS data via GET /api/*. Allow cross-origin reads for the

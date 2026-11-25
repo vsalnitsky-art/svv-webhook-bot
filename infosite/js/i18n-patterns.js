@@ -195,31 +195,51 @@ Object.assign(window.VSV_I18N_PATTERNS.en, {
   "висока енергія стиснення ({})": "high compression energy ({})",
   "накопичення завершується ({})": "accumulation nearing completion ({})",
   "squeeze {} год": "{}h squeeze", "ATR у нижніх {}% історії": "ATR in the lowest {}% of its history",
-  "обсяг висох ×{}": "volume dried up ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI detects a setup"
+  "обсяг висох ×{}": "volume dried up ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI detects a setup",
+  "🔁 Розворот: кульмінація + абсорбція": "🔁 Reversal: climax + absorption",
+  "💥 Пробій після стиснення (squeeze)": "💥 Post-compression breakout (squeeze)",
+  "↗ Продовження з відкату (pullback)": "↗ Pullback continuation",
+  "🪤 Spring — хибний пробій (sweep)": "🪤 Spring — false breakout (sweep)"
 });
 Object.assign(window.VSV_I18N_PATTERNS.ru, {
   "висока енергія стиснення ({})": "высокая энергия сжатия ({})",
   "накопичення завершується ({})": "накопление близко к завершению ({})",
   "squeeze {} год": "squeeze {} ч", "ATR у нижніх {}% історії": "ATR в нижних {}% собственной истории",
-  "обсяг висох ×{}": "объём снизился ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI обнаруживает сетап"
+  "обсяг висох ×{}": "объём снизился ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI обнаруживает сетап",
+  "🔁 Розворот: кульмінація + абсорбція": "🔁 Разворот: кульминация + абсорбция",
+  "💥 Пробій після стиснення (squeeze)": "💥 Пробой после сжатия (squeeze)",
+  "↗ Продовження з відкату (pullback)": "↗ Продолжение после отката (pullback)",
+  "🪤 Spring — хибний пробій (sweep)": "🪤 Spring — ложный пробой (sweep)"
 });
 Object.assign(window.VSV_I18N_PATTERNS.pl, {
   "висока енергія стиснення ({})": "wysoka energia kompresji ({})",
   "накопичення завершується ({})": "akumulacja zbliża się do końca ({})",
   "squeeze {} год": "squeeze {} godz.", "ATR у нижніх {}% історії": "ATR w dolnych {}% własnej historii",
-  "обсяг висох ×{}": "wolumen zmalał ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI wykrywa setup"
+  "обсяг висох ×{}": "wolumen zmalał ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI wykrywa setup",
+  "🔁 Розворот: кульмінація + абсорбція": "🔁 Odwrócenie: klimaks + absorpcja",
+  "💥 Пробій після стиснення (squeeze)": "💥 Wybicie po kompresji (squeeze)",
+  "↗ Продовження з відкату (pullback)": "↗ Kontynuacja po korekcie (pullback)",
+  "🪤 Spring — хибний пробій (sweep)": "🪤 Spring — fałszywe wybicie (sweep)"
 });
 Object.assign(window.VSV_I18N_PATTERNS.de, {
   "висока енергія стиснення ({})": "hohe Kompressionsenergie ({})",
   "накопичення завершується ({})": "Akkumulation nähert sich dem Abschluss ({})",
   "squeeze {} год": "{} Std. Squeeze", "ATR у нижніх {}% історії": "ATR in den untersten {}% der eigenen Historie",
-  "обсяг висох ×{}": "Volumen gesunken ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI erkennt ein Setup"
+  "обсяг висох ×{}": "Volumen gesunken ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI erkennt ein Setup",
+  "🔁 Розворот: кульмінація + абсорбція": "🔁 Umkehr: Klimax + Absorption",
+  "💥 Пробій після стиснення (squeeze)": "💥 Ausbruch nach Kompression (Squeeze)",
+  "↗ Продовження з відкату (pullback)": "↗ Fortsetzung nach Rücksetzer (Pullback)",
+  "🪤 Spring — хибний пробій (sweep)": "🪤 Spring — falscher Ausbruch (Sweep)"
 });
 Object.assign(window.VSV_I18N_PATTERNS.es, {
   "висока енергія стиснення ({})": "alta energía de compresión ({})",
   "накопичення завершується ({})": "acumulación próxima a completarse ({})",
   "squeeze {} год": "squeeze {} h", "ATR у нижніх {}% історії": "ATR en el {}% inferior de su historial",
-  "обсяг висох ×{}": "volumen reducido ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI detecta una configuración"
+  "обсяг висох ×{}": "volumen reducido ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI detecta una configuración",
+  "🔁 Розворот: кульмінація + абсорбція": "🔁 Giro: clímax + absorción",
+  "💥 Пробій після стиснення (squeeze)": "💥 Ruptura tras compresión (squeeze)",
+  "↗ Продовження з відкату (pullback)": "↗ Continuación tras retroceso (pullback)",
+  "🪤 Spring — хибний пробій (sweep)": "🪤 Spring — ruptura falsa (sweep)"
 });
 
 /* Dynamic accuracy counters must also translate as one DOM text node. */

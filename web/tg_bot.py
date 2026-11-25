@@ -487,6 +487,50 @@ def notify_category(category, text, buttons=None):
     return False
 
 
+def notify_category_animation(category, text, animation_url=None, buttons=None):
+    """Send a compact category signal with a public GIF, never losing the text.
+
+    Telegram captions are limited to 1024 characters. If the animation URL is
+    unavailable or Telegram rejects sendAnimation, the ordinary HTML message is
+    sent through the same category, topic and permission rules as a fallback.
+    """
+    if animation_url is None:
+        site = (os.getenv('INFO_SITE_URL') or '').rstrip('/')
+        base = base_url()
+        animation_url = (site + '/img/vsv-signals.gif' if site
+                         else base + '/info/img/vsv-signals.gif' if base else '')
+    if not str(animation_url).startswith(('https://', 'http://')):
+        return notify_category(category, text, buttons)
+    if not _cat_enabled(category):
+        return False
+    chat, thread = _cat_chat(category)
+    if not chat:
+        return False
+    tag = _CAT_TAG.get(category, '')
+    body = f"{tag}\n{text}" if tag else text
+    if len(body) > 1024:
+        return notify_category(category, text, buttons)
+    p = {'chat_id': chat, 'animation': animation_url, 'caption': body,
+         'parse_mode': 'HTML'}
+    if thread:
+        try:
+            p['message_thread_id'] = int(thread)
+        except (TypeError, ValueError):
+            pass
+    if category in _PROTECTED_CATS:
+        p['protect_content'] = True
+    if buttons:
+        p['reply_markup'] = {'inline_keyboard': buttons}
+    global _last_send_err
+    res = _api('sendAnimation', p) or {}
+    if res.get('ok'):
+        _last_send_err = ''
+        return True
+    animation_error = str(res.get('description') or res.get('error') or 'відмова')
+    print(f"[TG] animation to {category} failed: {animation_error}; text fallback")
+    return notify_category(category, text, buttons)
+
+
 # 💬 Коментарі в групі ПРИБРАНО (вимога 08.11): кнопка «💬 Коментар» і
 # перевірка/увімкнення прав коментування більше не існують.
 _bot_username_cache = {'v': None, 'at': 0.0}

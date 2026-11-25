@@ -672,6 +672,8 @@ body.perm-no-sec_terminal .pm-sec_terminal,body.perm-no-sec_signals .pm-sec_sign
 .rec-ph{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;white-space:normal}
 .rec-phase{flex:0 0 auto;max-width:100%;line-height:1.25;white-space:normal}
 #rec-tbl .rec-note{display:block;flex:0 1 auto;min-width:0;max-width:100%;overflow:visible;white-space:normal;text-overflow:clip;overflow-wrap:anywhere;color:var(--txt-dim);font:500 10.5px/1.35 var(--font)}
+#rec-tbl .rec-note-ic{display:inline-block;width:13px;height:13px;margin:0 2px;vertical-align:-2px;object-fit:contain;filter:drop-shadow(0 0 3px rgba(240,185,11,.22))}
+#rec-tbl .rec-note-ic.ai-brand{border-radius:3px}
 #rec-tbl .rec-empty{padding:22px 12px;text-align:center;white-space:normal;line-height:1.5}
 .rec-wrap{overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:thin;scrollbar-color:var(--accent) var(--elev)}
 @media(max-width:1200px){#rec-tbl{min-width:1080px}.rec-score-spark{display:none}.rec-grade-filter>span{display:none}}

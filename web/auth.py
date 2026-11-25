@@ -1279,7 +1279,7 @@ def ensure_admin():
 # Access gate
 # ==================================================================
 _PUBLIC_EXACT = {'/login', '/register', '/forgot', '/logout', '/pending',
-                 '/api/health', '/favicon.ico'}
+                 '/api/health', '/api/version', '/favicon.ico'}
 # '/info' is public so GUESTS can open the info-site shell (login/registration
 # live ON it). The DATA APIs stay gated — a guest sees the auth hero, not state.
 _PUBLIC_PREFIX = ('/static/', '/confirm/', '/reset/', '/auth/', '/info', '/api/i18n/')
@@ -1289,7 +1289,7 @@ _USER_MUTABLE_PREFIX = ('/api/me', '/logout', '/auth/')   # non-admin may POST h
 # info-site consumes. POSTs are still blocked by the mutating-method guard, so
 # these give GET access only (except /api/me* which is the user's own account).
 _USER_NO_BOT_ALLOWED = ('/cabinet', '/logout', '/api/me', '/pending',
-                        '/api/health', '/info',
+                        '/api/health', '/api/version', '/info',
                         '/api/fuel-filter/state', '/api/stats',
                         '/api/sm/bias', '/api/sm/auto-gate', '/api/tm/state',
                         '/api/info/', '/api/i18n/')

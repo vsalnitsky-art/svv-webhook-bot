@@ -3077,13 +3077,18 @@
     var tip = recT("Measured move у будь-який бік") + (isFinite(b) ? " · " + recT("діапазон 24 год") + " " + b.toFixed(2) + "%" : "");
     return '<span title="' + esc(tip) + '">±' + a.toFixed(2) + "%</span>";
   }
+  function recNoteHtml(txt) {
+    return esc(txt)
+      .replace(/🤖/g, '<img class="ai-brand rec-note-ic" src="img/logo.svg" alt="VSV AI">')
+      .replace(/💥/g, '<img class="rec-note-ic" src="img/forecast-mark.svg" alt="Breakout">');
+  }
   function recPhaseCell(r) {
     var ph = r.impulse ? ["imp", "💥 Імпульс"] : Number(r.charge) >= 65 ? ["sq", "🌀 Стиснення"] : ["acc", "⏳ Накопичення"];
     var notes = (r.notes || []).filter(function (x) { return x && x.indexOf("💥") !== 0; });
     var txt = notes.map(function (note) {
       return note.split(" · ").map(function (part) { return recT(part); }).join(" · ");
     }).join(" · ");
-    return '<span class="rec-ph"><span class="rec-phase ' + ph[0] + '">' + recT(ph[1]) + '</span><span class="rec-note" title="' + esc(txt) + '">' + esc(txt) + "</span></span>";
+    return '<span class="rec-ph"><span class="rec-phase ' + ph[0] + '">' + recT(ph[1]) + '</span><span class="rec-note" title="' + esc(txt) + '">' + recNoteHtml(txt) + "</span></span>";
   }
   // 🧭 Ймовірний напрямок (25.11): зведення доказів бота + впевненість моделі +
   // фактична точність журналу перевірки; 🔄 — напрямок нещодавно розвернувся.

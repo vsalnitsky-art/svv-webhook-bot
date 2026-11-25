@@ -114,33 +114,48 @@ def test_tg_new_coins_only_after_base_and_with_cooldown():
     assert [x['symbol'] for x in new] == ['C']
 
 
-def test_tg_text_has_no_direction():
-    rows, _ = IP.vsv_signal_rows({'AAAUSDT': _rec(92, sq=20, rank=8, vr=0.6)}, [], {}, 'binance')
+def test_tg_text_is_compact_and_has_direction_score_and_real_accuracy():
+    rows = [
+        {'symbol': 'AAAUSDT', 'score': 86.4, 'grade': 'A',
+         'hint': {'side': 'LONG', 'prob': 78.2, 'acc': {'acc': 71.4, 'n': 28}}},
+        {'symbol': 'BBBUSDT', 'score': 72.0, 'grade': 'B',
+         'hint': {'side': 'SHORT', 'prob': 64.9}},
+        {'symbol': 'CCCUSDT', 'score': 55.0, 'grade': 'C', 'hint': {'side': None}},
+    ]
     t = IP.vsv_tg_text(rows)
-    assert '#AAAUSDT' in t and 'VSV' in t and 'Напрямок не вказується' in t
-    for w in ('LONG', 'SHORT', '🟢', '🔴', 'SL', 'TP'):
-        assert w not in t, w
+    assert t.startswith('🛰 <b>VSV SIGNALS</b>')
+    assert '🚀 <b>#AAAUSDT</b> · 🟢 <b>LONG</b>' in t
+    assert '🎯 78%' in t and '🏆 VSV <b>86 A</b>' in t and '📈 71% · 28' in t
+    assert '🚀 <b>#BBBUSDT</b> · 🔴 <b>SHORT</b>' in t and '🎯 65%' in t
+    assert '🚀 <b>#CCCUSDT</b> · ⚖ <b>NEUTRAL</b>' in t
+    for old in ('Напрямок не вказується', 'заряд ', 'squeeze ', 'амплітуд'):
+        assert old not in t, old
 
 
-def test_tg_tick_sends_new_coins_to_signals_theme():
+def test_tg_tick_sends_new_a_grade_coins_to_signals_theme():
     sent = []
-    IP._vsv_tg.update({'boot': 0, 'set': {'enabled': True}, 'st': {'init': True, 'in': ['AAAUSDT'], 'sent': {}}})
-    rows = [{'symbol': 'AAAUSDT', 'score': 70}, {'symbol': 'BBBUSDT', 'score': 66}]
+    IP._vsv_tg.update({'boot': 0, 'set': {'enabled': True, 'grade': 'A'},
+                       'st': {'init': True, 'in': ['AAAUSDT'], 'sent': {}}})
+    rows = [{'symbol': 'AAAUSDT', 'score': 85, 'grade': 'A'},
+            {'symbol': 'BBBUSDT', 'score': 86, 'grade': 'A',
+             'hint': {'side': 'LONG', 'prob': 75}},
+            {'symbol': 'CCCUSDT', 'score': 70, 'grade': 'B'}]
     old = IP.recommended_payload
     try:
         IP.recommended_payload = lambda now=None: {'rows': rows}
         assert IP.vsv_tg_tick(now=10_000, send=lambda t: sent.append(t) or True) == ['BBBUSDT']
         assert len(sent) == 1 and '#BBBUSDT' in sent[0] and '#AAAUSDT' not in sent[0]
-        IP._vsv_tg['set'] = {'enabled': False}
-        rows.append({'symbol': 'CCCUSDT', 'score': 66})
+        assert '#CCCUSDT' not in sent[0], 'Telegram за замовчуванням — лише клас A'
+        IP._vsv_tg['set'] = {'enabled': False, 'grade': 'A'}
+        rows.append({'symbol': 'DDDUSDT', 'score': 88, 'grade': 'A'})
         assert IP.vsv_tg_tick(now=10_100, send=lambda t: sent.append(t) or True) == []
         assert len(sent) == 1, 'тумблер вимкнено — нічого не шлемо'
     finally:
         IP.recommended_payload = old
         IP._vsv_tg['set'] = None
     src = open(os.path.join(ROOT, 'web', 'info_portal.py'), encoding='utf-8').read()
-    assert "notify_category('sbr'" in src and "'/api/vsv-signals/settings'" in src
-    assert "VSV_TG_SET_KEY" in src and "{'enabled': True}" in src, 'дефолт — увімкнено'
+    assert "notify_category_animation('sbr'" in src and "'/api/vsv-signals/settings'" in src
+    assert "VSV_TG_SET_KEY" in src and "{'enabled': True, 'grade': 'A'}" in src, 'дефолт — A, увімкнено'
     html = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
     assert 'id="vsv-tg"' in html and 'function vsvTgSave' in html and '/api/vsv-signals/settings' in html
 

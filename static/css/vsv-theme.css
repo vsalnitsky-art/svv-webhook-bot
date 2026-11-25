@@ -231,3 +231,13 @@ body.vsv-bot-body .notification{background:#20242b;border:1px solid #4a515d;colo
   body.vsv-bot-body .data-table{min-width:640px}
 }
 @media(prefers-reduced-motion:reduce){body.vsv-bot-body .stat-icon{animation:none}}
+
+/* 25.11: єдине вирівнювання числових і текстових даних у таблицях бота */
+body.vsv-bot-body table{font-variant-numeric:tabular-nums lining-nums}
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) th,
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td{vertical-align:middle}
+body.vsv-bot-body :is(th,td):is(.r,.num,.number,.numeric,.text-right){text-align:right!important;font-variant-numeric:tabular-nums lining-nums}
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td{line-height:1.3}
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td>span{vertical-align:middle}
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td.sym,
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td.symbol{text-align:left}

@@ -30,6 +30,7 @@ WATCHLIST із своїм списком монет і графік…» + «Г�
 import json
 import threading
 import time
+from html import escape as _html_escape
 
 IWL_MAX = 20                 # стеля особистого списку (вимога 08.11)
 IWL_DEFAULT = ('BTCUSDT', 'ETHUSDT')
@@ -2710,13 +2711,13 @@ def vsv_dir_tick(now=None, rows=None, prices=None):
 # ─── 📨 VSV SIGNALS → Telegram «🔔 Сигнали» (вимога 25.11) ─────────────────
 # Поява НОВОЇ монети у списку VSV SIGNALS (той самий `recommended_payload`, що
 # малює сайт) → коротке повідомлення в спільну групу, тема «🔔 Сигнали»
-# (категорія `sbr`). Без напрямку — як і на сайті. Тумблер — у боті (деф. УВІМК).
+# (категорія `sbr`). Напрямок і точність — ті самі, що на сайті.
 VSV_TG_SET_KEY = 'vsv_signals_tg_settings'   # {enabled}
 VSV_TG_KEY = 'vsv_signals_tg_v1'             # {init, in, sent}
 VSV_TG_TICK_SEC = 60
 VSV_TG_WARMUP_SEC = 300       # після старту бота дані Пружин ще доїжджають
 VSV_TG_COOLDOWN = 6 * 3600    # монета, що «блимає» на межі списку, — не частіше
-VSV_TG_MAX_LINES = 15
+VSV_TG_MAX_LINES = 8          # caption GIF у Telegram обмежений 1024 символами
 _vsv_tg = {'boot': time.time(), 'thread': None, 'st': None, 'set': None,
            'last': None}
 
@@ -2732,20 +2733,25 @@ def _vsv_db():
 def vsv_tg_settings():
     s = _vsv_tg.get('set')
     if s is None:
-        s = {'enabled': True}
+        s = {'enabled': True, 'grade': 'A'}
         db = _vsv_db()
         try:
             raw = db.get_setting(VSV_TG_SET_KEY, None) if db is not None else None
-            if isinstance(raw, dict) and 'enabled' in raw:
-                s['enabled'] = bool(raw.get('enabled'))
+            if isinstance(raw, dict):
+                if 'enabled' in raw:
+                    s['enabled'] = bool(raw.get('enabled'))
+                if str(raw.get('grade') or '').upper() in ('A', 'B', 'C', 'ALL'):
+                    s['grade'] = str(raw.get('grade')).upper()
         except Exception:
             pass
         _vsv_tg['set'] = s
     return dict(s)
 
 
-def vsv_tg_set(enabled):
-    s = {'enabled': bool(enabled)}
+def vsv_tg_set(enabled, grade=None):
+    current = vsv_tg_settings()
+    grade = str(grade or current.get('grade') or 'A').upper()
+    s = {'enabled': bool(enabled), 'grade': grade if grade in ('A', 'B', 'C', 'ALL') else 'A'}
     _vsv_tg['set'] = s
     db = _vsv_db()
     try:
@@ -2783,33 +2789,40 @@ def vsv_tg_new(rows, st, now, cooldown=VSV_TG_COOLDOWN):
 
 
 def vsv_tg_text(rows):
-    """ЧИСТА: повідомлення для теми «🔔 Сигнали» — БЕЗ напрямку."""
-    lines = ['🛰 <b>VSV SIGNALS</b> · нові інструменти в радарі волатильності']
+    """Compact VSV signal: direction, model confidence, score and real accuracy.
+
+    LONG/SHORT, VSV and percentages stay language-neutral in the shared group.
+    Accuracy is shown only after the direction journal has verified enough cases;
+    no probability or accuracy is invented while the direction is undetermined.
+    """
+    lines = ['🛰 <b>VSV SIGNALS</b>']
     for r in (rows or [])[:VSV_TG_MAX_LINES]:
-        S = str(r.get('symbol') or '').upper()
-        ph = '💥' if r.get('impulse') else '🌀'
-        bits = [f"{ph} #{S}", f"VSV <b>{float(r.get('score') or 0):.0f}</b> ({r.get('grade') or 'C'})"]
-        if r.get('charge') is not None:
-            bits.append(f"заряд {float(r['charge']):.0f}")
-        sq = int(_vsv_f(r.get('squeeze_bars'), 0) or 0)
-        if sq > 0:
-            bits.append(f"squeeze {sq} год")
-        if r.get('amp_pct') is not None:
-            bits.append(f"±{float(r['amp_pct']):.2f}%")
-        if r.get('ai_ready'):
-            bits.append('🤖 сетап')
-        lines.append(' · '.join(bits))
+        symbol = _html_escape(str(r.get('symbol') or '').upper())
+        hint = r.get('hint') if isinstance(r.get('hint'), dict) else {}
+        side = str(hint.get('side') or '').upper()
+        direction = ('🟢 <b>LONG</b>' if side == 'LONG'
+                     else '🔴 <b>SHORT</b>' if side == 'SHORT' else '⚖ <b>NEUTRAL</b>')
+        lines.append(f"🚀 <b>#{symbol}</b> · {direction}")
+        details = []
+        if side in ('LONG', 'SHORT') and hint.get('prob') is not None:
+            details.append(f"🎯 {float(hint['prob']):.0f}%")
+        grade = _html_escape(str(r.get('grade') or 'C'))
+        details.append(f"🏆 VSV <b>{float(r.get('score') or 0):.0f} {grade}</b>")
+        accuracy = hint.get('acc') if isinstance(hint.get('acc'), dict) else {}
+        if side in ('LONG', 'SHORT') and accuracy.get('acc') is not None:
+            sample = f" · {int(accuracy.get('n') or 0)}" if accuracy.get('n') is not None else ''
+            details.append(f"📈 {float(accuracy['acc']):.0f}%{sample}")
+        lines.append(' · '.join(details))
     if len(rows or []) > VSV_TG_MAX_LINES:
-        lines.append(f"… і ще {len(rows) - VSV_TG_MAX_LINES}")
-    lines.append('ℹ️ Напрямок не вказується: пробій діапазону можливий в обидва боки. '
-                 'Інформаційний watchlist, не торгова рекомендація.')
+        lines.append(f"… +{len(rows) - VSV_TG_MAX_LINES}")
     return '\n'.join(lines)
 
 
 def vsv_tg_tick(now=None, send=None):
     """Один прохід: нові монети → Telegram. Повертає список надісланих символів."""
     now = time.time() if now is None else now
-    if not vsv_tg_settings().get('enabled'):
+    settings = vsv_tg_settings()
+    if not settings.get('enabled'):
         return []
     if now - _vsv_tg['boot'] < VSV_TG_WARMUP_SEC:
         return []
@@ -2822,6 +2835,9 @@ def vsv_tg_tick(now=None, send=None):
             raw = None
         st = raw if isinstance(raw, dict) else {}
     rows = (recommended_payload(now) or {}).get('rows') or []
+    grade = str(settings.get('grade') or 'A').upper()
+    if grade in ('A', 'B', 'C'):
+        rows = [r for r in rows if str((r or {}).get('grade') or 'C').upper() == grade]
     new, st2 = vsv_tg_new(rows, st, now)
     if st2 != st:
         _vsv_tg['st'] = st2
@@ -2842,7 +2858,7 @@ def vsv_tg_tick(now=None, send=None):
             ok = bool(send(vsv_tg_text(new)))
         else:
             from web import tg_bot
-            ok = bool(tg_bot.notify_category('sbr', vsv_tg_text(new)))
+            ok = bool(tg_bot.notify_category_animation('sbr', vsv_tg_text(new)))
             if not ok:
                 why = (getattr(tg_bot, 'last_send_error', lambda: '')() or '')
     except Exception as e:
@@ -2902,7 +2918,8 @@ def register_info_portal(app):
     def api_vsv_signals_settings():
         if request.method == 'POST':
             body = request.get_json(silent=True) or {}
-            vsv_tg_set(bool(body.get('enabled')))
+            current = vsv_tg_settings()
+            vsv_tg_set(bool(body.get('enabled', current.get('enabled'))), body.get('grade'))
         return jsonify({'ok': True, 'settings': vsv_tg_settings(), 'last': _vsv_tg.get('last'),
                         'in': len(((_vsv_tg.get('st') or {}).get('in')) or [])})
 

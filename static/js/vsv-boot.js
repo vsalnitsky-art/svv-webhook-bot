@@ -17,7 +17,11 @@
   });
   function pageReady() {
     var fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
-    Promise.resolve(fonts).catch(function () {}).then(function () { ready("page"); });
+    var version = window.VSV_VERSION_SYNC && window.VSV_VERSION_SYNC.ready ? window.VSV_VERSION_SYNC.ready : Promise.resolve();
+    Promise.all([
+      Promise.resolve(fonts).catch(function () {}),
+      Promise.resolve(version).catch(function () {})
+    ]).then(function () { ready("page"); });
   }
   if (document.readyState === "complete") pageReady();
   else window.addEventListener("load", pageReady, { once: true });
