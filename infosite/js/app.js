@@ -3280,6 +3280,7 @@
   function revealApp() {
     if (appRevealed) return Promise.resolve();
     var language = window.VSV_I18N && window.VSV_I18N.ready ? window.VSV_I18N.ready : Promise.resolve();
+    var version = window.VSV_VERSION_SYNC && window.VSV_VERSION_SYNC.ready ? window.VSV_VERSION_SYNC.ready : Promise.resolve();
     var fonts = document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve();
     var loaded = document.readyState === "complete" ? Promise.resolve() : new Promise(function (resolve) {
       window.addEventListener("load", resolve, { once: true });
@@ -3287,6 +3288,7 @@
     return Promise.all([
       loaded,
       Promise.resolve(language).catch(function () { return null; }),
+      Promise.resolve(version).catch(function () { return null; }),
       Promise.resolve(fonts).catch(function () { return null; })
     ]).then(function () {
       return new Promise(function (resolve) {

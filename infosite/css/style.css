@@ -119,9 +119,7 @@ button:disabled{cursor:not-allowed;opacity:.4}svg{display:block}button svg,a svg
 .boot-loader .boot-mark img{width:78px;height:78px;border-radius:20px;display:block;box-shadow:0 0 0 1px rgba(240,185,11,.4),0 14px 42px rgba(240,185,11,.28)}
 .boot-loader .boot-mark:after{content:"";position:absolute;inset:-7px;border-radius:26px;border:1px solid #f0b90b;opacity:0;animation:orbitPulse 2.2s ease-out infinite}
 .boot-loader b{font:600 12px var(--mono);letter-spacing:.42em;text-indent:.42em;color:var(--txt-dim)}
-.boot-loader b:after{content:"";animation:bootDots 1.2s steps(1) infinite}
 .boot-loader .boot-spin{width:22px;height:22px;border:2px solid var(--line);border-top-color:#f0b90b;border-radius:50%;animation:spin .8s linear infinite}
-@keyframes bootDots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
 
 /* Завантаження графіка: той самий логотип, що й на boot-екрані */
 .chart-loading{display:flex;flex-direction:column;align-items:center;gap:13px;color:var(--txt-dim)}
@@ -194,14 +192,8 @@ body{display:flex;flex-direction:column}
 .rec-badge,.pp-badge{font:800 18px var(--font);letter-spacing:.05em;padding:2px 0;border:0;border-radius:0;color:transparent;background:linear-gradient(92deg,var(--txt) 20%,var(--accent-2) 50%,var(--txt) 80%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:brandSheen 5.5s linear infinite}
 .pp-title{font-size:16px;font-weight:600}
 
-/* LOADING з крапками в стилі Kimi */
+/* LOADING — лише статичний текст, без псевдоелементів і крапок */
 .boot-loader b{display:inline-flex;align-items:center}
-.boot-loader b:after{content:none}
-.boot-dots{display:inline-flex;gap:4px;margin-left:9px}
-.boot-dots i{width:5px;height:5px;border-radius:50%;background:var(--muted);animation:kimiDot 1.2s ease-in-out infinite}
-.boot-dots i:nth-child(2){animation-delay:.15s}
-.boot-dots i:nth-child(3){animation-delay:.3s}
-@keyframes kimiDot{0%,60%,100%{transform:translateY(0);opacity:.35}30%{transform:translateY(-4px);opacity:1}}
 
 /* Більші шрифти, особливо в робочій зоні графіка */
 body{font-size:15px}
