@@ -3028,97 +3028,110 @@
 
   // 🛰 VSV SIGNALS (вимога 24.11): монети ОБОХ Пружин з найвищим VSV Score —
   // radar волатильності; 25.11 — ЙМОВІРНИЙ напрямок з фактичною точністю.
-  var REC = { f: "all", rows: [], meta: {} };
-  var REC_F = ["all", "charged", "impulse", "ai"];
-  try { var _rf = localStorage.getItem("vsv_rec_f"); if (REC_F.indexOf(_rf) >= 0) REC.f = _rf; } catch (e) {}
+  var REC = { f: "all", grade: "all", rows: [], meta: {} };
+  var REC_F = ["all", "charged", "impulse", "ai"], REC_GRADES = ["A", "B", "C", "all"];
+  try {
+    var _rf = localStorage.getItem("vsv_rec_f"); if (REC_F.indexOf(_rf) >= 0) REC.f = _rf;
+    var _rg = localStorage.getItem("vsv_rec_grade"); if (REC_GRADES.indexOf(_rg) >= 0) REC.grade = _rg;
+  } catch (e) {}
+  function recT(s) { return window.VSV_I18N && window.VSV_I18N.t ? window.VSV_I18N.t(s) : s; }
   function recPass(r, f) { return f === "all" || (f === "impulse" ? !!r.impulse : f === "ai" ? !!r.ai_ready : !r.impulse); }
+  function recGradePass(r, grade) { return grade === "all" || String(r.grade || "C").toUpperCase() === grade; }
   var REC_PART_UA = { charge: "заряд", squeeze: "стиснення", volat: "низька волатильність", volume: "висихання обсягу", ai: "VSV·AI" };
   var REC_PART_W = { charge: 45, squeeze: 15, volat: 15, volume: 10, ai: 15 };
   function recScoreCol(v) { return v >= 80 ? "#00e676" : v >= 65 ? "#facc15" : "#94a3b8"; }
   function recScoreCell(r) {
     var v = Number(r.score);
     if (!isFinite(v)) return '<span class="muted">—</span>';
-    var p = r.parts || {}, tip = ["VSV Score " + v.toFixed(0) + " · клас " + (r.grade || "") + " (" + (r.grade_ua || "") + " готовність)"];
-    Object.keys(REC_PART_W).forEach(function (k) { if (p[k] != null) tip.push(REC_PART_UA[k] + " " + Number(p[k]).toFixed(0) + "% × " + REC_PART_W[k] + "%"); });
-    var c = recScoreCol(v);
-    return '<span class="rec-score" title="' + esc(tip.join("\n")) + '"><span class="bar"><i style="width:' + Math.max(0, Math.min(100, v)).toFixed(0) + "%;background:" + c + '"></i></span><b style="color:' + c + '">' + v.toFixed(0) + '</b><span class="rec-grade g-' + esc(r.grade || "C") + '">' + esc(r.grade || "C") + "</span></span>";
+    var p = r.parts || {}, tip = ["VSV Score " + v.toFixed(0) + " · " + recT("клас") + " " + (r.grade || "") + " (" + recT(r.grade_ua || "") + " " + recT("готовність") + ")"];
+    Object.keys(REC_PART_W).forEach(function (k) { if (p[k] != null) tip.push(recT(REC_PART_UA[k]) + " " + Number(p[k]).toFixed(0) + "% × " + REC_PART_W[k] + "%"); });
+    var c = recScoreCol(v), score = Math.max(0, Math.min(100, v)).toFixed(0), grade = String(r.grade || "C").toUpperCase();
+    return '<span class="rec-score g-' + esc(grade) + '" style="--score:' + score + ';--score-color:' + c + '" title="' + esc(tip.join("\n")) + '"><span class="rec-score-ring" role="img" aria-label="VSV Score ' + score + '"><i></i><b>' + v.toFixed(0) + '</b></span><span class="rec-grade g-' + esc(grade) + '">' + esc(grade) + '</span><span class="rec-score-spark" aria-hidden="true"><i></i><i></i><i></i></span></span>';
   }
   function recChargeCell(r) {
     var c = Number(r.charge); if (!isFinite(c)) return '<span class="muted">—</span>';
     var ci = Number(r.charge_in), d = isFinite(ci) ? c - ci : null;
     var dh = d != null && Math.abs(d) >= 0.5 ? ' <small class="' + (d > 0 ? "rec-up" : "rec-dn") + '">' + (d > 0 ? "+" : "−") + Math.abs(d).toFixed(0) + "</small>" : "";
-    return '<span class="rec-chg" title="Енергія стиснення «Пружини»' + (d != null ? " · при потраплянні в список " + ci.toFixed(0) : "") + '"><b style="color:' + exhColor(c) + '">' + c.toFixed(0) + "</b>" + dh + "</span>";
+    var tip = recT("Енергія стиснення «Пружини»") + (d != null ? " · " + recT("при потраплянні в список") + " " + ci.toFixed(0) : "");
+    return '<span class="rec-chg" title="' + esc(tip) + '"><b style="color:' + exhColor(c) + '">' + c.toFixed(0) + "</b>" + dh + "</span>";
   }
   function recSqCell(r) {
     var n = Number(r.squeeze_bars);
-    if (!isFinite(n) || n <= 0) return '<span class="muted" title="Зараз не в TTM squeeze">—</span>';
-    return '<span class="' + (n >= 12 ? "rec-good" : "") + '" title="Смуги Боллінджера всередині каналу Кельтнера ' + n + ' год поспіль">' + n + " год</span>";
+    if (!isFinite(n) || n <= 0) return '<span class="muted" title="' + esc(recT("Зараз не в TTM squeeze")) + '">—</span>';
+    var tip = recT("Смуги Боллінджера всередині каналу Кельтнера " + n + " год поспіль");
+    return '<span class="' + (n >= 12 ? "rec-good" : "") + '" title="' + esc(tip) + '">' + n + " " + recT("год") + "</span>";
   }
   function recVolatCell(r) {
     var a = Number(r.atr_rank); if (!isFinite(a)) return '<span class="muted">—</span>';
-    return '<span class="' + (a <= 25 ? "rec-good" : a >= 75 ? "rec-hot" : "") + '" title="Поточний ATR вищий за ' + a.toFixed(0) + '% власної історії">ATR p' + a.toFixed(0) + "</span>";
+    var tip = recT("Поточний ATR вищий за " + a.toFixed(0) + "% власної історії");
+    return '<span class="' + (a <= 25 ? "rec-good" : a >= 75 ? "rec-hot" : "") + '" title="' + esc(tip) + '">ATR p' + a.toFixed(0) + "</span>";
   }
   function recVolCell(r) {
     var v = Number(r.vol_ratio); if (!isFinite(v)) return '<span class="muted">—</span>';
     var cls = v <= 0.75 ? "rec-good" : v >= 1.5 ? "rec-hot" : "", t = v <= 0.75 ? "обсяг висихає — ліквідність накопичується" : v >= 1.5 ? "обсяг вище середнього — учасники вже активні" : "обсяг близький до середнього";
-    return '<span class="' + cls + '" title="' + t + '">×' + v.toFixed(2) + "</span>";
+    return '<span class="' + cls + '" title="' + esc(recT(t)) + '">×' + v.toFixed(2) + "</span>";
   }
   function recAmpCell(r) {
     var a = Number(r.amp_pct), b = Number(r.box_pct);
-    if (!isFinite(a)) return isFinite(b) ? '<span title="Ширина 24-год діапазону">±' + b.toFixed(2) + "%</span>" : '<span class="muted">—</span>';
-    return '<span title="Measured move у будь-який бік' + (isFinite(b) ? " · діапазон 24 год " + b.toFixed(2) + "%" : "") + '">±' + a.toFixed(2) + "%</span>";
+    if (!isFinite(a)) return isFinite(b) ? '<span title="' + esc(recT("Ширина 24-год діапазону")) + '">±' + b.toFixed(2) + "%</span>" : '<span class="muted">—</span>';
+    var tip = recT("Measured move у будь-який бік") + (isFinite(b) ? " · " + recT("діапазон 24 год") + " " + b.toFixed(2) + "%" : "");
+    return '<span title="' + esc(tip) + '">±' + a.toFixed(2) + "%</span>";
   }
   function recPhaseCell(r) {
     var ph = r.impulse ? ["imp", "💥 Імпульс"] : Number(r.charge) >= 65 ? ["sq", "🌀 Стиснення"] : ["acc", "⏳ Накопичення"];
     var notes = (r.notes || []).filter(function (x) { return x && x.indexOf("💥") !== 0; });
-    var txt = notes.join(" · ");
-    return '<span class="rec-ph"><span class="rec-phase ' + ph[0] + '">' + ph[1] + '</span><span class="rec-note" title="' + esc(txt) + '">' + esc(txt) + "</span></span>";
+    var txt = notes.map(function (note) {
+      return note.split(" · ").map(function (part) { return recT(part); }).join(" · ");
+    }).join(" · ");
+    return '<span class="rec-ph"><span class="rec-phase ' + ph[0] + '">' + recT(ph[1]) + '</span><span class="rec-note" title="' + esc(txt) + '">' + esc(txt) + "</span></span>";
   }
   // 🧭 Ймовірний напрямок (25.11): зведення доказів бота + впевненість моделі +
   // фактична точність журналу перевірки; 🔄 — напрямок нещодавно розвернувся.
   function recAccCol(a) { return a >= 60 ? "#00e676" : a >= 50 ? "#facc15" : "#ff4d5e"; }
   function recDirCell(r) {
     var h = r.hint;
-    if (!h) return '<span class="muted" title="Напрямок ще не порахований">—</span>';
+    if (!h) return '<span class="muted" title="' + esc(recT("Напрямок ще не порахований")) + '">—</span>';
     var tip = [], parts = h.parts || [];
     parts.forEach(function (e) {
       var s = Number(e.s) || 0;
-      tip.push(e.label + ": " + e.txt + " (" + (s > 0 ? "▲ " : s < 0 ? "▼ " : "· ") + Math.abs(s * 100).toFixed(0) + "%, вага " + Math.round((Number(e.w) || 0) * 100) + "%)");
+      tip.push(recT(e.label) + ": " + recT(e.txt) + " (" + (s > 0 ? "▲ " : s < 0 ? "▼ " : "· ") + Math.abs(s * 100).toFixed(0) + "%, " + recT("вага") + " " + Math.round((Number(e.w) || 0) * 100) + "%)");
     });
-    if (h.why) tip.push("→ " + h.why);
-    tip.push("Напрямок перераховується постійно і може змінитися: хибний пробій, збір ліквідності, новий учасник чи рух BTC розвертають картину. Не 100% і не остаточний — див. «ⓘ Що це?».");
-    var fl = h.flip ? '<small class="rec-flip" title="Напрямок розвернувся ' + esc(locHM(h.flip.t)) + '">🔄 був ' + esc(h.flip.prev) + " · " + (h.flip.ago_min < 60 ? h.flip.ago_min + " хв" : Math.floor(h.flip.ago_min / 60) + " год") + "</small>" : "";
-    if (!h.side) return '<span class="rec-dir" title="' + esc(tip.join("\n")) + '"><span class="rec-dir-n">⚖ не визначено</span>' + fl + "</span>";
+    if (h.why) tip.push("→ " + recT(h.why));
+    tip.push(recT("Напрямок перераховується постійно і може змінитися: хибний пробій, збір ліквідності, новий учасник чи рух BTC розвертають картину. Не 100% і не остаточний — див. «ⓘ Що це?»."));
+    var fl = h.flip ? '<small class="rec-flip" title="' + esc(recT("Напрямок розвернувся") + " " + locHM(h.flip.t)) + '">🔄 ' + recT("був") + " " + esc(h.flip.prev) + " · " + (h.flip.ago_min < 60 ? h.flip.ago_min + " " + recT("хв") : Math.floor(h.flip.ago_min / 60) + " " + recT("год")) + "</small>" : "";
+    if (!h.side) return '<span class="rec-dir" title="' + esc(tip.join("\n")) + '"><span class="rec-dir-n">' + recT("⚖ не визначено") + '</span>' + fl + "</span>";
     var L = h.side === "LONG", a = h.acc || {}, acc;
     if (a.acc != null) {
-      tip.push("Точність: " + a.acc + "% із " + a.n + " перевірених" + (a.scope === "bucket" ? " (впевненість " + a.range + "%)" : " (усі рядки)") + " · 50% = випадкове вгадування");
-      acc = '<small class="rec-acc">точність <b style="color:' + recAccCol(Number(a.acc)) + '">' + Number(a.acc).toFixed(0) + "%</b> · " + a.n + "</small>";
+      tip.push(recT("Точність") + ": " + a.acc + "% " + recT("із") + " " + a.n + " " + recT("перевірених") + (a.scope === "bucket" ? " (" + recT("впевненість") + " " + a.range + "%)" : " (" + recT("усі рядки") + ")") + " · 50% = " + recT("випадкове вгадування"));
+      acc = '<small class="rec-acc">' + recT("точність") + ' <b style="color:' + recAccCol(Number(a.acc)) + '">' + Number(a.acc).toFixed(0) + "%</b> · " + a.n + "</small>";
     } else {
-      tip.push("Точність: збираємо статистику — перевірено " + (a.n || 0) + " з " + (a.need || 20) + " потрібних");
-      acc = '<small class="rec-acc muted">точність: збираємо ' + (a.n || 0) + "/" + (a.need || 20) + "</small>";
+      tip.push(recT("Точність: збираємо статистику") + " — " + recT("перевірено") + " " + (a.n || 0) + " " + recT("з") + " " + (a.need || 20) + " " + recT("потрібних"));
+      acc = '<small class="rec-acc muted">' + recT("точність: збираємо") + " " + (a.n || 0) + "/" + (a.need || 20) + "</small>";
     }
-    return '<span class="rec-dir" title="' + esc(tip.join("\n")) + '"><span class="rec-dir-s ' + (L ? "l" : "s") + '">' + (L ? "▲ LONG" : "▼ SHORT") + ' <small title="Впевненість моделі">~' + Number(h.prob).toFixed(0) + "%</small></span>" + acc + fl + "</span>";
+    return '<span class="rec-dir" title="' + esc(tip.join("\n")) + '"><span class="rec-dir-s ' + (L ? "l" : "s") + '">' + (L ? "▲ LONG" : "▼ SHORT") + ' <small title="' + esc(recT("Впевненість моделі")) + '">~' + Number(h.prob).toFixed(0) + "%</small></span>" + acc + fl + "</span>";
   }
   function recRow(r) {
     var ex = String(r.ex || (r.src === "scan" ? "binance" : "bybit")).toLowerCase();
-    var icon = '<span class="rec-ic" title="' + (ex === "binance" ? "Binance" : "Bybit") + " · " + (r.src === "scan" ? "скан біржі" : "WATCHLIST бота") + '">' + (SPB_ICON[ex] || "") + "</span>";
-    var nb = r.bybit === false ? ' <span class="rec-nb" title="Інструмент не торгується на Bybit">⚠</span>' : "";
-    var aiCell = '<span class="rec-ai-slot">' + (r.ai_ready ? '<span class="rec-ai on" title="' + esc("VSV·AI бачить сформований сетап" + (r.ai_scenario ? " · " + r.ai_scenario : "")) + '">' + AI_BRAND + "<b>СЕТАП</b></span>" : "") + "</span>";
-    return '<tr class="rec-row' + (r.impulse ? " imp" : "") + (r.ai_ready ? " ai-pick" : "") + '" data-sym="' + esc(r.symbol) + '" title="Подвійний клік — відкрити на графіку на весь екран"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td><td>" + recDirCell(r) + "</td>" +
+    var icon = '<span class="rec-ic" title="' + (ex === "binance" ? "Binance" : "Bybit") + " · " + recT(r.src === "scan" ? "скан біржі" : "WATCHLIST бота") + '">' + (SPB_ICON[ex] || "") + "</span>";
+    var nb = r.bybit === false ? ' <span class="rec-nb" title="' + esc(recT("Інструмент не торгується на Bybit")) + '">⚠</span>' : "";
+    var aiCell = '<span class="rec-ai-slot">' + (r.ai_ready ? '<span class="rec-ai on" title="' + esc(recT("VSV·AI бачить сформований сетап") + (r.ai_scenario ? " · " + recT(r.ai_scenario) : "")) + '">' + AI_BRAND + "<b>" + recT("СЕТАП") + "</b></span>" : "") + "</span>";
+    return '<tr class="rec-row' + (r.impulse ? " imp" : "") + (r.ai_ready ? " ai-pick" : "") + '" data-sym="' + esc(r.symbol) + '" title="' + esc(recT("Подвійний клік — відкрити на графіку на весь екран")) + '"><td class="sym"><span class="rec-symw">' + icon + '<span class="rec-sym">' + tvSym(r.symbol) + nb + "</span>" + aiCell + "</span></td><td>" + recDirCell(r) + "</td>" +
       '<td class="r">' + recScoreCell(r) + '</td><td class="r">' + recChargeCell(r) + '</td><td class="r">' + recSqCell(r) + '</td><td class="r">' + recVolatCell(r) +
       '</td><td class="r">' + recVolCell(r) + '</td><td class="r">' + recAmpCell(r) + "</td><td>" + recPhaseCell(r) + "</td></tr>";
   }
   function recRender() {
-    var rows = REC.rows || [], n = {};
-    REC_F.forEach(function (f) { n[f] = rows.filter(function (r) { return recPass(r, f); }).length; });
+    var rows = REC.rows || [], n = {}, gradeRows = rows.filter(function (r) { return recGradePass(r, REC.grade); });
+    REC_F.forEach(function (f) { n[f] = gradeRows.filter(function (r) { return recPass(r, f); }).length; });
     var lbl = { all: "Усі", charged: "🌀 Стиснення", impulse: "💥 Імпульс", ai: "VSV·AI" };
-    document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) { var d = b.getAttribute("data-d"); b.textContent = lbl[d] + " (" + (n[d] || 0) + ")"; b.classList.toggle("on", d === REC.f); });
-    var vis = rows.filter(function (r) { return recPass(r, REC.f); }), tb = $("#rec-tbl tbody");
-    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="9" class="muted">' + (rows.length ? "У цій вкладці зараз немає монет" : "Зараз немає монет у фазі стиснення — список оновиться, щойно «Пружина» зарядиться") + "</td></tr>";
+    document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) { var d = b.getAttribute("data-d"); b.textContent = recT(lbl[d]) + " (" + (n[d] || 0) + ")"; b.classList.toggle("on", d === REC.f); });
+    var grade = $("#rec-grade"); if (grade && grade.value !== REC.grade) grade.value = REC.grade;
+    var vis = gradeRows.filter(function (r) { return recPass(r, REC.f); }), tb = $("#rec-tbl tbody");
+    var empty = !rows.length ? "Зараз немає монет у фазі стиснення — список оновиться, щойно «Пружина» зарядиться" : !gradeRows.length ? "У цій вкладці немає монет обраного класу" : "У цій вкладці зараз немає монет";
+    if (tb) tb.innerHTML = vis.length ? vis.map(recRow).join("") : '<tr><td colspan="9" class="muted rec-empty">' + recT(empty) + "</td></tr>";
     var c = (REC.meta || {}).counts || {}, rn = $("#rec-note");
     var da = (REC.meta || {}).dir_acc || {};
     if (rn) rn.title = da.acc != null ? "Фактична точність напрямку: " + da.acc + "% (✅ " + da.win + " · ❌ " + da.loss + " · без руху " + (da.flat || 0) + " · перевіряється " + (da.open || 0) + ")" : "Точність напрямку: збираємо статистику (" + (da.n || 0) + "/" + (da.min_n || 20) + ")";
-    if (rn) rn.textContent = (c.total > rows.length ? "топ " + rows.length + " з " + c.total + " · " : "") + (da.acc != null ? "🧭 точність " + Number(da.acc).toFixed(0) + "% · " : "") + new Date().toLocaleTimeString("uk-UA", { hour: "2-digit", minute: "2-digit" });
+    if (rn) rn.textContent = (c.total > rows.length ? "топ " + rows.length + " з " + c.total + " · " : "") + (da.acc != null ? "🧭 точність " + Number(da.acc).toFixed(0) + "% · " : "") + new Date().toLocaleTimeString(window.VSV_I18N ? window.VSV_I18N.locale() : "uk-UA", { hour: "2-digit", minute: "2-digit" });
   }
   // ⚖ Банер «SMC Forecast» (вимога 11.11): куди накручено пружину — 🔭 скан біржі
   // і 🌀 WATCHLIST, у відсотках і з таймером «відколи тримається напрямок».
@@ -3259,6 +3272,14 @@
     var b = e.target.closest("#rec-tabs button[data-d]"); if (!b) return;
     REC.f = b.getAttribute("data-d"); try { localStorage.setItem("vsv_rec_f", REC.f); } catch (x) {} recRender();
   });
+  document.addEventListener("change", function (e) {
+    if (!e.target || e.target.id !== "rec-grade") return;
+    var grade = String(e.target.value || "all").toUpperCase();
+    REC.grade = grade === "ALL" ? "all" : (REC_GRADES.indexOf(grade) >= 0 ? grade : "all");
+    try { localStorage.setItem("vsv_rec_grade", REC.grade); } catch (x) {}
+    recRender();
+  });
+  document.addEventListener("vsv:language", function () { if (REC.rows.length) recRender(); });
 
   var DENY_TXT = {
     blocked: "⛔ Ваш акаунт заблоковано адміністратором — доступ до кабінету закрито.",

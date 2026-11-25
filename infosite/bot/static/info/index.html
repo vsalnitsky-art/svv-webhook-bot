@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/style.css?v=266">
+  <link rel="stylesheet" href="css/style.css?v=268">
 </head>
 <body class="perm-no-sec_paper">
   <svg class="svg-sprite" aria-hidden="true">
@@ -204,6 +204,7 @@
         <span class="rec-badge">VSV SIGNALS</span>
         <button type="button" class="rec-info-btn" id="rec-info-btn" aria-expanded="false" aria-controls="rec-info" title="Що показує VSV SIGNALS">ⓘ Що це?</button>
         <div class="pp-period" id="rec-tabs"><button type="button" data-d="all">Усі (0)</button><button type="button" data-d="charged">🌀 Стиснення (0)</button><button type="button" data-d="impulse">💥 Імпульс (0)</button><button type="button" data-d="ai">VSV·AI (0)</button></div>
+        <label class="rec-grade-filter" title="Фільтр класу VSV Score"><span>VSV Score</span><select id="rec-grade" aria-label="Ранг VSV Score"><option value="A">A — найкращі</option><option value="B">B — сильні</option><option value="C">C — помірні</option><option value="all" selected>Усі класи</option></select></label>
         <span class="pp-note muted" id="rec-note"></span>
       </div>
       <div class="rec-info" id="rec-info" hidden>
@@ -234,7 +235,7 @@
         <p class="rec-warn">⚠ Ймовірний напрямок — інформація для уваги, а не торгова рекомендація. Вхід — лише після власного підтвердження (пробій з обсягом, структура CHoCH/BOS, ретест рівня) і з вашим ризик-менеджментом.</p>
       </div>
       <div class="pp-wrap rec-wrap"><table class="pp-tbl" id="rec-tbl">
-        <colgroup><col style="width:14%"><col style="width:14%"><col style="width:10%"><col style="width:7%"><col style="width:8%"><col style="width:10%"><col style="width:6%"><col style="width:8%"><col style="width:23%"></colgroup>
+        <colgroup><col style="width:13%"><col style="width:13%"><col style="width:11%"><col style="width:7%"><col style="width:8%"><col style="width:9%"><col style="width:6%"><col style="width:7%"><col style="width:26%"></colgroup>
         <thead><tr><th>Монета</th><th title="Ймовірний напрямок · впевненість моделі · фактична точність (див. «ⓘ Що це?»)">Ймовірний напрямок</th><th class="r" title="Композитна оцінка готовності до імпульсу 0–100">VSV Score</th><th class="r" title="Енергія стиснення «Пружини» · Δ від потрапляння в список">Заряд</th><th class="r" title="Годин поспіль у TTM squeeze">Стиснення</th><th class="r" title="Перцентиль ATR у власній історії">Волатильність</th><th class="r" title="Обсяг до середнього">Обсяг</th><th class="r" title="Орієнтовний хід (measured move) у будь-який бік">Амплітуда</th><th title="Фаза ринку і пояснення по монеті">Фаза · коментар</th></tr></thead>
         <tbody><tr><td colspan="9" class="muted">Завантаження…</td></tr></tbody>
       </table></div>
@@ -280,10 +281,10 @@
   <script src="js/demo.js?v=11"></script>
   <script src="js/config.js?v=77"></script>
   <script src="js/version-sync.js?v=1"></script>
-  <script src="js/i18n-dictionaries.js?v=262"></script>
-  <script src="js/i18n-patterns.js?v=260"></script>
+  <script src="js/i18n-dictionaries.js?v=268"></script>
+  <script src="js/i18n-patterns.js?v=268"></script>
   <script src="js/i18n.js?v=260"></script>
-  <script src="js/app.js?v=267"></script>
+  <script src="js/app.js?v=268"></script>
   <script src="js/chart-pro.js?v=214"></script>
   <script src="js/chart-tools.js?v=263"></script>
   <script src="js/ui.js?v=202"></script>

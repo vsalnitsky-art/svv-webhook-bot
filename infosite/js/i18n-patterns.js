@@ -189,3 +189,52 @@ Object.assign(window.VSV_I18N_PATTERNS.es, {
   "Сигнали приходять у ваш особистий чат із ботом: SBR — після закриття бару, ⚠ — щойно склався сценарій входу.": "Las señales llegan a tu chat privado con el bot: SBR al cerrar la vela y ⚠ en cuanto se forma un escenario de entrada.",
   "Сетап на вхід за order flow: сценарій ШІ підтверджено (climax / абсорбція / follow-through), тригер свіжий — не старший за {} свічки, фон order flow за {} год не проти позиції.": "Configuración de entrada por order flow: escenario de IA confirmado (climax / absorción / follow-through), señal de no más de {} velas y contexto de order flow de {} h que no se opone a la posición."
 });
+
+/* VSV SIGNALS notes are translated individually before they are joined. */
+Object.assign(window.VSV_I18N_PATTERNS.en, {
+  "висока енергія стиснення ({})": "high compression energy ({})",
+  "накопичення завершується ({})": "accumulation nearing completion ({})",
+  "squeeze {} год": "{}h squeeze", "ATR у нижніх {}% історії": "ATR in the lowest {}% of its history",
+  "обсяг висох ×{}": "volume dried up ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI detects a setup"
+});
+Object.assign(window.VSV_I18N_PATTERNS.ru, {
+  "висока енергія стиснення ({})": "высокая энергия сжатия ({})",
+  "накопичення завершується ({})": "накопление близко к завершению ({})",
+  "squeeze {} год": "squeeze {} ч", "ATR у нижніх {}% історії": "ATR в нижних {}% собственной истории",
+  "обсяг висох ×{}": "объём снизился ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI обнаруживает сетап"
+});
+Object.assign(window.VSV_I18N_PATTERNS.pl, {
+  "висока енергія стиснення ({})": "wysoka energia kompresji ({})",
+  "накопичення завершується ({})": "akumulacja zbliża się do końca ({})",
+  "squeeze {} год": "squeeze {} godz.", "ATR у нижніх {}% історії": "ATR w dolnych {}% własnej historii",
+  "обсяг висох ×{}": "wolumen zmalał ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI wykrywa setup"
+});
+Object.assign(window.VSV_I18N_PATTERNS.de, {
+  "висока енергія стиснення ({})": "hohe Kompressionsenergie ({})",
+  "накопичення завершується ({})": "Akkumulation nähert sich dem Abschluss ({})",
+  "squeeze {} год": "{} Std. Squeeze", "ATR у нижніх {}% історії": "ATR in den untersten {}% der eigenen Historie",
+  "обсяг висох ×{}": "Volumen gesunken ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI erkennt ein Setup"
+});
+Object.assign(window.VSV_I18N_PATTERNS.es, {
+  "висока енергія стиснення ({})": "alta energía de compresión ({})",
+  "накопичення завершується ({})": "acumulación próxima a completarse ({})",
+  "squeeze {} год": "squeeze {} h", "ATR у нижніх {}% історії": "ATR en el {}% inferior de su historial",
+  "обсяг висох ×{}": "volumen reducido ×{}", "🤖 VSV·AI бачить сетап": "🤖 VSV·AI detecta una configuración"
+});
+
+/* Dynamic accuracy counters must also translate as one DOM text node. */
+Object.assign(window.VSV_I18N_PATTERNS.en, {
+  "точність: збираємо {}/{}": "accuracy: collecting {}/{}"
+});
+Object.assign(window.VSV_I18N_PATTERNS.ru, {
+  "точність: збираємо {}/{}": "точность: собираем {}/{}"
+});
+Object.assign(window.VSV_I18N_PATTERNS.pl, {
+  "точність: збираємо {}/{}": "skuteczność: zbieranie {}/{}"
+});
+Object.assign(window.VSV_I18N_PATTERNS.de, {
+  "точність: збираємо {}/{}": "Trefferquote: wird erfasst {}/{}"
+});
+Object.assign(window.VSV_I18N_PATTERNS.es, {
+  "точність: збираємо {}/{}": "precisión: recopilando {}/{}"
+});
