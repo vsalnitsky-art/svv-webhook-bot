@@ -102,7 +102,50 @@ def test_pick_one_side_and_respect_the_anomaly_direction():
     _check(A.anom_pick(_r('LONG'), _r('SHORT', False), {'state': 'dir', 'dir': 'SHORT'})[0] is None,
            'аномалії 6 год проти → тиша')
     t = A.anom_tg_text('BTCUSDT', 'LONG', _r('LONG'), 64672.6, {'state': 'dir', 'dir': 'LONG'})
-    _check('Аномалії обсягу' in t and '#BTCUSDT' in t and 'Розворот' in t and '64' in t, t)
+    short = A.anom_tg_short('BTCUSDT', 'LONG', _r('LONG'), 64672.6)
+    _check('Аномалії обсягу' in t and '#BTCUSDT' in t and 'кульмінації' in t and '64' in t, t)
+    for msg in (t, short):
+        _check('Ймовірний напрямок: LONG · угору' in msg, msg)
+        _check('Поглинання тиску продавців' in msg and 'закриття наступної свічки' in msg, msg)
+        _check('Напрямок не прогнозується' not in msg, msg)
+        _check('Ймовірний сценарій, а не гарантія чи сигнал до входу' in msg, msg)
+    down = A.anom_tg_short('BTCUSDT', 'SHORT', _r('SHORT', key='E4'), 64672.6)
+    _check('Ймовірний напрямок: SHORT · униз' in down and 'верхньої межі' in down, down)
+    _check('На графіку' in short and 'На що звернути увагу на графіку' in t, (short, t))
+
+
+def test_probable_anomaly_messages_are_translated_for_every_recipient():
+    # Легкий пакетний стаб: тесту перекладача не потрібен Flask із web/__init__.py.
+    web_pkg = types.ModuleType('web')
+    web_pkg.__path__ = [os.path.join(ROOT, 'web')]
+    sys.modules['web'] = web_pkg
+    _load('web.i18n', 'web/i18n.py')
+    TG = _load('telegram_i18n_t', 'web/telegram_i18n.py')
+    for lang in ('uk', 'en', 'ru', 'pl', 'de', 'es'):
+        for key in ('E1', 'E2', 'E3', 'E4'):
+            rec = _r('LONG', key=key)
+            for source in (A.anom_tg_text('BTCUSDT', 'LONG', rec, 64672.6),
+                           A.anom_tg_short('BTCUSDT', 'LONG', rec, 64672.6)):
+                msg = TG.translate_message(source, lang)
+                _check(TG.telegram_tr(lang, 'anom_direction_label') + ' LONG · '
+                       + TG.telegram_tr(lang, 'anom_up') in msg, (lang, key, msg))
+                _check(TG.telegram_tr(lang, 'anom_reason_' + key.lower() + '_long') in msg,
+                       (lang, key, msg))
+                _check(TG.telegram_tr(lang, 'anom_context_' + key.lower()) in msg, (lang, key, msg))
+                _check('Напрямок не прогнозується' not in msg, (lang, key, msg))
+                # Повне й коротке повідомлення мають відповідний перекладений дисклеймер.
+                _check(TG.telegram_tr(lang, 'anom_disclaimer_full') in msg or
+                       TG.telegram_tr(lang, 'anom_disclaimer_short') in msg, (lang, key, msg))
+                _check('#BTCUSDT' in msg and '64' in msg, 'ринкові значення не перекладаються')
+            short_side = TG.translate_message(A.anom_tg_short('BTCUSDT', 'SHORT', _r('SHORT', key=key)), lang)
+            _check(TG.telegram_tr(lang, 'anom_direction_label') + ' SHORT · '
+                   + TG.telegram_tr(lang, 'anom_down') in short_side, (lang, key, short_side))
+            _check(TG.telegram_tr(lang, 'anom_reason_' + key.lower() + '_short') in short_side,
+                   (lang, key, short_side))
+        label = IP.anom_text_for({'full': A.anom_tg_text('BTCUSDT', 'LONG', _r('LONG')),
+                                  'short': A.anom_tg_short('BTCUSDT', 'LONG', _r('LONG'))}, 'full')
+        translated = TG.translate_message(label, lang)
+        _check(TG.telegram_tr(lang, 'personal_observation') in translated, (lang, translated))
 
 
 def test_engine_sends_once_and_wakes_the_alarm():

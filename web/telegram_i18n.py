@@ -216,8 +216,111 @@ _ANOMALY_EXTRA = {
         'anom_disclaimer_short': 'No se pronostica una dirección. Es una observación, no una señal de entrada.',
     },
 }
-for _lang, _translations in _ANOMALY_EXTRA.items():
-    _EXTRA.setdefault(_lang, {}).update(_translations)
+
+# Ймовірний напрямок уже визначений готовим сценарієм E1–E4 у `anom_pick`.
+# Окремі статичні фрази дозволяють перекладати повідомлення цілком, не чіпаючи
+# LONG/SHORT, ціну, символ монети або HTML-розмітку.
+_ANOMALY_DIRECTION_EXTRA = {
+    'uk': {
+        'anom_direction_label': 'Ймовірний напрямок:',
+        'anom_up': 'угору', 'anom_down': 'униз',
+        'anom_reason_e1_long': 'Поглинання тиску продавців може передати ініціативу покупцям. Підтвердження — утримання зони реакції й закриття наступної свічки вище неї.',
+        'anom_reason_e1_short': 'Поглинання купівель може передати ініціативу продавцям. Підтвердження — утримання зони реакції й закриття наступної свічки нижче неї.',
+        'anom_reason_e2_long': 'Імпульс на підвищеному обсязі може означати прийняття ціни вище діапазону. Підтвердження — закриття над межею без швидкого повернення всередину.',
+        'anom_reason_e2_short': 'Імпульс на підвищеному обсязі може означати прийняття ціни нижче діапазону. Підтвердження — закриття під межею без швидкого повернення всередину.',
+        'anom_reason_e3_long': 'Відкат може бути перевіркою підтримки перед продовженням угору. Підтвердження — утримання рівня й поновлення купівель.',
+        'anom_reason_e3_short': 'Відкат може бути перевіркою опору перед продовженням униз. Підтвердження — утримання рівня й поновлення продажів.',
+        'anom_reason_e4_long': 'Прокол нижньої межі з поверненням може означати збір ліквідності перед рухом угору. Підтвердження — закриття назад над межею.',
+        'anom_reason_e4_short': 'Прокол верхньої межі з поверненням може означати збір ліквідності перед рухом униз. Підтвердження — закриття назад під межею.',
+        'anom_reason_default_long': 'Сукупність реакцій обсягу вказує на можливу перевагу покупців. Підтвердження — утримання зони реакції й подальше закриття вище неї.',
+        'anom_reason_default_short': 'Сукупність реакцій обсягу вказує на можливу перевагу продавців. Підтвердження — утримання зони реакції й подальше закриття нижче неї.',
+        'anom_disclaimer_full': 'Ймовірний сценарій, а не гарантія чи сигнал до входу — використовуйте його лише після підтвердження на графіку.',
+        'anom_disclaimer_short': 'Ймовірний сценарій, а не гарантія чи сигнал до входу.',
+    },
+    'en': {
+        'anom_direction_label': 'Probable direction:',
+        'anom_up': 'upward', 'anom_down': 'downward',
+        'anom_reason_e1_long': 'Absorption of selling pressure may hand the initiative to buyers. Confirmation requires the reaction zone to hold and the next candle to close above it.',
+        'anom_reason_e1_short': 'Absorption of buying pressure may hand the initiative to sellers. Confirmation requires the reaction zone to hold and the next candle to close below it.',
+        'anom_reason_e2_long': 'A high-volume impulse may indicate price acceptance above the range. Confirmation is a close above the boundary without a quick return inside.',
+        'anom_reason_e2_short': 'A high-volume impulse may indicate price acceptance below the range. Confirmation is a close below the boundary without a quick return inside.',
+        'anom_reason_e3_long': 'The pullback may be a support test before further upside. Confirmation requires the level to hold and buying to resume.',
+        'anom_reason_e3_short': 'The pullback may be a resistance test before further downside. Confirmation requires the level to hold and selling to resume.',
+        'anom_reason_e4_long': 'A sweep below the range followed by a return may indicate liquidity collection before an upward move. Confirmation is a close back above the boundary.',
+        'anom_reason_e4_short': 'A sweep above the range followed by a return may indicate liquidity collection before a downward move. Confirmation is a close back below the boundary.',
+        'anom_reason_default_long': 'The combination of volume reactions suggests that buyers may be gaining control. Confirmation requires the reaction zone to hold and price to close above it.',
+        'anom_reason_default_short': 'The combination of volume reactions suggests that sellers may be gaining control. Confirmation requires the reaction zone to hold and price to close below it.',
+        'anom_disclaimer_full': 'This is a probable scenario, not a guarantee or an entry signal — use it only after confirmation on the chart.',
+        'anom_disclaimer_short': 'This is a probable scenario, not a guarantee or an entry signal.',
+    },
+    'ru': {
+        'anom_direction_label': 'Вероятное направление:',
+        'anom_up': 'вверх', 'anom_down': 'вниз',
+        'anom_reason_e1_long': 'Поглощение давления продавцов может передать инициативу покупателям. Подтверждение — удержание зоны реакции и закрытие следующей свечи выше неё.',
+        'anom_reason_e1_short': 'Поглощение покупок может передать инициативу продавцам. Подтверждение — удержание зоны реакции и закрытие следующей свечи ниже неё.',
+        'anom_reason_e2_long': 'Импульс на повышенном объёме может означать принятие цены выше диапазона. Подтверждение — закрытие над границей без быстрого возврата внутрь.',
+        'anom_reason_e2_short': 'Импульс на повышенном объёме может означать принятие цены ниже диапазона. Подтверждение — закрытие под границей без быстрого возврата внутрь.',
+        'anom_reason_e3_long': 'Откат может быть проверкой поддержки перед продолжением роста. Подтверждение — удержание уровня и возобновление покупок.',
+        'anom_reason_e3_short': 'Откат может быть проверкой сопротивления перед продолжением снижения. Подтверждение — удержание уровня и возобновление продаж.',
+        'anom_reason_e4_long': 'Прокол нижней границы с возвратом может означать сбор ликвидности перед движением вверх. Подтверждение — закрытие обратно над границей.',
+        'anom_reason_e4_short': 'Прокол верхней границы с возвратом может означать сбор ликвидности перед движением вниз. Подтверждение — закрытие обратно под границей.',
+        'anom_reason_default_long': 'Совокупность реакций объёма указывает на возможное преимущество покупателей. Подтверждение — удержание зоны реакции и дальнейшее закрытие выше неё.',
+        'anom_reason_default_short': 'Совокупность реакций объёма указывает на возможное преимущество продавцов. Подтверждение — удержание зоны реакции и дальнейшее закрытие ниже неё.',
+        'anom_disclaimer_full': 'Это вероятный сценарий, а не гарантия или сигнал для входа — используйте его только после подтверждения на графике.',
+        'anom_disclaimer_short': 'Это вероятный сценарий, а не гарантия или сигнал для входа.',
+    },
+    'pl': {
+        'anom_direction_label': 'Prawdopodobny kierunek:',
+        'anom_up': 'w górę', 'anom_down': 'w dół',
+        'anom_reason_e1_long': 'Absorpcja presji sprzedaży może przekazać inicjatywę kupującym. Potwierdzeniem jest utrzymanie strefy reakcji i zamknięcie następnej świecy powyżej niej.',
+        'anom_reason_e1_short': 'Absorpcja zakupów może przekazać inicjatywę sprzedającym. Potwierdzeniem jest utrzymanie strefy reakcji i zamknięcie następnej świecy poniżej niej.',
+        'anom_reason_e2_long': 'Impuls na zwiększonym wolumenie może oznaczać akceptację ceny powyżej zakresu. Potwierdzeniem jest zamknięcie nad granicą bez szybkiego powrotu do środka.',
+        'anom_reason_e2_short': 'Impuls na zwiększonym wolumenie może oznaczać akceptację ceny poniżej zakresu. Potwierdzeniem jest zamknięcie pod granicą bez szybkiego powrotu do środka.',
+        'anom_reason_e3_long': 'Korekta może być testem wsparcia przed dalszym wzrostem. Potwierdzeniem jest utrzymanie poziomu i wznowienie zakupów.',
+        'anom_reason_e3_short': 'Korekta może być testem oporu przed dalszym spadkiem. Potwierdzeniem jest utrzymanie poziomu i wznowienie sprzedaży.',
+        'anom_reason_e4_long': 'Wybicie poniżej zakresu i powrót mogą oznaczać zebranie płynności przed ruchem w górę. Potwierdzeniem jest zamknięcie z powrotem nad granicą.',
+        'anom_reason_e4_short': 'Wybicie powyżej zakresu i powrót mogą oznaczać zebranie płynności przed ruchem w dół. Potwierdzeniem jest zamknięcie z powrotem pod granicą.',
+        'anom_reason_default_long': 'Układ reakcji wolumenu wskazuje na możliwą przewagę kupujących. Potwierdzeniem jest utrzymanie strefy reakcji i kolejne zamknięcie powyżej niej.',
+        'anom_reason_default_short': 'Układ reakcji wolumenu wskazuje na możliwą przewagę sprzedających. Potwierdzeniem jest utrzymanie strefy reakcji i kolejne zamknięcie poniżej niej.',
+        'anom_disclaimer_full': 'To prawdopodobny scenariusz, a nie gwarancja ani sygnał wejścia — wykorzystaj go dopiero po potwierdzeniu na wykresie.',
+        'anom_disclaimer_short': 'To prawdopodobny scenariusz, a nie gwarancja ani sygnał wejścia.',
+    },
+    'de': {
+        'anom_direction_label': 'Wahrscheinliche Richtung:',
+        'anom_up': 'aufwärts', 'anom_down': 'abwärts',
+        'anom_reason_e1_long': 'Die Absorption des Verkaufsdrucks kann die Initiative an Käufer übergeben. Bestätigt wird dies durch das Halten der Reaktionszone und einen Schluss der nächsten Kerze darüber.',
+        'anom_reason_e1_short': 'Die Absorption der Käufe kann die Initiative an Verkäufer übergeben. Bestätigt wird dies durch das Halten der Reaktionszone und einen Schluss der nächsten Kerze darunter.',
+        'anom_reason_e2_long': 'Ein Impuls mit erhöhtem Volumen kann auf eine Akzeptanz des Kurses oberhalb der Spanne hindeuten. Bestätigung ist ein Schluss über der Grenze ohne schnelle Rückkehr in die Spanne.',
+        'anom_reason_e2_short': 'Ein Impuls mit erhöhtem Volumen kann auf eine Akzeptanz des Kurses unterhalb der Spanne hindeuten. Bestätigung ist ein Schluss unter der Grenze ohne schnelle Rückkehr in die Spanne.',
+        'anom_reason_e3_long': 'Der Rücksetzer kann eine Unterstützungsprüfung vor einer weiteren Aufwärtsbewegung sein. Bestätigung sind gehaltenes Niveau und erneute Käufe.',
+        'anom_reason_e3_short': 'Der Rücksetzer kann eine Widerstandsprüfung vor einer weiteren Abwärtsbewegung sein. Bestätigung sind gehaltenes Niveau und erneute Verkäufe.',
+        'anom_reason_e4_long': 'Das Unterschreiten der unteren Grenze mit anschließender Rückkehr kann auf Liquiditätssammlung vor einer Aufwärtsbewegung hindeuten. Bestätigung ist ein Schluss zurück über der Grenze.',
+        'anom_reason_e4_short': 'Das Überschreiten der oberen Grenze mit anschließender Rückkehr kann auf Liquiditätssammlung vor einer Abwärtsbewegung hindeuten. Bestätigung ist ein Schluss zurück unter der Grenze.',
+        'anom_reason_default_long': 'Die Kombination der Volumenreaktionen deutet auf einen möglichen Vorteil der Käufer hin. Bestätigung sind das Halten der Reaktionszone und ein weiterer Schluss darüber.',
+        'anom_reason_default_short': 'Die Kombination der Volumenreaktionen deutet auf einen möglichen Vorteil der Verkäufer hin. Bestätigung sind das Halten der Reaktionszone und ein weiterer Schluss darunter.',
+        'anom_disclaimer_full': 'Dies ist ein wahrscheinliches Szenario, keine Garantie und kein Einstiegssignal — nutzen Sie es erst nach Bestätigung im Chart.',
+        'anom_disclaimer_short': 'Dies ist ein wahrscheinliches Szenario, keine Garantie und kein Einstiegssignal.',
+    },
+    'es': {
+        'anom_direction_label': 'Dirección probable:',
+        'anom_up': 'al alza', 'anom_down': 'a la baja',
+        'anom_reason_e1_long': 'La absorción de la presión vendedora puede transferir la iniciativa a los compradores. La confirmación exige mantener la zona de reacción y cerrar la siguiente vela por encima.',
+        'anom_reason_e1_short': 'La absorción de las compras puede transferir la iniciativa a los vendedores. La confirmación exige mantener la zona de reacción y cerrar la siguiente vela por debajo.',
+        'anom_reason_e2_long': 'Un impulso con mayor volumen puede indicar aceptación del precio por encima del rango. La confirmación es un cierre sobre el límite sin un retorno rápido al interior.',
+        'anom_reason_e2_short': 'Un impulso con mayor volumen puede indicar aceptación del precio por debajo del rango. La confirmación es un cierre bajo el límite sin un retorno rápido al interior.',
+        'anom_reason_e3_long': 'El retroceso puede ser una prueba de soporte antes de continuar al alza. La confirmación exige mantener el nivel y reanudar las compras.',
+        'anom_reason_e3_short': 'El retroceso puede ser una prueba de resistencia antes de continuar a la baja. La confirmación exige mantener el nivel y reanudar las ventas.',
+        'anom_reason_e4_long': 'La perforación del límite inferior con retorno puede indicar captura de liquidez antes de subir. La confirmación es un cierre de nuevo sobre el límite.',
+        'anom_reason_e4_short': 'La perforación del límite superior con retorno puede indicar captura de liquidez antes de bajar. La confirmación es un cierre de nuevo bajo el límite.',
+        'anom_reason_default_long': 'El conjunto de reacciones del volumen sugiere una posible ventaja de los compradores. La confirmación exige mantener la zona de reacción y cerrar después por encima.',
+        'anom_reason_default_short': 'El conjunto de reacciones del volumen sugiere una posible ventaja de los vendedores. La confirmación exige mantener la zona de reacción y cerrar después por debajo.',
+        'anom_disclaimer_full': 'Es un escenario probable, no una garantía ni una señal de entrada: utilízalo solo tras confirmarlo en el gráfico.',
+        'anom_disclaimer_short': 'Es un escenario probable, no una garantía ni una señal de entrada.',
+    },
+}
+for _translations in (_ANOMALY_EXTRA, _ANOMALY_DIRECTION_EXTRA):
+    for _lang, _values in _translations.items():
+        _EXTRA.setdefault(_lang, {}).update(_values)
 
 
 def telegram_tr(language, key, **variables):
@@ -262,7 +365,9 @@ def translate_message(text, language):
         return text
     raw = str(text)
     for values in (_EXTRA.get(lang, {}),):
-        for key, value in values.items():
+        # Спочатку довгі фрази: короткі «угору»/«униз» не повинні змінювати
+        # текст усередині ще не перекладеного пояснення сценарію.
+        for key, value in sorted(values.items(), key=lambda item: len(str(_EXTRA['uk'].get(item[0], ''))), reverse=True):
             source = _EXTRA['uk'].get(key)
             if source and ('{' not in source):
                 if raw == source:

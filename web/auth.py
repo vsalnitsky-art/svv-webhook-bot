@@ -1536,11 +1536,15 @@ table{width:100%;border-collapse:collapse;font-size:.8rem} th,td{padding:7px 9px
 .actbtn:hover{background:#232c3d}
 body.full{align-items:flex-start;justify-content:flex-start}
 .fullcard{max-width:1560px!important;width:calc(100vw - 32px);margin:16px auto!important}
-</style></head><body class="{{ 'full' if full else '' }}">
+</style>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/css/vsv-theme.css?v=300">
+</head><body class="vsv-bot-body vsv-auth-body {{ 'full' if full else '' }}">
 <div class="card {{ 'fullcard' if full else '' }}" style="max-width:{{width or 400}}px">
-{% if not full %}<img class="brandlogo" src="/favicon.ico" alt="VSV" onerror="this.style.display='none'">{% endif %}
+{% if not full %}<img class="brandlogo" src="/static/info/img/logo.png" alt="VSV" onerror="this.style.display='none'">{% endif %}
 {{body|safe}}</div>
-<script>{{script|safe}}</script></body></html>"""
+<script>{{script|safe}}</script>
+<script src="/static/js/vsv-theme.js?v=300"></script></body></html>"""
 
 
 _AUTH_LANG_SCRIPT = r"""

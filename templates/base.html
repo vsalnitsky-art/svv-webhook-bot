@@ -12,7 +12,7 @@
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='info/css/style.css') }}?v=271">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/vsv-theme.css') }}?v=268">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/vsv-theme.css') }}?v=300">
     <script src="{{ url_for('static', filename='js/vsv-boot.js') }}?v=2"></script>
     {% block head %}{% endblock %}
 </head>
@@ -26,34 +26,33 @@
         <symbol id="vsv-i-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></symbol>
         <symbol id="vsv-i-tickr" viewBox="0 0 24 24"><path d="M4 17V7m5 14V3m6 14V7m5 10V7"/></symbol>
         <symbol id="vsv-i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c1-5 4-7 8-7s7 2 8 7"/></symbol>
+        <symbol id="vsv-i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
         <symbol id="vsv-i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2"/></symbol>
         <symbol id="vsv-i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 2 4 3 8 3s8-1 8-3V5M4 12v7c0 2 4 3 8 3s8-1 8-3v-7"/></symbol>
     </defs></svg>
 
-    <nav class="navbar vsv-navbar">
+    <nav class="navbar vsv-navbar" aria-label="Основна навігація">
         <div class="nav-main">
-            <a class="nav-brand" href="{{ url_for('index') }}" aria-label="VSV — Dashboard">
+            <a class="nav-brand" href="{{ url_for('smart_money_page') }}" aria-label="VSV — Smart Money">
                 <span class="brand-mark"><img src="/static/info/img/logo.png" alt="VSV"></span>
                 <span class="brand-copy"><b>VSV</b><small>TRADING INTELLIGENCE</small></span>
             </a>
             <div class="nav-links">
-                <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}"><svg><use href="#vsv-i-terminal"/></svg>Dashboard</a>
                 <a href="{{ url_for('smart_money_page') }}" class="nav-link {% if request.endpoint == 'smart_money_page' %}active{% endif %}"><svg><use href="#vsv-i-sm"/></svg>Smart Money</a>
+                <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}"><svg><use href="#vsv-i-terminal"/></svg>Dashboard</a>
                 <a href="{{ url_for('tickr_page') }}" class="nav-link {% if request.endpoint == 'tickr_page' %}active{% endif %}"><svg><use href="#vsv-i-tickr"/></svg>Tickr</a>
                 <a href="/cabinet" class="nav-link"><svg><use href="#vsv-i-user"/></svg>Кабінет</a>
-                {% if auth_user and auth_user.is_admin %}<a href="/admin/users" class="nav-link">🛡 Користувачі{% if users_pending and users_pending > 0 %} <span title="Нові користувачі очікують схвалення" style="background:#b42b3c;color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;font-weight:800">{{ users_pending }}</span>{% endif %}</a>{% endif %}
+                {% if auth_user and auth_user.is_admin %}<a href="/admin/users" class="nav-link"><svg><use href="#vsv-i-users"/></svg>Користувачі{% if users_pending and users_pending > 0 %} <span title="Нові користувачі очікують схвалення" style="background:#b42b3c;color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;font-weight:800">{{ users_pending }}</span>{% endif %}</a>{% endif %}
                 <a href="{{ url_for('settings_page') }}" class="nav-link {% if request.endpoint == 'settings_page' %}active{% endif %}" title="Налаштування"><svg><use href="#vsv-i-settings"/></svg><span>Налаштування</span></a>
-                <a href="{{ url_for('database_admin') }}" class="nav-link {% if request.endpoint == 'database_admin' %}active{% endif %}"><svg><use href="#vsv-i-db"/></svg>DB</a>
+                <a href="{{ url_for('database_admin') }}" class="nav-link nav-link-db {% if request.endpoint == 'database_admin' %}active{% endif %}"><svg><use href="#vsv-i-db"/></svg><span>База даних</span></a>
             </div>
             <div class="nav-spacer"></div>
             <div id="top-language" class="language-slot"></div>
             {% if auth_user %}
             <div id="nav-user-chip">
-                <span title="{{ auth_user.email }}" class="nav-user-email">👤 {{ auth_user.email }}</span>
-                <span style="color:#929aa8">· {{ 'адмін' if auth_user.is_admin else 'перегляд' }}</span>
-                {% if auth_user.is_admin %}<a href="/admin/users" title="Керування користувачами">🛡</a>{% endif %}
-                <a href="/cabinet">кабінет</a>
-                <a href="/logout" style="color:#ff8c95">вийти</a>
+                <span title="{{ auth_user.email }}" class="nav-user-email"><svg class="vsv-inline-icon" aria-hidden="true"><use href="#vsv-i-user"/></svg>{{ auth_user.email }}</span>
+                <span class="nav-user-role">{{ 'адмін' if auth_user.is_admin else 'перегляд' }}</span>
+                <a href="/logout" class="nav-logout">вийти</a>
             </div>
             {% endif %}
             <div class="nav-status">
@@ -76,5 +75,6 @@
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
     {% block scripts %}{% endblock %}
+    <script src="{{ url_for('static', filename='js/vsv-theme.js') }}?v=300"></script>
 </body>
 </html>

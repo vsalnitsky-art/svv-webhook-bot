@@ -205,9 +205,9 @@ function roleBadge(u){return u.is_admin?'<span class="badge b-adm">адмін</s
 def _shell(title, active, me_email, info_url, body, script, nav=None, brand='ADMIN',
            home='/admin/users', admin_js=True):
     if nav is None:
-        nav = [('/admin/users', '🛡 Користувачі', 'users'), ('/cabinet', '👤 Кабінет', 'cab'),
-               ('/', '📊 Дашборд', 'dash'), ('/database', '🗄 База даних', 'db'),
-               ((info_url or '/info/'), '🛰 Інфосайт', 'info')]
+        nav = [('/admin/users', 'Користувачі', 'users'), ('/cabinet', 'Кабінет', 'cab'),
+               ('/smart-money', 'Smart Money', 'smart'), ('/', 'Dashboard', 'dash'),
+               ('/database', 'База даних', 'db'), ((info_url or '/info/'), 'Інфосайт', 'info')]
     nav_html = ''.join(f'<a href="{escape(h)}" class="{"active" if k == active else ""}">{escape(t)}</a>'
                        for h, t, k in nav)
     return ('<!doctype html><html lang="uk"><head><meta charset="utf-8">'
@@ -215,16 +215,20 @@ def _shell(title, active, me_email, info_url, body, script, nav=None, brand='ADM
             f'<title>{escape(title)} · VSV</title>'
             '<link rel="icon" type="image/png" href="/favicon.ico">'
             '<link rel="preconnect" href="https://fonts.googleapis.com">'
+            '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
             f'<link rel="stylesheet" href="{FONTS}">'
-            f'<style>{CSS}</style></head><body>'
+            f'<style>{CSS}</style>'
+            '<link rel="stylesheet" href="/static/css/vsv-theme.css?v=300"></head>'
+            '<body class="vsv-bot-body vsv-admin-body">'
             f'<header class="topbar"><a class="brand" href="{escape(home)}">'
-            '<img src="/favicon.ico" alt="" onerror="this.style.display=\'none\'">'
+            '<img src="/static/info/img/logo.png" alt="VSV">'
             f'<span>VSV<small>{escape(brand)}</small></span></a>'
-            f'<nav class="nav">{nav_html}</nav>'
-            f'<div class="who" id="nav-user-chip"><span>👤 <b>{escape(me_email or "")}</b></span>'
+            f'<nav class="nav" aria-label="Навігація кабінету">{nav_html}</nav>'
+            f'<div class="who" id="nav-user-chip"><span><b>{escape(me_email or "")}</b></span>'
             '<a class="btn btn-sm btn-danger" href="/logout">Вийти</a></div></header>'
             f'<main class="wrap">{body}</main>'
-            f'<script>{COMMON_JS}{ADMIN_JS if admin_js else ""}{script}</script></body></html>')
+            f'<script>{COMMON_JS}{ADMIN_JS if admin_js else ""}{script}</script>'
+            '<script src="/static/js/vsv-theme.js?v=300"></script></body></html>')
 
 
 # ── 1. список користувачів ───────────────────────────────────────────────

@@ -82,9 +82,16 @@ def test_database_page_is_reachable_from_both_admin_navigations():
            'маршрут і шаблон адміністрування БД')
     _check('{% extends "base.html" %}' in _ADM and '{% block content %}' in _ADM,
            'сторінка БД використовує спільний дизайн бота')
-    _check("url_for('database_admin')" in _BASE, 'посилання DB у головній навігації')
-    _check("('/database', '🗄 База даних', 'db')" in _ADMIN,
+    nav = _BASE.split('<div class="nav-links">', 1)[1].split('</div>', 1)[0]
+    _check("url_for('database_admin')" in nav and '>База даних</span>' in nav,
+           'повне й видиме посилання на БД у головній навігації')
+    _check(nav.index("url_for('smart_money_page')") < nav.index("url_for('index')"),
+           'Smart Money перед Dashboard у головній навігації')
+    _check("('/database', 'База даних', 'db')" in _ADMIN,
            'посилання на БД у навігації керування користувачами')
+    _check("('/smart-money', 'Smart Money', 'smart')" in _ADMIN
+           and _ADMIN.index("('/smart-money'") < _ADMIN.index("('/', 'Dashboard'"),
+           'Smart Money перед Dashboard у навігації адміністрування')
 
 
 if __name__ == '__main__':
