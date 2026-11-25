@@ -2720,7 +2720,7 @@ VSV_TG_KEY = 'vsv_signals_tg_v1'             # {init, in, sent}
 VSV_TG_TICK_SEC = 60
 VSV_TG_WARMUP_SEC = 300       # після старту бота дані Пружин ще доїжджають
 VSV_TG_COOLDOWN = 6 * 3600    # монета, що «блимає» на межі списку, — не частіше
-VSV_TG_MAX_LINES = 8          # caption GIF у Telegram обмежений 1024 символами
+VSV_TG_MAX_LINES = 8          # компактне текстове повідомлення без GIF
 _vsv_tg = {'boot': time.time(), 'thread': None, 'st': None, 'set': None,
            'last': None}
 
@@ -2861,7 +2861,7 @@ def vsv_tg_tick(now=None, send=None):
             ok = bool(send(vsv_tg_text(new)))
         else:
             from web import tg_bot
-            ok = bool(tg_bot.notify_category_animation('sbr', vsv_tg_text(new)))
+            ok = bool(tg_bot.notify_category('sbr', vsv_tg_text(new)))
             if not ok:
                 why = (getattr(tg_bot, 'last_send_error', lambda: '')() or '')
     except Exception as e:

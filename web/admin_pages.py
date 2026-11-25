@@ -206,7 +206,8 @@ def _shell(title, active, me_email, info_url, body, script, nav=None, brand='ADM
            home='/admin/users', admin_js=True):
     if nav is None:
         nav = [('/admin/users', '🛡 Користувачі', 'users'), ('/cabinet', '👤 Кабінет', 'cab'),
-               ('/', '📊 Дашборд', 'dash'), ((info_url or '/info/'), '🛰 Інфосайт', 'info')]
+               ('/', '📊 Дашборд', 'dash'), ('/database', '🗄 База даних', 'db'),
+               ((info_url or '/info/'), '🛰 Інфосайт', 'info')]
     nav_html = ''.join(f'<a href="{escape(h)}" class="{"active" if k == active else ""}">{escape(t)}</a>'
                        for h, t, k in nav)
     return ('<!doctype html><html lang="uk"><head><meta charset="utf-8">'

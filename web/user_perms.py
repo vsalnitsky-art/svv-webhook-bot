@@ -24,7 +24,7 @@ PERMS = (
      'Список монет користувача і графік з усіма шарами нижче.'),
     ('sec_signals', 'sections', 'VSV SIGNALS + банер VSV Forecast', True, None,
      'Таблиця сигналів ШІ (точки входу) і банер «куди накручено пружину».'),
-    ('sec_paper', 'sections', 'P&L тестових угод бота', True, None,
+    ('sec_paper', 'sections', 'P&L тестових угод бота', False, None,
      'Віртуальний рахунок, статистика й таблиці тестових (paper) угод бота.'),
 
     ('ly_struct', 'layers', 'CHoCH / BOS', True, 'sec_terminal', 'Події структури на графіку.'),

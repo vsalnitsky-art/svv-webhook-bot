@@ -10,6 +10,8 @@ import sys
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 _APP = open(os.path.join(_ROOT, 'web', 'flask_app.py'), encoding='utf-8').read()
 _ADM = open(os.path.join(_ROOT, 'templates', 'database_admin.html'), encoding='utf-8').read()
+_BASE = open(os.path.join(_ROOT, 'templates', 'base.html'), encoding='utf-8').read()
+_ADMIN = open(os.path.join(_ROOT, 'web', 'admin_pages.py'), encoding='utf-8').read()
 _HTML = open(os.path.join(_ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
 _DBO = open(os.path.join(_ROOT, 'storage', 'db_operations.py'), encoding='utf-8').read()
 
@@ -73,6 +75,16 @@ def test_each_table_own_transaction_and_routes():
            'картка аномалій і чип «Дослідження» на сторінці адміністрування')
     _check('onclick="vanomClear();return false"' in _HTML and 'id="vanom-keep"' in _HTML,
            '«🗑 Очистити дані» і «Тримати N днів» у панелі аномалій')
+
+
+def test_database_page_is_reachable_from_both_admin_navigations():
+    _check("@app.route('/database')" in _APP and "render_template('database_admin.html')" in _APP,
+           'маршрут і шаблон адміністрування БД')
+    _check('{% extends "base.html" %}' in _ADM and '{% block content %}' in _ADM,
+           'сторінка БД використовує спільний дизайн бота')
+    _check("url_for('database_admin')" in _BASE, 'посилання DB у головній навігації')
+    _check("('/database', '🗄 База даних', 'db')" in _ADMIN,
+           'посилання на БД у навігації керування користувачами')
 
 
 if __name__ == '__main__':

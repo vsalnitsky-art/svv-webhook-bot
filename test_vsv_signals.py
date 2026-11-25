@@ -154,7 +154,8 @@ def test_tg_tick_sends_new_a_grade_coins_to_signals_theme():
         IP.recommended_payload = old
         IP._vsv_tg['set'] = None
     src = open(os.path.join(ROOT, 'web', 'info_portal.py'), encoding='utf-8').read()
-    assert "notify_category_animation('sbr'" in src and "'/api/vsv-signals/settings'" in src
+    assert "notify_category('sbr'" in src and "'/api/vsv-signals/settings'" in src
+    assert "notify_category_animation('sbr'" not in src, 'VSV SIGNALS — компактний текст без GIF'
     assert "VSV_TG_SET_KEY" in src and "{'enabled': True, 'grade': 'A'}" in src, 'дефолт — A, увімкнено'
     html = open(os.path.join(ROOT, 'templates', 'smart_money.html'), encoding='utf-8').read()
     assert 'id="vsv-tg"' in html and 'function vsvTgSave' in html and '/api/vsv-signals/settings' in html

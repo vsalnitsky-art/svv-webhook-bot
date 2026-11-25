@@ -11,8 +11,6 @@
         </div>
     </div>
 
-    {% include "vsv_terminal.html" %}
-
     <!-- ═══ API Health strip — live status of every external dependency.
          Backed by detection/api_health.py (sweep every 2 min); the strip
          itself refreshes from cache every 60 s. ═══ -->
@@ -5363,13 +5361,4 @@ if (document.readyState === 'loading') {
     liqmapInit();
 }
 </script>
-{% endblock %}
-
-{% block scripts %}
-<!-- Load after config, dictionaries and i18n; DOMContentLoaded panels start afterwards. -->
-<script src="/static/info/js/vendor/lightweight-charts.js"></script>
-<script src="/static/info/js/app.js?v=271"></script>
-<script src="/static/info/js/chart-pro.js?v=214"></script>
-<script src="/static/info/js/chart-tools.js?v=214"></script>
-<script src="/static/info/js/ui.js?v=202"></script>
 {% endblock %}

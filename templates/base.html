@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="uk" data-theme="dark" data-boot-required="{% if request.endpoint == 'index' %}page,terminal,liqmap{% else %}page{% endif %}">
+<html lang="uk" data-theme="dark" data-boot-required="{% if request.endpoint == 'index' %}page,liqmap{% else %}page{% endif %}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -37,7 +37,7 @@
                 <span class="brand-copy"><b>VSV</b><small>TRADING INTELLIGENCE</small></span>
             </a>
             <div class="nav-links">
-                <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}"><svg><use href="#vsv-i-terminal"/></svg>Terminal</a>
+                <a href="{{ url_for('index') }}" class="nav-link {% if request.endpoint == 'index' %}active{% endif %}"><svg><use href="#vsv-i-terminal"/></svg>Dashboard</a>
                 <a href="{{ url_for('smart_money_page') }}" class="nav-link {% if request.endpoint == 'smart_money_page' %}active{% endif %}"><svg><use href="#vsv-i-sm"/></svg>Smart Money</a>
                 <a href="{{ url_for('tickr_page') }}" class="nav-link {% if request.endpoint == 'tickr_page' %}active{% endif %}"><svg><use href="#vsv-i-tickr"/></svg>Tickr</a>
                 <a href="/cabinet" class="nav-link"><svg><use href="#vsv-i-user"/></svg>Кабінет</a>
