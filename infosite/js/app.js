@@ -3082,13 +3082,21 @@
       .replace(/🤖/g, '<img class="ai-brand rec-note-ic" src="img/logo.svg" alt="VSV AI">')
       .replace(/💥/g, '<img class="rec-note-ic" src="img/forecast-mark.svg" alt="Breakout">');
   }
+  function recPhaseIcon(kind) {
+    var body = kind === "impulse" || kind === "imp"
+      ? '<path d="M3 17 9 11l4 3 8-9"/><path d="M15 5h6v6"/>'
+      : kind === "charged" || kind === "sq"
+        ? '<path d="M3 12h5m-2-2 2 2-2 2M21 12h-5m2-2-2 2 2 2M10 5v14M14 5v14"/>'
+        : '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>';
+    return '<svg class="vsv-phase-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + body + '</svg>';
+  }
   function recPhaseCell(r) {
-    var ph = r.impulse ? ["imp", "💥 Імпульс"] : Number(r.charge) >= 65 ? ["sq", "🌀 Стиснення"] : ["acc", "⏳ Накопичення"];
+    var ph = r.impulse ? ["imp", "Імпульс", "impulse"] : Number(r.charge) >= 65 ? ["sq", "Стиснення", "charged"] : ["acc", "Накопичення", "acc"];
     var notes = (r.notes || []).filter(function (x) { return x && x.indexOf("💥") !== 0; });
     var txt = notes.map(function (note) {
       return note.split(" · ").map(function (part) { return recT(part); }).join(" · ");
     }).join(" · ");
-    return '<span class="rec-ph"><span class="rec-phase ' + ph[0] + '">' + recT(ph[1]) + '</span><span class="rec-note" title="' + esc(txt) + '">' + recNoteHtml(txt) + "</span></span>";
+    return '<span class="rec-ph"><span class="rec-phase ' + ph[0] + '">' + recPhaseIcon(ph[2]) + '<span>' + esc(recT(ph[1])) + '</span></span><span class="rec-note" title="' + esc(txt) + '">' + recNoteHtml(txt) + "</span></span>";
   }
   // 🧭 Ймовірний напрямок (25.11): зведення доказів бота + впевненість моделі +
   // фактична точність журналу перевірки; 🔄 — напрямок нещодавно розвернувся.
@@ -3127,8 +3135,12 @@
   function recRender() {
     var rows = REC.rows || [], n = {}, gradeRows = rows.filter(function (r) { return recGradePass(r, REC.grade); });
     REC_F.forEach(function (f) { n[f] = gradeRows.filter(function (r) { return recPass(r, f); }).length; });
-    var lbl = { all: "Усі", charged: "🌀 Стиснення", impulse: "💥 Імпульс", ai: "VSV·AI" };
-    document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) { var d = b.getAttribute("data-d"); b.textContent = recT(lbl[d]) + " (" + (n[d] || 0) + ")"; b.classList.toggle("on", d === REC.f); });
+    var lbl = { all: "Усі", charged: "Стиснення", impulse: "Імпульс", ai: "VSV·AI" };
+    document.querySelectorAll("#rec-tabs button[data-d]").forEach(function (b) {
+      var d = b.getAttribute("data-d"), icon = d === "charged" || d === "impulse" ? recPhaseIcon(d) : "";
+      b.innerHTML = icon + '<span>' + esc(recT(lbl[d])) + " (" + (n[d] || 0) + ")</span>";
+      b.classList.toggle("on", d === REC.f);
+    });
     var grade = $("#rec-grade"); if (grade && grade.value !== REC.grade) grade.value = REC.grade;
     var vis = gradeRows.filter(function (r) { return recPass(r, REC.f); }), tb = $("#rec-tbl tbody");
     var empty = !rows.length ? "Зараз немає монет у фазі стиснення — список оновиться, щойно «Пружина» зарядиться" : !gradeRows.length ? "У цій вкладці немає монет обраного класу" : "У цій вкладці зараз немає монет";

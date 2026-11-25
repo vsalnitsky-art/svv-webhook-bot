@@ -321,31 +321,31 @@ window.VSV_I18N_DICTIONARIES["es"]["Зміна ціни за ~24 год"] = "Cam
       "Ранг VSV Score": "VSV Score rank", "Фільтр класу VSV Score": "VSV Score class filter",
       "A — найкращі": "A — best", "B — сильні": "B — strong", "C — помірні": "C — moderate", "Усі класи": "All classes",
       "У цій вкладці немає монет обраного класу": "No coins of the selected class in this view",
-      "Усі": "All", "💥 Імпульс": "💥 Impulse", "🌀 Стиснення": "🌀 Compression", "⏳ Накопичення": "⏳ Accumulation"
+      "Усі": "All", "Імпульс": "Impulse", "Стиснення": "Compression", "Накопичення": "Accumulation", "💥 Імпульс": "💥 Impulse", "🌀 Стиснення": "🌀 Compression", "⏳ Накопичення": "⏳ Accumulation"
     },
     ru: {
       "Ранг VSV Score": "Ранг VSV Score", "Фільтр класу VSV Score": "Фильтр класса VSV Score",
       "A — найкращі": "A — лучшие", "B — сильні": "B — сильные", "C — помірні": "C — умеренные", "Усі класи": "Все классы",
       "У цій вкладці немає монет обраного класу": "Нет монет выбранного класса в этом представлении",
-      "Усі": "Все", "💥 Імпульс": "💥 Импульс", "🌀 Стиснення": "🌀 Сжатие", "⏳ Накопичення": "⏳ Накопление"
+      "Усі": "Все", "Імпульс": "Импульс", "Стиснення": "Сжатие", "Накопичення": "Накопление", "💥 Імпульс": "💥 Импульс", "🌀 Стиснення": "🌀 Сжатие", "⏳ Накопичення": "⏳ Накопление"
     },
     pl: {
       "Ранг VSV Score": "Klasa VSV Score", "Фільтр класу VSV Score": "Filtr klasy VSV Score",
       "A — найкращі": "A — najlepsze", "B — сильні": "B — silne", "C — помірні": "C — umiarkowane", "Усі класи": "Wszystkie klasy",
       "У цій вкладці немає монет обраного класу": "Brak monet wybranej klasy w tym widoku",
-      "Усі": "Wszystkie", "💥 Імпульс": "💥 Impuls", "🌀 Стиснення": "🌀 Kompresja", "⏳ Накопичення": "⏳ Akumulacja"
+      "Усі": "Wszystkie", "Імпульс": "Impuls", "Стиснення": "Kompresja", "Накопичення": "Akumulacja", "💥 Імпульс": "💥 Impuls", "🌀 Стиснення": "🌀 Kompresja", "⏳ Накопичення": "⏳ Akumulacja"
     },
     de: {
       "Ранг VSV Score": "VSV-Score-Rang", "Фільтр класу VSV Score": "VSV-Score-Klassenfilter",
       "A — найкращі": "A — beste", "B — сильні": "B — stark", "C — помірні": "C — moderat", "Усі класи": "Alle Klassen",
       "У цій вкладці немає монет обраного класу": "Keine Coins der gewählten Klasse in dieser Ansicht",
-      "Усі": "Alle", "💥 Імпульс": "💥 Impuls", "🌀 Стиснення": "🌀 Kompression", "⏳ Накопичення": "⏳ Akkumulation"
+      "Усі": "Alle", "Імпульс": "Impuls", "Стиснення": "Kompression", "Накопичення": "Akkumulation", "💥 Імпульс": "💥 Impuls", "🌀 Стиснення": "🌀 Kompression", "⏳ Накопичення": "⏳ Akkumulation"
     },
     es: {
       "Ранг VSV Score": "Rango VSV Score", "Фільтр класу VSV Score": "Filtro de clase VSV Score",
       "A — найкращі": "A — mejores", "B — сильні": "B — fuertes", "C — помірні": "C — moderadas", "Усі класи": "Todas las clases",
       "У цій вкладці немає монет обраного класу": "No hay monedas de la clase seleccionada en esta vista",
-      "Усі": "Todas", "💥 Імпульс": "💥 Impulso", "🌀 Стиснення": "🌀 Compresión", "⏳ Накопичення": "⏳ Acumulación"
+      "Усі": "Todas", "Імпульс": "Impulso", "Стиснення": "Compresión", "Накопичення": "Acumulación", "💥 Імпульс": "💥 Impulso", "🌀 Стиснення": "🌀 Compresión", "⏳ Накопичення": "⏳ Acumulación"
     }
   };
   var dynamic = {

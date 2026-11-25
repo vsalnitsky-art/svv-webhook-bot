@@ -2385,30 +2385,50 @@ def anom_pick(rl: Dict, rs: Dict, adir: Optional[Dict] = None):
     return side, r
 
 
+def _anom_pattern_context(key) -> str:
+    """Нейтральний опис зафіксованого патерна без прогнозу LONG/SHORT.
+
+    Внутрішній бік сценарію потрібен автоматизації, але персональне повідомлення
+    описує лише ринковий факт і те, що трейдеру варто перевірити на графіку.
+    """
+    return {
+        'E1': 'Послідовність кульмінації й абсорбції: ринок перевіряє зміну балансу ініціативи біля рівня.',
+        'E2': 'Після стиснення зафіксовано імпульс на обсязі: ринок перевіряє прийняття ціни за межею діапазону.',
+        'E3': 'Після імпульсу сформовано відкат і нову реакцію біля рівня: перевіряється стійкість поточної структури.',
+        'E4': 'Межу діапазону проколото з подальшим поверненням: ринок перевіряє, чи був це збір ліквідності, а не справжній пробій.',
+    }.get(str(key or '').upper(),
+          'Зафіксовано незвичну послідовність обсягу та реакції ціни: баланс ринкової активності може змінюватися.')
+
+
 def anom_tg_text(symbol: str, side: str, r: Dict, price=None, adir: Optional[Dict] = None) -> str:
-    """Текст Telegram: бік, монета, сценарій, етапи, ціна, напрямок аномалій."""
+    """Повне нейтральне сповіщення: ринковий факт і контрольні ознаки на графіку.
+
+    `side` і `adir` залишені в сигнатурі для сумісності з рушієм, але навмисно
+    не виводяться: аномалія обсягу не є достатнім підтвердженням напрямку.
+    """
     sc = (r or {}).get('scenario') or {}
-    emo = '🟢' if side == 'LONG' else '🔴'
-    out = ['🤖 <b>VSV·AI</b>', f"⚠️ <b>Аномалії обсягу · сетап на вхід</b> · {emo} <b>{side}</b>",
-           f"<b>#{symbol}</b> · {sc.get('name') or 'сетап на вхід'}"]
-    for st in (sc.get('stages') or [])[:5]:
-        out.append(('✓ ' if st.get('done') else '· ') + str(st.get('label') or ''))
+    out = ['🤖 <b>VSV·AI</b>', '⚠️ <b>Аномалії обсягу · ринковий контекст</b>',
+           f'<b>#{symbol}</b>', f"📊 {_anom_pattern_context(sc.get('key'))}"]
     try:
         if price:
             from detection.sbr_signals import fmt_price
-            out.append(f"💵 Ціна сигналу: <code>{fmt_price(float(price))}</code>")
+            out.append(f"💵 Ціна в момент спостереження: <code>{fmt_price(float(price))}</code>")
     except Exception:
         pass
-    if adir and adir.get('state') == 'dir' and adir.get('dir'):
-        out.append(f"🧭 Order flow 6 год: {'▲' if adir['dir'] == 'LONG' else '▼'} {adir['dir']}")
+    out.extend([
+        '📈 <b>На що звернути увагу на графіку</b>',
+        '• Реакція ціни на найближчий рівень або межу діапазону.',
+        '• Чи підтверджує наступна свічка реакцію, а не одразу скасовує її.',
+        '• Чи не з’являється поглинання імпульсу та повернення в попередній діапазон.',
+        '<i>Напрямок не прогнозується. Це спостереження за зміною ринкової активності, '
+        'а не сигнал до входу — рішення залишається за вашою стратегією.</i>',
+    ])
     return '\n'.join(out)
 
 
 def anom_tg_short(symbol: str, side: str, r: Dict, price=None) -> str:
-    """⚠ КОРОТКЕ повідомлення (вимога 24.11, деф. у кабінеті): лише головне —
-    бік, монета, ціна, назва сценарію. Без етапів і пояснень."""
+    """Коротке нейтральне сповіщення без LONG/SHORT і заклику до входу."""
     sc = (r or {}).get('scenario') or {}
-    emo = '🟢' if side == 'LONG' else '🔴'
     px = ''
     try:
         if price:
@@ -2416,12 +2436,13 @@ def anom_tg_short(symbol: str, side: str, r: Dict, price=None) -> str:
             px = f" · 💵 <code>{fmt_price(float(price))}</code>"
     except Exception:
         px = ''
-    out = [f"⚠️ {emo} <b>{side}</b> · <b>#{symbol}</b>{px}"]
-    if sc.get('name'):
-        out.append(f"{sc['name']} · 🤖 <b>VSV·AI</b>")
-    else:
-        out.append('🤖 <b>VSV·AI</b>')
-    return '\n'.join(out)
+    return '\n'.join([
+        '⚠️ <b>VSV · Аномалія обсягу</b>',
+        f'<b>#{symbol}</b>{px}',
+        f"📊 {_anom_pattern_context(sc.get('key'))}",
+        '🔍 На графіку перевірте реакцію біля рівня та закриття наступної свічки.',
+        '<i>Напрямок не прогнозується. Це спостереження, а не сигнал до входу.</i>',
+    ])
 
 
 def _alarm_engine():

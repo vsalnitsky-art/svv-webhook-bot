@@ -1682,13 +1682,16 @@ def anom_recipients_fmt(subs, symbol):
 
 
 def anom_text_for(text, fmt):
-    """ЧИСТА: текст під формат: `text` — рядок (один на всіх) або
-    {'short': …, 'full': …}. Повне несе підпис «з кабінету»."""
+    """ЧИСТА: нейтральне спостереження у короткому або повному форматі.
+
+    Це не «сигнал з кабінету»: аномалія привертає увагу до зміни активності,
+    але не обіцяє напрямок і не є рекомендацією до входу.
+    """
     if isinstance(text, dict):
         if fmt == 'full':
-            return '👤 <i>Ваш сигнал з кабінету</i>\n' + (text.get('full') or text.get('short') or '')
+            return '👤 <i>Ваше спостереження з кабінету</i>\n' + (text.get('full') or text.get('short') or '')
         return text.get('short') or text.get('full') or ''
-    return '👤 <i>Ваш сигнал з кабінету</i>\n' + str(text or '')
+    return '👤 <i>Ваше спостереження з кабінету</i>\n' + str(text or '')
 
 
 def anom_personal_send(symbol, text):

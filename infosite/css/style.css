@@ -670,7 +670,10 @@ body.perm-no-sec_terminal .pm-sec_terminal,body.perm-no-sec_signals .pm-sec_sign
 #rec-tbl td:last-child,#rec-tbl th:last-child{overflow:visible;white-space:normal;text-overflow:clip;overflow-wrap:anywhere;word-break:normal}
 #rec-tbl td:last-child{vertical-align:middle;line-height:1.35}
 .rec-ph{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;white-space:normal}
-.rec-phase{flex:0 0 auto;max-width:100%;line-height:1.25;white-space:normal}
+.rec-phase{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;max-width:100%;line-height:1.25;white-space:normal}
+.vsv-phase-ic{display:inline-block;width:14px;height:14px;flex:0 0 14px;color:var(--accent-2);vertical-align:-2px}
+#rec-tabs .vsv-phase-ic{width:14px;height:14px;flex-basis:14px}
+.rec-info .vsv-phase-ic{margin-right:5px}
 #rec-tbl .rec-note{display:block;flex:0 1 auto;min-width:0;max-width:100%;overflow:visible;white-space:normal;text-overflow:clip;overflow-wrap:anywhere;color:var(--txt-dim);font:500 10.5px/1.35 var(--font)}
 #rec-tbl .rec-note-ic{display:inline-block;width:13px;height:13px;margin:0 2px;vertical-align:-2px;object-fit:contain;filter:drop-shadow(0 0 3px rgba(240,185,11,.22))}
 #rec-tbl .rec-note-ic.ai-brand{border-radius:3px}
