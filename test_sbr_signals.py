@@ -1,4 +1,4 @@
-"""🔔 Session Band Reversal (SBR) — сигнали 1H/4H, книга МММ-SBR, TG «🔔 Сигнали».
+"""🔔 Session Band Reversal (SBR) — сигнали 1H/4H, книга VSV-SBR, TG «🔔 Сигнали».
 
 Запуск: python3 test_sbr_signals.py
 """
@@ -228,7 +228,7 @@ def test_tg_text_like_the_tv_label():
            and '2,455.85' in t2 and 'SHORT #1' in t2 and t2.count('\n') == 3, t2)
 
 
-# ── 5. Книга МММ-SBR у fuel_filter ───────────────────────────────────────────
+# ── 5. Книга VSV-SBR у fuel_filter ───────────────────────────────────────────
 def _ff_src():
     return open(os.path.join(_ROOT, 'detection', 'fuel_filter.py'), encoding='utf-8').read()
 
@@ -370,7 +370,7 @@ def test_tg_tf_choice():
 def test_gates_and_banner_tg_wired():
     sc = open(os.path.join(_ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
     _check("('mms_gate_enabled', 'mms_gate_banner', 'sbr')" in sc, 'пара воріт у MM_GATES')
-    _check("'sbr': ('🔔МММ-SBR', '🔔 МММ-SBR')" in sc, 'підписи воріт')
+    _check("'sbr': ('🔔VSV-SBR', '🔔 VSV-SBR')" in sc, 'підписи воріт')
     ff = _ff_src()
     _check("'key': 'mms_bias_tg'" in ff and "book='sbr')" in ff, 'TG банера SBR')
     for i in ('sm-mms-gate', 'sm-mms-gate-banner', 'ff-mms-bias-tg', 'mms-tf-1h',
@@ -415,7 +415,7 @@ def test_gate_rejects_while_sbr_state_is_stale():
     src = open(os.path.join(_ROOT, 'detection', 'smc_scanner.py'), encoding='utf-8').read()
     a = src.index('_MM_GATE_TAG')
     b = src.index('\ndef mm_gate_decide(')
-    c = src.index('\n# 🧮 ЗАГАЛЬНІ МММ-ВОРОТА')
+    c = src.index('\n# 🧮 ЗАГАЛЬНІ VSV-ВОРОТА')
     ns = {}
     exec(src[src.index('_MM_GATE_TAG = '):b] + src[b:c], ns)
     f = ns['mm_gate_decide']

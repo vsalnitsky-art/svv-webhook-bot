@@ -1,6 +1,6 @@
-"""🧩 МММ-ГОТОВНІСТЬ — сьомий банер/монітор на SMC-«Готовності» (25.10).
+"""🧩 VSV-ГОТОВНІСТЬ — сьомий банер/монітор на SMC-«Готовності» (25.10).
 
-Дослівно: «Створи ще один МММ банер (монітор) взявши за основу показники
+Дослівно: «Створи ще один VSV банер (монітор) взявши за основу показники
 "Готовність"» + «Оновлення даних організуй в чергу з іншими банерами, за
 замовчуванням раз на 15хв. Щоб не було навантаження на сервер і біржі. Із
 збереженням даних та їх відновленням на момент перезапуску сервера.»
@@ -250,16 +250,16 @@ def test_both_sides_share_one_analysis():
 def test_labels_and_gates():
     sl = open(os.path.join(_HERE, 'detection', 'signal_labels.py'), encoding='utf-8').read()
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
-    _check("'MMR':              '🧩 МММ-Готовність'" in sl and sl.count("'MMR': '🧩'") == 2, 'labels')
-    _check('"MMR": "🧩 МММ-Готовність"' in js and js.count('"MMR": "🧩"') == 2, 'infosite')
-    _check("'MMR': '🧩 МММ-Готовність'" in _HTML and _HTML.count("'MMR': '🧩'") == 2, 'page')
+    _check("'MMR':              '🧩 VSV-Готовність'" in sl and sl.count("'MMR': '🧩'") == 2, 'labels')
+    _check('"MMR": "🧩 VSV-Готовність"' in js and js.count('"MMR": "🧩"') == 2, 'infosite')
+    _check("'MMR': '🧩 VSV-Готовність'" in _HTML and _HTML.count("'MMR': '🧩'") == 2, 'page')
     _check("('mmr_gate_enabled', 'mmr_gate_banner', 'rdy')" in _SC_SRC, 'пара в MM_GATES')
     _check("'mmr_gate_enabled': False" in _SC_SRC and
            _SC_SRC.count("'mmr_gate_enabled', 'mmr_gate_banner',") == 3, 'деф. ВИМК + MM_GATES + списки')
     for need in ('id="sm-mmr-gate"', 'id="sm-mmr-gate-banner"',
                  "['sm-mmr-gate', 'sm-mmr-gate-banner', 'mmr_gate_enabled', 'mmr_gate_banner']"):
         _check(need in _HTML, need)
-    print('✓ мітка MMR = 🧩 у Python і JS-дзеркалах; ворота «Через МММ-Готовність»')
+    print('✓ мітка MMR = 🧩 у Python і JS-дзеркалах; ворота «Через VSV-Готовність»')
 
 
 # ═══════════ 5. UI ═════════════════════════════════════════════════════

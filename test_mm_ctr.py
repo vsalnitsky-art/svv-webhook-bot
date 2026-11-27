@@ -1,7 +1,7 @@
-"""⚡ МММ-CTR — третій банер/монітор на STC (CTR) 1H + 4H (вимога 14.10).
+"""⚡ VSV-CTR — третій банер/монітор на STC (CTR) 1H + 4H (вимога 14.10).
 
-Дослівно: «Створи третій МММ банер (монітор) по такому принципу як і два
-попередні МММ, але за основу візьми дані [бейдж ⚡ 1h 🟢 0 · 100% · 4H 🟢 30 ·
+Дослівно: «Створи третій VSV банер (монітор) по такому принципу як і два
+попередні VSV, але за основу візьми дані [бейдж ⚡ 1h 🟢 0 · 100% · 4H 🟢 30 ·
 40%]. Визнач які відсотки разом 1Н і 4Н максимально відповідають за LONG або
 SHORT нахил і рівновагу.»
 """
@@ -213,7 +213,7 @@ def test_ctr_banner_change_goes_to_telegram_once_per_confirmed_flip():
     ff._broadcast_users = lambda cat, key, msg: (sent.append((cat, msg)) or (True, ''))
     ff._legacy = {'BTCUSDT': 0.3}
     ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1000.0)      # перший такт — мовчки
-    ctr = lambda: [m for c, m in sent if 'МММ-CTR' in m]
+    ctr = lambda: [m for c, m in sent if 'VSV-CTR' in m]
     _check(not ctr(), f'перший стан після старту не шлемо: {sent}')
     fe = ff._mm_forecast_engine()
     fe.data[('BTCUSDT', '1h')] = 100

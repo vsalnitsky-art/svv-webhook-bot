@@ -1,6 +1,6 @@
-"""🧭 МММ-Pull — п'ятий банер/монітор на скані ліквідності «куди тягне» (вимога 20.10).
+"""🧭 VSV-Pull — п'ятий банер/монітор на скані ліквідності «куди тягне» (вимога 20.10).
 
-Дослівно: «Додай ще один МММ монітор і банер як і попередні, візьми за основу
+Дослівно: «Додай ще один VSV монітор і банер як і попередні, візьми за основу
 дані [📡 Tickr · 💧 скан: Binance · Watchlist бота · 720 год · 🧭 куди тягне
 (звіт)]. Додай ці налаштування і вистав як на скріні за замовчуванням.» +
 «додай до налаштувань [Через … · за банером …]».
@@ -201,10 +201,10 @@ def test_banner_change_goes_to_telegram():
     sent = []
     ff._broadcast_users = lambda cat, key, msg: (sent.append(msg) or (True, ''))
     ff._mm_capture({}, now=1000.0)
-    _check(not [m for m in sent if 'МММ-PULL' in m], 'перший такт мовчки')
+    _check(not [m for m in sent if 'VSV-PULL' in m], 'перший такт мовчки')
     ff._mmp_scan['rows'] = {'BTCUSDT': _row('BTCUSDT', 25)}
     ff._mm_capture({}, now=1030.0)
-    m = [x for x in sent if 'МММ-PULL' in x]
+    m = [x for x in sent if 'VSV-PULL' in x]
     _check(len(m) == 1 and 'SHORT' in m[0] and 'монет:' not in m[0], m)
     _check("'mmp_bias_tg': True" in _SRC, 'тумблер TG деф. УВІМК')
     print('✓ 🧭 банер → Telegram: підтверджена зміна, перший такт мовчки')
@@ -219,7 +219,7 @@ def test_group_open_from_pull_uses_its_own_direction_and_label():
     print('✓ ✋ групове відкриття бере напрямок Pull, мітка MMP')
 
 
-# ═══════════ 5. ВОРОТА «ЧЕРЕЗ МММ-PULL» ════════════════════════════════
+# ═══════════ 5. ВОРОТА «ЧЕРЕЗ VSV-PULL» ════════════════════════════════
 def test_gate_view_and_rule():
     ff = _ff([_row('BTCUSDT', 30)])
     ff._mm_capture({}, now=1000.0)
@@ -227,15 +227,15 @@ def test_gate_view_and_rule():
     _check(v['on'] and v['coin'] == 'SHORT', v)
     sys.path.insert(0, _HERE)
     _check("('mmp_gate_enabled', 'mmp_gate_banner', 'pull')" in _SC_SRC, 'пара в MM_GATES')
-    _check("'pull': ('🧭МММ-Pull', '🧭 МММ-PULL')" in _SC_SRC, 'підписи воріт')
+    _check("'pull': ('🧭VSV-Pull', '🧭 VSV-PULL')" in _SC_SRC, 'підписи воріт')
     for k in ('mmp_gate_enabled', 'mmp_gate_banner'):
         _check(f"'{k}': False" in _SC_SRC, f'дефолт ВИМК: {k}')
     _check("'mmp_gate_enabled', 'mmp_gate_banner'," in _SC_SRC, 'білий список')
     for need in ('id="sm-mmp-gate"', 'id="sm-mmp-gate-banner"',
                  "['sm-mmp-gate', 'sm-mmp-gate-banner', 'mmp_gate_enabled', 'mmp_gate_banner']",
-                 "'🧭 МММ-Pull'],", '🧭 Через МММ-Pull', 'за банером МММ-Pull'):
+                 "'🧭 VSV-Pull'],", '🧭 Через VSV-Pull', 'за банером VSV-Pull'):
         _check(need in _HTML, f'на сторінці немає «{need}»')
-    print('✓ ворота «🧭 Через МММ-Pull» + «за банером»: книга, підписи, деф. ВИМК, UI')
+    print('✓ ворота «🧭 Через VSV-Pull» + «за банером»: книга, підписи, деф. ВИМК, UI')
 
 
 # ═══════════ 6. UI ═════════════════════════════════════════════════════
@@ -265,9 +265,9 @@ def test_ui_block_is_a_twin_with_its_own_columns():
 def test_labels_everywhere():
     sl = open(os.path.join(_HERE, 'detection', 'signal_labels.py'), encoding='utf-8').read()
     app = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
-    _check("'MMP':              '🧭 МММ-Pull'" in sl and sl.count("'MMP': '🧭'") == 2, 'labels')
-    _check('"MMP": "🧭 МММ-Pull"' in app and "'MMP': '🧭 МММ-Pull'" in _HTML, 'JS-дзеркала')
-    print('✓ мітка MMP «🧭 МММ-Pull» у Python і обох JS-дзеркалах')
+    _check("'MMP':              '🧭 VSV-Pull'" in sl and sl.count("'MMP': '🧭'") == 2, 'labels')
+    _check('"MMP": "🧭 VSV-Pull"' in app and "'MMP': '🧭 VSV-Pull'" in _HTML, 'JS-дзеркала')
+    print('✓ мітка MMP «🧭 VSV-Pull» у Python і обох JS-дзеркалах')
 
 
 # ═══════════ 20.10 · скрін першого запуску: 32751/900с, «$10–10» ═════════
@@ -321,11 +321,11 @@ def test_every_book_row_carries_the_4h_ob_mark():
     # 🏷 27.10: OB 1H + TRD у кожному рядку (те саме джерело, що угоди / WATCHLIST)
     _check(rows['ETHUSDT']['ob1h']['bias'] == 'BULLISH' and rows['BTCUSDT']['ob1h'] is None, rows)
     _check(rows['ETHUSDT']['tradeable'] is True and rows['BTCUSDT']['tradeable'] is False, rows)
-    _check("ob1hMarkHTML({ ob1h: r.ob1h, side: r.mm }, 'МММ у рядку')" in _HTML, 'OB 1H біля символу')
+    _check("ob1hMarkHTML({ ob1h: r.ob1h, side: r.mm }, 'VSV у рядку')" in _HTML, 'OB 1H біля символу')
     _check('<td>${_mmTrdCell(r)}</td>' in _HTML and "toggleTradeable('${s}')" in _HTML, 'TRD першою колонкою')
-    _check("ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'МММ у рядку')" in _HTML, 'рендер біля символу')
+    _check("ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'VSV у рядку')" in _HTML, 'рендер біля символу')
     _check('ob_mark_for' in _SRC.split('def _mm_ob4h_marks')[1].split('def ')[0], 'джерело — сканер')
-    print('✓ кожен рядок МММ-таблиць несе «останній OB 4H» (те саме джерело, що угоди)')
+    print('✓ кожен рядок VSV-таблиць несе «останній OB 4H» (те саме джерело, що угоди)')
 
 
 def test_next_scan_has_a_live_countdown():
@@ -339,7 +339,7 @@ def test_next_scan_has_a_live_countdown():
 
 # ═══════════ 21.10 · OB 4H ліворуч від назви · сортування магніту ═══════
 def test_ob4h_mark_sits_left_of_the_symbol():
-    a = _HTML.index("ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'МММ у рядку')")
+    a = _HTML.index("ob4hMarkHTML({ ob4h: r.ob4h, side: r.mm }, 'VSV у рядку')")
     b = _HTML.index('${tvSym(r.symbol)}', a - 400)
     _check(a < b, 'позначка OB 4H мусить стояти ПЕРЕД назвою монети')
     _check('mm-ob4h-slot' in _HTML[a - 300:a], 'слот сталої ширини — назви в стовпчик')

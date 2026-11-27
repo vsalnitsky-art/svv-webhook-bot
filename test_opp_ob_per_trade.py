@@ -1,4 +1,4 @@
-"""🧱 Пер-угодний Opposite OB Exit + авто-вмикання сигналом 🚨 МММ-Decision (22.10).
+"""🧱 Пер-угодний Opposite OB Exit + авто-вмикання сигналом 🚨 VSV-Decision (22.10).
 
 Дослівно: «Додай ще колонку в таблиці відкритих угод з тумблером (такий як
 "Manual 🎯 БЗ") він буде автоматично активувати алгоритм [Opposite OB Exit] по
@@ -72,7 +72,7 @@ def test_each_book_is_checked_apart():
 
 # ═══════════ 2. Автомат: перехід у «тенденцію до закриття» ════════════════
 def test_auto_action_pure_rule():
-    """⚠️ 29.10: 🚨 живе на 🔔 МММ-SBR — «тенденція до закриття» = ЛИШЕ
+    """⚠️ 29.10: 🚨 живе на 🔔 VSV-SBR — «тенденція до закриття» = ЛИШЕ
     протилежний сигнал, що зʼявився після входу ('against'). 'pre' / 'none'
     нічого не вмикають (тест переписано: вимога змінилась)."""
     A = TM.opp_ob_auto_action
@@ -82,7 +82,7 @@ def test_auto_action_pure_rule():
     _check(A('ok', 'pre', False, '') is None and A('ok', 'none', False, '') is None,
            'pre / none — не «тенденція до закриття»')
     _check(A('weaker', 'against', False, '') is True,
-           'старий рівень МММ-Trend більше не вважається «поганим»')
+           'старий рівень VSV-Trend більше не вважається «поганим»')
     _check(A('against', 'against', False, '') is None,
            'людина вимкнула посеред ПРОТИ — автомат не перебиває')
     _check(A('against', 'ok', True, 'auto') is False, 'покращення → вимкнути')
@@ -101,7 +101,7 @@ def test_apply_alert_toggles_and_logs():
                              {'level': 'against', 'text': 'ПРОТИ угоди: SBR SHORT 4H'}) is True, '')
     p = t._positions['MNTUSDT']
     _check(p['opp_ob_exit'] and p['opp_ob_exit_by'] == 'auto' and p['mmd_alert_lvl'] == 'against', p)
-    _check(any('МММ-SBR' in x and 'УВІМКНЕНО' in x for x in _er._LOG), _er._LOG)
+    _check(any('VSV-SBR' in x and 'УВІМКНЕНО' in x for x in _er._LOG), _er._LOG)
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'against'}) is None, 'вже увімкнено')
     _check(t.apply_mmd_alert('MNTUSDT', False, {'level': 'ok'}) is False, 'покращення')
     _check('opp_ob_exit' not in p and any('ВИМКНЕНО' in x for x in _er._LOG), p)
@@ -183,7 +183,7 @@ def test_engine_feeds_the_same_alert_as_the_column():
     a = _FF.index('def _mmd_apply_trade_alerts(')
     fn = _FF[a:_FF.index('\n    def ', a + 10)]
     _check('dec_trade_for(' in fn and 'apply_mmd_alert(' in fn, 'одне джерело з колонкою 🚨')
-    # ⚠️ 26.10: 🚨 живе на 🧮 МММ-Trend, тож автомат кличеться ОДИН раз —
+    # ⚠️ 26.10: 🚨 живе на 🧮 VSV-Trend, тож автомат кличеться ОДИН раз —
     # ПОЗА гілками блоку 🧠 (діє незалежно від його тумблера).
     _check(_FF.count('self._mmd_apply_trade_alerts()') == 1,
            'автомат кличеться один раз, незалежно від блоку 🧠')

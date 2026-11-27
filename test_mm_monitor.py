@@ -1,7 +1,7 @@
-"""🧮 МММ-МОНІТОР: живий напрямок МММ по монетах + групове ✋ відкриття.
+"""🧮 VSV-МОНІТОР: живий напрямок VSV по монетах + групове ✋ відкриття.
 
 **Вимога користувача (15.09), дослівно:** «Я хочу відслідковувати в реальному
-часі, який на даний момент по монетах МММ стан. І сортувати їх окремо на LONG
+часі, який на даний момент по монетах VSV стан. І сортувати їх окремо на LONG
 чи SHORT… Додай до кожної монети можливість в таблиці її помітити для групового
 відкриття угод.»
 
@@ -76,7 +76,7 @@ def _install_log():
 def _mk(limited=False, enabled=True, mon=True):
     """Мінімальний демон: лише те, чого торкається монітор.
 
-    ⚠️ `_fuel_dir_legacy` підмінено стабом: монітор показує САМЕ МММ LiQ
+    ⚠️ `_fuel_dir_legacy` підмінено стабом: монітор показує САМЕ VSV LiQ
     (вимога 15.09), і тести мають ганяти той самий шлях, що прод."""
     import threading
     ff = FF.__new__(FF)
@@ -90,32 +90,32 @@ def _mk(limited=False, enabled=True, mon=True):
     # тести «нічого не роблять».
     ff._mm_bias_cand = {}
     ff._mm_bias_new, ff._mm_bias_new_since, ff._mm_bias_new_cand = {}, 0.0, {}
-    # 🆕 Книга «МММ-Trend» (01.10) — свій знімок, історія і таймери.
+    # 🆕 Книга «VSV-Trend» (01.10) — свій знімок, історія і таймери.
     ff._mmn_snapshot, ff._mmn_snapshot_ts, ff._mmn_stats = {}, 0.0, {}
     ff._mmn_str_hist, ff._mmn_price_hist = {}, {}
     ff._mmn_grow_since, ff._mmn_state_since = {}, {}
-    # ⚡ Книга «МММ-CTR» (14.10) — свій знімок, банер і таймери.
+    # ⚡ Книга «VSV-CTR» (14.10) — свій знімок, банер і таймери.
     ff._mmc_snapshot, ff._mmc_snapshot_ts, ff._mmc_stats = {}, 0.0, {}
     ff._mmc_state_since, ff._mmc_price_hist = {}, {}
     ff._mm_bias_ctr, ff._mm_bias_ctr_since, ff._mm_bias_ctr_cand = {}, 0.0, {}
     ff._mmf_snapshot, ff._mmf_snapshot_ts, ff._mmf_stats = {}, 0.0, {}
     ff._mmf_state_since, ff._mmf_price_hist = {}, {}
     ff._mm_bias_fc, ff._mm_bias_fc_since, ff._mm_bias_fc_cand = {}, 0.0, {}
-    # 🧭 Книга «МММ-Pull» (20.10) — знімок, банер, таймери і стан скану.
+    # 🧭 Книга «VSV-Pull» (20.10) — знімок, банер, таймери і стан скану.
     ff._mmp_snapshot, ff._mmp_snapshot_ts, ff._mmp_stats = {}, 0.0, {}
     ff._mmp_state_since, ff._mmp_price_hist = {}, {}
     ff._mm_bias_pull, ff._mm_bias_pull_since, ff._mm_bias_pull_cand = {}, 0.0, {}
     ff._mmp_scan, ff._mmp_scan_running, ff._mmp_scan_at = {}, False, 0.0
-    # 🧠 Книга «МММ-Decision» (22.10) — знімок, банер, таймери, кеш вердиктів.
+    # 🧠 Книга «VSV-Decision» (22.10) — знімок, банер, таймери, кеш вердиктів.
     ff._mmd_snapshot, ff._mmd_snapshot_ts, ff._mmd_stats = {}, 0.0, {}
     ff._mmd_state_since, ff._mmd_price_hist, ff._mmd_dec = {}, {}, {}
     ff._mm_bias_dec, ff._mm_bias_dec_since, ff._mm_bias_dec_cand = {}, 0.0, {}
-    # 🧩 Книга «МММ-Готовність» (25.10) — знімок, банер, таймери, стан скану.
+    # 🧩 Книга «VSV-Готовність» (25.10) — знімок, банер, таймери, стан скану.
     ff._mmr_snapshot, ff._mmr_snapshot_ts, ff._mmr_stats = {}, 0.0, {}
     ff._mmr_state_since, ff._mmr_price_hist = {}, {}
     ff._mm_bias_rdy, ff._mm_bias_rdy_since, ff._mm_bias_rdy_cand = {}, 0.0, {}
     ff._mmr_scan, ff._mmr_scan_running, ff._mmr_scan_at = {}, False, 0.0
-    # ⚠️ «Готовність» МММ-Trend ПРИБРАНО (01.10): якби код знову полiз у грейдер,
+    # ⚠️ «Готовність» VSV-Trend ПРИБРАНО (01.10): якби код знову полiз у грейдер,
     # цей стаб упіймав би виклик (див. test_readiness_column_is_gone).
     ff._compute_setup_calls = []
     ff._compute_setup = lambda sym, d, s: ff._compute_setup_calls.append(sym)
@@ -141,7 +141,7 @@ def _mk(limited=False, enabled=True, mon=True):
     ff._settings = {'enabled': enabled, 'mmm_limited_mode': limited,
                     'mm_monitor_enabled': mon}
     ff.get_settings = lambda: dict(ff._settings)
-    # МММ LiQ: той самий поріг ±0.1 і та сама сила |dir|×100, що в коді.
+    # VSV LiQ: той самий поріг ±0.1 і та сама сила |dir|×100, що в коді.
     ff._legacy = {}
     ff._legacy_calls = []
 
@@ -167,7 +167,7 @@ def _mk(limited=False, enabled=True, mon=True):
 
 
 def _fuels(**pairs):
-    """{'BTCUSDT': 0.42} → форма, яку віддає `_fuel_dir_smoothed` (НОВИЙ МММ)."""
+    """{'BTCUSDT': 0.42} → форма, яку віддає `_fuel_dir_smoothed` (НОВИЙ VSV)."""
     out = {}
     for sym, d in pairs.items():
         st = 'LONG' if d > 0.15 else ('SHORT' if d < -0.15 else None)
@@ -176,10 +176,10 @@ def _fuels(**pairs):
 
 
 def _cap(ff, **pairs):
-    """Один такт двигуна: `pairs` — це значення МММ LiQ.
+    """Один такт двигуна: `pairs` — це значення VSV LiQ.
 
-    ⚠️ Новий МММ навмисно подаємо ПРОТИЛЕЖНИМ (`-v`) — тож КОЖЕН тест заразом
-    доводить, що монітор бере саме МММ LiQ, а не той, що лежить поруч
+    ⚠️ Новий VSV навмисно подаємо ПРОТИЛЕЖНИМ (`-v`) — тож КОЖЕН тест заразом
+    доводить, що монітор бере саме VSV LiQ, а не той, що лежить поруч
     у `fuels`.
 
     ⚠️ Кожен виклик СУНЕ ВІРТУАЛЬНИЙ ГОДИННИК на `CYCLE_SECS` — приріст сили
@@ -199,7 +199,7 @@ def _caps(ff, n=3, **pairs):
 
 # ═══════════ 1. ДЖЕРЕЛО ЧИСЕЛ — ЗНІМОК ДВИГУНА ═══════════════════════════
 def test_monitor_reads_the_engine_snapshot_and_computes_nothing():
-    """⚠️ ГОЛОВНЕ. Монітор не має права рахувати МММ сам: інакше в таблиці
+    """⚠️ ГОЛОВНЕ. Монітор не має права рахувати VSV сам: інакше в таблиці
     стояло б одне число, а рішення двигун ухвалював би за іншим (той самий
     урок, що з шарами Черги-4 — «двигун рахує, get_state читає»)."""
     ff = _mk()
@@ -261,7 +261,7 @@ def test_backend_no_longer_ships_tab_counts():
 # ═══════════ 2. ПРИДАТНІСТЬ ДО ВИБОРУ ════════════════════════════════════
 def test_a_coin_in_work_stays_in_the_table_with_its_status():
     """⚠️ **ВИМОГА ЗМІНИЛАСЬ (18.09), замок ПЕРЕПИСАНО, а не полагоджено.**
-    Дослівно: «Із таблиці "🧮 МММ-МОНІТОР" не потрібно видаляти монети що в
+    Дослівно: «Із таблиці "🧮 VSV-МОНІТОР" не потрібно видаляти монети що в
     роботі — поверни поле статус в таблицю, пиши де на даний момент монета.»
     Раніше (15.09) такий рядок ВИКИДАВСЯ як «не кандидат»."""
     ff = _mk()
@@ -293,7 +293,7 @@ def test_balanced_mm_is_not_selectable():
 
 # ═══════════ 3. ГРУПОВЕ ВІДКРИТТЯ ════════════════════════════════════════
 def test_group_open_uses_each_coin_own_mm_direction():
-    """Напрямок КОЖНОЇ монети — її власний МММ зі знімка, тобто РІВНО те, що
+    """Напрямок КОЖНОЇ монети — її власний VSV зі знімка, тобто РІВНО те, що
     людина бачила в рядку."""
     _install_log()
     ff = _mk()
@@ -302,7 +302,7 @@ def test_group_open_uses_each_coin_own_mm_direction():
     _check(res['opened'] == 2 and res['failed'] == 0, res)
     got = {o['symbol']: o['side'] for o in ff.opened}
     _check(got == {'BTCUSDT': 'LONG', 'ETHUSDT': 'SHORT'}, got)
-    print('✓ групове відкриття: напрямок кожної монети = її МММ')
+    print('✓ групове відкриття: напрямок кожної монети = її VSV')
 
 
 def test_group_open_goes_through_the_same_manual_path_as_queue4():
@@ -346,7 +346,7 @@ def test_rejected_open_is_not_counted_as_opened():
     res = ff.group_open(['BTCUSDT'])
     _check(res['opened'] == 0 and res['failed'] == 1, res)
     _check(not ff._timers, 'таймер не мав стартувати')
-    _check(any(e['event'] == 'skipped' and 'МММ-монітор' in e['detail']
+    _check(any(e['event'] == 'skipped' and 'VSV-монітор' in e['detail']
                for e in _LOGGED), _LOGGED)
     print('✓ відмова `_open` не рахується відкриттям')
 
@@ -389,7 +389,7 @@ def test_direction_buttons_are_not_bypassed():
 
 # ═══════════ 4. РЕЖИМ ЕКОНОМІЇ НАЗВАНИЙ ВГОЛОС ═══════════════════════════
 def test_limited_mode_is_said_out_loud():
-    """⚠️ При `mmm_limited_mode` МММ рахується лише по монетах «у роботі».
+    """⚠️ При `mmm_limited_mode` VSV рахується лише по монетах «у роботі».
     Мовчазно коротка таблиця читалась би як «бот сліпий» — той самий принцип,
     що з мовчазним clamp-ом у скані ліквідності."""
     _check(_mk(limited=True).mm_monitor_state()['limited'] is True, 'обмежений')
@@ -450,7 +450,7 @@ def test_selection_survives_the_poll():
     _check('sel: new Set()' in _HTML, 'вибір не винесений із DOM')
     # ⚠️ Зріз — ДО КІНЦЯ функції, а не «перші N символів»: `mmRender` росте, і
     # фіксоване вікно вже врізало рядок із відновленням галочок (той самий
-    # капкан, що вже ловили на `<th>` і на віджеті МММ).
+    # капкан, що вже ловили на `<th>` і на віджеті VSV).
     i = _HTML.index('function mmRender(bk)')
     fn = _HTML[i:_HTML.index('function mmApplyState(', i)]
     _check('B.sel.has(r.symbol)' in fn, 'рендер не відновлює галочки з набору')
@@ -468,31 +468,31 @@ def test_ui_reads_served_flag_before_drawing():
 
 
 def test_ui_uses_the_shared_mm_widget():
-    """Та сама метрика у двох місцях — ОДИН вигляд: монітор малює МММ тим самим
-    `ffFuelCell`, що й колонка «МММ» черг."""
+    """Та сама метрика у двох місцях — ОДИН вигляд: монітор малює VSV тим самим
+    `ffFuelCell`, що й колонка «VSV» черг."""
     # Вікно беремо ДО кінця функції, а не «перші N символів»: `mmRender` росте,
     # і фіксований зріз почав би врізати рядок із викликом віджета.
     i = _HTML.index('function mmRender(bk)')
     fn = _HTML[i:_HTML.index('function mmApplyState(', i)]
     _check('ffFuelCell(r.mm, r.strength, r.strength_prev)' in _HTML
            and '_MM_CELL[c](r)' in fn,
-           'монітор малює МММ власним віджетом — вигляд розійдеться')
-    print('✓ МММ малює спільний віджет ffFuelCell')
+           'монітор малює VSV власним віджетом — вигляд розійдеться')
+    print('✓ VSV малює спільний віджет ffFuelCell')
 
 
 def test_engine_label_is_mirrored_everywhere():
     """🏷 Мітка двигуна — ЄДИНЕ джерело + ОБИДВА обовʼязкові JS-дзеркала."""
     labels = importlib.import_module('detection.signal_labels')
-    _check(labels.ENGINE_BADGES.get('MMM') == '🧮 МММ-монітор',
+    _check(labels.ENGINE_BADGES.get('MMM') == '🧮 VSV-монітор',
            labels.ENGINE_BADGES.get('MMM'))
-    _check(labels.pretty_opened_by('manual → MMM') == '✋ Ручний → 🧮 МММ-монітор',
+    _check(labels.pretty_opened_by('manual → MMM') == '✋ Ручний → 🧮 VSV-монітор',
            labels.pretty_opened_by('manual → MMM'))
-    _check("'MMM': '🧮 МММ-монітор'" in _HTML and "'MMM': '🧮'" in _HTML,
+    _check("'MMM': '🧮 VSV-монітор'" in _HTML and "'MMM': '🧮'" in _HTML,
            'дзеркало у smart_money.html не синхронне')
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
-    _check('"MMM": "🧮 МММ-монітор"' in js and '"MMM": "🧮"' in js,
+    _check('"MMM": "🧮 VSV-монітор"' in js and '"MMM": "🧮"' in js,
            'дзеркало в infosite/app.js не синхронне')
-    print('✓ мітка 🧮 МММ-монітор: бекенд + обидва JS-дзеркала')
+    print('✓ мітка 🧮 VSV-монітор: бекенд + обидва JS-дзеркала')
 
 
 def _run_js(body):
@@ -502,7 +502,7 @@ def _run_js(body):
     є, а поводиться не так». Тут беремо ТОЙ САМИЙ блок зі `smart_money.html` і
     ганяємо його node-ом."""
     import subprocess, tempfile
-    i = _HTML.index('// 🧮 МММ-МОНІТОР — жива таблиця')
+    i = _HTML.index('// 🧮 VSV-МОНІТОР — жива таблиця')
     j = _HTML.index('// ⚡ C2: просимо в сервера ЛИШЕ ті важкі секції')
     src = _HTML[i:j]
     # Банер монітора свідомо малюється СПІЛЬНИМИ з ₿ хелперами, а вони лежать
@@ -594,7 +594,7 @@ const tvSym = (s, label) => String(label != null ? label : s);
 
 
 def test_js_selection_survives_a_redraw_with_new_numbers():
-    """⚠️ КЛЮЧОВА ПОВЕДІНКА. Полл приходить кожні ~10с і сила МММ у ньому
+    """⚠️ КЛЮЧОВА ПОВЕДІНКА. Полл приходить кожні ~10с і сила VSV у ньому
     інша → сигнатура змінюється → таблиця перемальовується. Галочки МУСЯТЬ
     лишитись, інакше обрати кілька монет фізично неможливо."""
     out = _run_js(r'''
@@ -702,13 +702,13 @@ def test_toggle_default_is_on_and_is_a_real_setting():
 
 def test_toggle_off_stops_the_work_not_just_the_view():
     """⚠️ ГОЛОВНЕ ПРО ТУМБЛЕР: вимкнено → знімок НЕ будується взагалі.
-    Це і є економія — МММ LiQ по 200+ монетах щотакту не рахується.
+    Це і є економія — VSV LiQ по 200+ монетах щотакту не рахується.
     Якби ми лише ховали таблицю, робота лишилась би, а тумблер брехав би."""
     ff = _mk(mon=False)
     ff._settings['mm_new_enabled'] = False     # обидва блоки вимкнено
     _cap(ff, BTCUSDT=0.5, ETHUSDT=-0.5)
     _check(not ff._legacy_calls,
-           f'вимкнений монітор усе одно рахував МММ: {ff._legacy_calls}')
+           f'вимкнений монітор усе одно рахував VSV: {ff._legacy_calls}')
     st = ff.mm_monitor_state()
     _check(st['enabled'] is False and st['rows'] == [], st)
     print('✓ тумблер OFF → нічого не рахуємо і нічого не віддаємо')
@@ -727,7 +727,7 @@ def test_toggle_off_clears_the_old_snapshot():
 
 
 def test_group_open_refuses_clearly_when_the_monitor_is_off():
-    """⚠️ Без окремої перевірки кожна монета дістала б причину «МММ без
+    """⚠️ Без окремої перевірки кожна монета дістала б причину «VSV без
     напрямку» — тобто тумблер виглядав би як «ринок у рівновазі»."""
     _install_log()
     ff = _mk(mon=False)
@@ -777,37 +777,37 @@ console.log(JSON.stringify({off, nodata, filtered}));
     print('✓ JS: порожня таблиця називає СВОЮ причину')
 
 
-# ═══════════ 8. САМЕ МММ LiQ (вимога 15.09 #2) ════════════════════════
+# ═══════════ 8. САМЕ VSV LiQ (вимога 15.09 #2) ════════════════════════
 def test_monitor_shows_the_LEGACY_mm_not_the_new_one():
-    """Дослівно: «Мені потрібно МММ саме старого зразка показник».
+    """Дослівно: «Мені потрібно VSV саме старого зразка показник».
     Старий = `_fuel_dir_legacy` (сирий (fa−fb)/den по кластерах liq-map) —
-    ТОЙ САМИЙ, що живить шар «МММ LiQ» у Черзі-4."""
+    ТОЙ САМИЙ, що живить шар «VSV LiQ» у Черзі-4."""
     ff = _mk()
     # Старий каже SHORT −0.40, новий у той самий момент — LONG +0.40.
     ff._legacy = {'BTCUSDT': -0.40}
     ff._mm_capture(_fuels(BTCUSDT=0.40))
     r = ff.mm_monitor_state()['rows'][0]
-    _check(r['mm'] == 'SHORT', f'показано НОВИЙ МММ замість старого: {r}')
+    _check(r['mm'] == 'SHORT', f'показано НОВИЙ VSV замість старого: {r}')
     _check(r['dir'] == -0.4 and r['strength'] == 40, r)
-    print('✓ у таблиці МММ LiQ (новий поруч — і його НЕ показуємо)')
+    print('✓ у таблиці VSV LiQ (новий поруч — і його НЕ показуємо)')
 
 
 def test_capture_uses_the_shared_legacy_function_and_no_extra_network():
     """ЗАМОК У КОДІ. Legacy читає `_liq_state` — той самий кешований знімок,
-    який щойно взяв новий МММ, тож зайвих запитів немає. Своєї копії формули
+    який щойно взяв новий VSV, тож зайвих запитів немає. Своєї копії формули
     в моніторі бути НЕ повинно (інакше два «однакових» числа розійдуться)."""
     fn = next(n for n in ast.walk(ast.parse(_SRC))
               if isinstance(n, ast.FunctionDef) and n.name == '_mm_capture')
     body = ast.dump(fn)
-    _check('_fuel_dir_legacy' in body, 'знімок не бере МММ LiQ')
+    _check('_fuel_dir_legacy' in body, 'знімок не бере VSV LiQ')
     for bad in ('get_liquidation_map', 'fetch_klines', 'get_ticker'):
         _check(bad not in body, f'знімок ходить у мережу («{bad}»)')
-    print('✓ знімок бере МММ LiQ спільною функцією, без зайвої мережі')
+    print('✓ знімок бере VSV LiQ спільною функцією, без зайвої мережі')
 
 
 def test_price_still_comes_from_the_snapshot_because_legacy_has_none():
     """`_fuel_dir_legacy` не повертає `mark_price` взагалі — ціну беремо з
-    того самого зрізу (новий МММ), бо це ОДНЕ Й ТЕ САМЕ число."""
+    того самого зрізу (новий VSV), бо це ОДНЕ Й ТЕ САМЕ число."""
     ff = _mk()
     _cap(ff, BTCUSDT=0.5)
     r = ff.mm_monitor_state()['rows'][0]
@@ -816,27 +816,27 @@ def test_price_still_comes_from_the_snapshot_because_legacy_has_none():
 
 
 def test_a_coin_without_legacy_data_is_skipped():
-    """Немає МММ LiQ по монеті → рядка немає. Вигадувати «рівновагу» не
+    """Немає VSV LiQ по монеті → рядка немає. Вигадувати «рівновагу» не
     можна: це різні речі («даних нема» ≠ «тиску нема»)."""
     ff = _mk()
     ff._legacy = {'BTCUSDT': 0.5}          # ETH свідомо без legacy
     ff._mm_capture(_fuels(BTCUSDT=-0.5, ETHUSDT=-0.5))
     got = [r['symbol'] for r in ff.mm_monitor_state()['rows']]
     _check(got == ['BTCUSDT'], got)
-    print('✓ монета без МММ LiQ у таблицю не потрапляє')
+    print('✓ монета без VSV LiQ у таблицю не потрапляє')
 
 
 def test_ui_labels_the_column_as_the_old_mm():
     i = _HTML.index('id="mm-table"')
     head = _HTML[i:i + 1600]
-    _check('МММ LiQ' in head, 'колонка не підписана як МММ LiQ')
+    _check('VSV LiQ' in head, 'колонка не підписана як VSV LiQ')
     _check('Черзі-4' in head, 'у підказці не сказано, що це той самий показник')
-    print('✓ UI: колонка підписана «МММ LiQ»')
+    print('✓ UI: колонка підписана «VSV LiQ»')
 
 
 # ═══════════ 9. КОЛОНКА «СИЛА» ПРИБРАНА (вимога 15.09 #3) ════════════════
 def test_duplicate_strength_column_is_gone_from_the_table():
-    """«Прибери колонку Сила — вона все одно дублює показник МММ»: віджет
+    """«Прибери колонку Сила — вона все одно дублює показник VSV»: віджет
     `ffFuelCell` уже малює і напрямок, і 0-100%, і стрілку тренду.
 
     ⚠️ НЕ ПЛУТАТИ з колонкою «Сила **росте**» (додана пізніше): та показує
@@ -856,7 +856,7 @@ def test_duplicate_strength_column_is_gone_from_the_table():
 
 def test_row_cells_match_the_header_and_percent_lives_in_the_widget():
     """Кількість `<td>` мусить збігатися з кількістю `<th>` — інакше таблиця
-    «зʼїжджає». Саме число % нікуди не зникло: воно всередині віджета МММ."""
+    «зʼїжджає». Саме число % нікуди не зникло: воно всередині віджета VSV."""
     out = _run_js(r'''
 mmApplyState({rows:[{symbol:'AAAUSDT', mm:'LONG', strength:57, strength_prev:40,
   delta:17, delta_rel:42.5, grow_since:null, price:1.5, in_trade:false,
@@ -874,7 +874,7 @@ console.log(JSON.stringify({cells:(h.match(/<td/g)||[]).length,
     i = _HTML.index('id="mm-table"')
     _th = len(_re.findall(r'<th[\s>]', _HTML[i:_HTML.index('</thead>', i)]))
     _check(d['cells'] == _th, f'{d["cells"]} комірок проти {_th} заголовків')
-    _check(d['widget'], 'віджет МММ (де і стоїть %) зник із рядка')
+    _check(d['widget'], 'віджет VSV (де і стоїть %) зник із рядка')
     # Сила лишається у ДАНИХ — вона живить сортування і фільтр «Сила ≥».
     _check('_mmVisibleRows' in _HTML and 'mm-min-str' in _HTML,
            'фільтр/сортування за силою прибирати НЕ просили')
@@ -1076,12 +1076,12 @@ def test_symbol_opens_tradingview_exactly_like_the_watchlist():
 
 def test_ui_monitor_columns_contract():
     """04.10: «"СИЛА РОСТЕ" і "РОСТЕ" — видалити», на їхньому місці «Запас»,
-    як у таблиці МММ-Trend."""
+    як у таблиці VSV-Trend."""
     i = _HTML.index('id="mm-table"')
     tbl = _HTML[i:_HTML.index('</table>', i)]
     import re as _re
     # ⚠️ Кількість колонок звіряємо зі СКЛАДОМ, а не з магічним числом.
-    _cols = ['Символ', '📍 Стан', 'МММ LiQ', 'МММ-Trend', '⏱ У стані', 'Запас',
+    _cols = ['Символ', '📍 Стан', 'VSV LiQ', 'VSV-Trend', '⏱ У стані', 'Запас',
              'Ціна', 'Рух', '🔮 1H', '🔮 4H']
     for _c in _cols:
         _check(_c in tbl, f'немає колонки «{_c}»')
@@ -1100,7 +1100,7 @@ def test_ui_monitor_columns_contract():
 
 
 def test_monitor_rows_carry_the_runway_of_the_new_mmm():
-    """«Запас» у 🧮 — ТОЙ САМИЙ `runway` Нового МММ, що в таблиці МММ-Trend."""
+    """«Запас» у 🧮 — ТОЙ САМИЙ `runway` Нового VSV, що в таблиці VSV-Trend."""
     ff = _mk()
     rw = {'dir': 'LONG', 'room_pct': 3.2, 'label': 'до пулу'}
     fuels = _fuels(AAAUSDT=-0.5)
@@ -1110,7 +1110,7 @@ def test_monitor_rows_carry_the_runway_of_the_new_mmm():
     o = {r['symbol']: r for r in ff.mm_monitor_state()['rows']}
     n = {r['symbol']: r for r in ff.mm_monitor_state(book='new')['rows']}
     _check(o['AAAUSDT']['runway'] == rw == n['AAAUSDT']['runway'], (o, n))
-    print('✓ «Запас» у 🧮 і в МММ-Trend — одне число')
+    print('✓ «Запас» у 🧮 і в VSV-Trend — одне число')
 
 
 def test_timer_uses_the_shared_one_second_ticker():
@@ -1382,13 +1382,13 @@ console.log(JSON.stringify({
 
 def test_snapshot_for_reads_and_computes_nothing():
     """⚠️ `/api/tm/state` опитується кожні 5с під ОДНИМ gunicorn-воркером.
-    Саме через розрахунки на цьому ендпоінті колонку «МММ» колись і прибрали —
+    Саме через розрахунки на цьому ендпоінті колонку «VSV» колись і прибрали —
     тож тепер вона бере ГОТОВИЙ знімок двигуна."""
     ff = _mk()
     _cap(ff, BTCUSDT=0.5, ETHUSDT=-0.42)
     ff._legacy_calls.clear()
     got = ff.mm_snapshot_for(['btcusdt', 'ZZZUSDT'])
-    _check(not ff._legacy_calls, f'читач порахував МММ: {ff._legacy_calls}')
+    _check(not ff._legacy_calls, f'читач порахував VSV: {ff._legacy_calls}')
     _check(set(got) == {'BTCUSDT'}, f'символ не нормалізовано / зайве: {got}')
     _check(got['BTCUSDT']['mm'] == 'LONG' and got['BTCUSDT']['strength'] == 50, got)
     _check(ff.mm_snapshot_for([]) == {}, 'порожній запит — порожня відповідь')
@@ -1413,7 +1413,7 @@ def test_open_trades_keep_their_mm_even_when_the_monitor_is_off():
     чужого тумблера означало б «вимкнув монітор — зникли числа в угодах».
     Але сама ТАБЛИЦЯ МОНІТОРА при цьому лишається порожньою."""
     ff = _mk(mon=False)
-    # ⚠️ МММ-Trend вимикаємо явно: з 01.10 його колонка «МММ-LiQ» теж читає
+    # ⚠️ VSV-Trend вимикаємо явно: з 01.10 його колонка «VSV-LiQ» теж читає
     # `_fuel_dir_legacy`, а тут перевіряємо САМЕ 🧮 тумблер.
     ff._settings['mm_new_enabled'] = False
     ff._fuel_managed = {'BTCUSDT': {}}
@@ -1432,8 +1432,8 @@ def test_state_route_enriches_positions_from_the_snapshot():
     src = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
     i = src.index("@app.route('/api/tm/state')")
     blk = src[i:i + 4000]
-    # ⚠️ 22.10: колонки «🧮 МММ LiQ»/«🧮 МММ-Trend» замінено на 🧠 МММ-Decision.
-    _check('dec_trade_for' in blk, 'маршрут не читає кеш МММ-Decision')
+    # ⚠️ 22.10: колонки «🧮 VSV LiQ»/«🧮 VSV-Trend» замінено на 🧠 VSV-Decision.
+    _check('dec_trade_for' in blk, 'маршрут не читає кеш VSV-Decision')
     _check("pos['mmd']" in blk, 'позиція не отримує поле mmd')
     # ⚠️ Жодних розрахунків на цьому гарячому ендпоінті.
     for bad in ('_fuel_dir_legacy', 'compute_mm', '_liq_state'):
@@ -1442,18 +1442,18 @@ def test_state_route_enriches_positions_from_the_snapshot():
 
 
 def test_ui_trades_tables_got_the_column_and_the_right_colspan():
-    """⚠️ 22.10: МММ-колонки угод замінено на «🧠 МММ-Decision» + 🚨 сигнал
+    """⚠️ 22.10: VSV-колонки угод замінено на «🧠 VSV-Decision» + 🚨 сигнал
     (тест переписано, а не «полагоджено» — вимога змінилась)."""
     import re as _re
     for tid, empty in (('tm-open-table', 'No open positions'),
                        ('tm-shadow-open-table', 'No paper positions')):
         i = _HTML.index(f'id="{tid}"')
         tbl = _HTML[i:_HTML.index('</table>', i)]
-        # ⚠️ 26.10: колонку 🧠 МММ-Decision замінено на 🧮 МММ-Trend.
-        # ⚠️ 31.10: колонку 🔔 МММ-SBR замінено на 🌀 Заряд.
+        # ⚠️ 26.10: колонку 🧠 VSV-Decision замінено на 🧮 VSV-Trend.
+        # ⚠️ 31.10: колонку 🔔 VSV-SBR замінено на 🌀 Заряд.
         _check('🎯 Ціль</th>' in tbl, f'{tid}: немає заголовка колонки')  # 10.11: замість 🌀 Заряд
-        _check('МММ LiQ</th>' not in tbl and 'МММ-Decision</th>' not in tbl,
-               f'{tid}: старі МММ-колонки мусять зникнути')
+        _check('VSV LiQ</th>' not in tbl and 'VSV-Decision</th>' not in tbl,
+               f'{tid}: старі VSV-колонки мусять зникнути')
         n = len(_re.findall(r'<th[\s>]', tbl))
         m = _re.search(r'colspan="(\d+)"', tbl)
         _check(m and int(m.group(1)) == n,
@@ -1461,7 +1461,7 @@ def test_ui_trades_tables_got_the_column_and_the_right_colspan():
     for f in ('springFireCellHTML', 'mmdAlertCellHTML'):  # 10.11: 💥 замість 🌀
         _check(_HTML.count('${' + f + '(p)}') == 2,
                f'{f} підключена не в обидві таблиці (real + paper)')
-    print('✓ UI: колонки «🧠 МММ-Decision» + «🚨» у real+paper')
+    print('✓ UI: колонки «🧠 VSV-Decision» + «🚨» у real+paper')
 
 
 # ═══ 15. 🩹 БОРОТЬБА З МЕРЕХТІННЯМ: вікно замість «попереднього такту» ════
@@ -1738,8 +1738,8 @@ console.log(JSON.stringify({
 
 
 
-# ═══ 18. ⚖️ БАНЕР «🧮 МММ-МОНІТОР» — ВАЖІЛЬ ЗА ВЕЛИЧИНОЮ ВІДСОТКІВ (17.09) ══
-# «За основу банера візьми показники LONG і SHORT із МММ-монітор. Але не просто
+# ═══ 18. ⚖️ БАНЕР «🧮 VSV-МОНІТОР» — ВАЖІЛЬ ЗА ВЕЛИЧИНОЮ ВІДСОТКІВ (17.09) ══
+# «За основу банера візьми показники LONG і SHORT із VSV-монітор. Але не просто
 # визначай загальний відсоток LONG і SHORT, а враховуй які відсотки мають
 # монети, низькі чи високі — бери це до уваги і розраховуй важіль в напрямку за
 # рахунок величини відсотків по кожній монеті.»
@@ -1772,7 +1772,7 @@ def test_flat_coins_are_ballast_not_ignored():
 
 
 def test_no_direction_until_the_skew_is_real():
-    """Поріг — ТОЙ САМИЙ, що відділяє ⚖ рівновагу в комірці МММ."""
+    """Поріг — ТОЙ САМИЙ, що відділяє ⚖ рівновагу в комірці VSV."""
     _check(_m.MM_BIAS_FLAT == 0.10, f'поріг банера має бути 0.10: {_m.MM_BIAS_FLAT}')
     ff = _mk()
     ff._settings.update({'enabled': True})
@@ -1784,7 +1784,7 @@ def test_no_direction_until_the_skew_is_real():
 
 def test_the_banner_counts_every_coin_including_those_in_work():
     """⚠️ **ВИМОГА ЗМІНИЛАСЬ (18.09), замок ПЕРЕПИСАНО.** Дослівно: «за
-    показник банера "МММ-монітор" мають відповідати ВСІ монети, для цього і
+    показник банера "VSV-монітор" мають відповідати ВСІ монети, для цього і
     повернули щоб всі монети були у таблиці». Раніше монети у відкритій угоді
     з важеля ВИКИДАЛИСЬ — це трималось на скасованому правилі «таблиця показує
     лише кандидатів»."""
@@ -1905,7 +1905,7 @@ console.log(JSON.stringify({longView, flatView}));
 
 
 # ═══ 17. 🗑 VOB-ШЛЯХ МОНІТОРА ПРИБРАНО ПОВНІСТЮ (вимога 17.09) ═══════════
-# «Забери взагалі із МММ-монітор алгоритм "VOB→сигнал". Скан не потрібний —
+# «Забери взагалі із VSV-монітор алгоритм "VOB→сигнал". Скан не потрібний —
 # реалізуємо трішки по іншому. Цей алгоритм себе не виправдав.»
 # Тому розділ тестів на нього ВИДАЛЕНО разом із кодом, а замки нижче стежать,
 # щоб він не повернувся частинами.
@@ -1937,7 +1937,7 @@ def test_the_old_trade_label_survives_the_removal():
         'signal_labels_x', os.path.join(_HERE, 'detection', 'signal_labels.py'))
     _sl = _iu.module_from_spec(_sp); _sp.loader.exec_module(_sl)
     _check('mm_vob' in _sl.SIGNAL_BADGES, 'мітку старих угод прибрали разом із кодом')
-    print('✓ 🏷 бейдж старих угод «🧮 VOB з МММ-монітора» лишився')
+    print('✓ 🏷 бейдж старих угод «🧮 VOB з VSV-монітора» лишився')
 
 
 def test_state_carries_the_strength_threshold():
@@ -2018,14 +2018,14 @@ def _src(path, fn):
 
 
 # ═══ 18. 📈 ОЧІКУВАННЯ РОСТУ СИЛИ — СКАСОВАНО КОРИСТУВАЧЕМ (16.09) ══════
-# Був гейт «новий VOB є, але сила МММ НЕ росте — відкриття ВІДКЛАДЕНО» (черга
+# Був гейт «новий VOB є, але сила VSV НЕ росте — відкриття ВІДКЛАДЕНО» (черга
 # `_mm_vob_pending`, поле `vob_wait`, ⏳ у таблиці). Користувач СКАСУВАВ його
 # дослівно: «відміни цю перевірку». Тести нижче — ЗАМКИ, щоб гейт не повернувся
 # тихо: ріст сили лишається ПОКАЗНИКОМ, а не умовою входу.
 
 
 # ═══ 19. 📍 МОНІТОР — ВЛАСНА СЕКЦІЯ ПОЗА ВІКНОМ ЧЕРГ, НАД POC (17.09) ══════
-# Вимога дослівно: «Винеси МММ-монітор із вікна Черг, розмісти над POC-сетап».
+# Вимога дослівно: «Винеси VSV-монітор із вікна Черг, розмісти над POC-сетап».
 # Монітор ніколи не був чергою (рядки не чекають сигналу, двигун їх не
 # відкриває), але лежав УСЕРЕДИНІ панелі Fuel Auto-Filter — і читався як ще
 # одна черга.
@@ -2033,7 +2033,7 @@ def test_monitor_is_its_own_panel_above_poc_and_outside_the_queues():
     mm = _HTML.index('id="mm-monitor-panel"')
     poc = _HTML.index('id="poc-setup-panel"')
     ff = _HTML.index('id="fuel-filter-panel"')
-    _check(mm < poc, 'МММ-монітор має стояти НАД 🎯 POC-сетапом')
+    _check(mm < poc, 'VSV-монітор має стояти НАД 🎯 POC-сетапом')
     _check(poc < ff, 'POC і далі стоїть над панеллю черг (порядок не ламаємо)')
     _check(mm < ff, 'монітор мусить бути ПОЗА вікном Черг, а не всередині')
     # Таблиця і тумблер переїхали РАЗОМ із секцією, а не лишились у чергах.
@@ -2054,8 +2054,8 @@ def test_the_panel_keeps_the_accordion_contract():
     print('✓ гармошка монітора пережила переїзд')
 
 
-# ═══ 20. 🧮 ПРАВИЛО «МММ LiQ ⚖ → вихід» ГАСИТЬ АВТОМАТИКУ АВТОПІЛОТА ════
-# Вимога дослівно (17.09): «Якщо увімкнено 🧮 МММ LiQ ⚖ → вихід — потрібно
+# ═══ 20. 🧮 ПРАВИЛО «VSV LiQ ⚖ → вихід» ГАСИТЬ АВТОМАТИКУ АВТОПІЛОТА ════
+# Вимога дослівно (17.09): «Якщо увімкнено 🧮 VSV LiQ ⚖ → вихід — потрібно
 # автоматично вимкнути все, що стосується автоматичного 🎯 Автопілот; якщо
 # Manual TP-1 або Manual TP-2 виставлені вручну, бот має реагувати на ручні
 # дані. І тумблер ⚖️ TP-1 переводить SL у беззбиток має працювати».
@@ -2105,7 +2105,7 @@ def test_the_column_says_why_the_autopilot_is_silent():
 
 
 # ═══ 21. 💾 БАНЕР ПЕРЕЖИВАЄ РЕСТАРТ — таймер і показники (вимога 17.09) ═════
-# Дослівно: «Банер МММ-монітор не має втрачати свій таймер і показники після
+# Дослівно: «Банер VSV-монітор не має втрачати свій таймер і показники після
 # кожного рестарту бота. Всі дані мають зберігатись і відновлюватись.»
 # `botupdate` роблять часто, а таймер міряє, скільки РИНОК тримає напрямок —
 # обнуляти його рестартом означало б показувати вік ПРОЦЕСУ замість віку СТАНУ.
@@ -2189,7 +2189,7 @@ def test_the_page_shows_that_the_numbers_were_restored():
 
 # ═══ 22. ⏱ СКІЛЬКИ МОНЕТА ТРИМАЄ СТАН LONG / SHORT / ⚖ (вимога 17.09) ══════
 # Дослівно: «Додай таймер для кожної монети, яка знаходиться в стані LONG SHORT
-# Рівновага — скільки саме часу, для МММ-монітор.»
+# Рівновага — скільки саме часу, для VSV-монітор.»
 def _st_row(ff, sym='AAAUSDT'):
     return next((r for r in ff.mm_monitor_state()['rows'] if r['symbol'] == sym), None)
 
@@ -2300,17 +2300,17 @@ def test_the_page_draws_the_state_timer_with_the_shared_ticker():
 
 # ═══ 23. 📊 «У WATCHLIST 51, А МОНІТОР ПРАЦЮЄ ІЗ 49 — ЧОМУ?» (17.09) ═══════
 # Питання користувача зі скріна. Різниця пояснюється, а не лишається здогадкою:
-# частина монет ще БЕЗ даних МММ (liq-map не зібрала рівнів), частина вже
+# частина монет ще БЕЗ даних VSV (liq-map не зібрала рівнів), частина вже
 # В УГОДІ — і таких монітор свідомо не показує (він список КАНДИДАТІВ).
 def test_the_coverage_breakdown_explains_every_missing_coin():
     ff = _mk()
     ff._legacy = {'AAAUSDT': 0.5, 'BBBUSDT': -0.6, 'CCCUSDT': 0.02}
-    # DDD двигун узяв у роботу, але МММ LiQ по ній ще не порахувався.
+    # DDD двигун узяв у роботу, але VSV LiQ по ній ще не порахувався.
     ff._mm_capture(_fuels(AAAUSDT=-0.5, BBBUSDT=0.6, CCCUSDT=-0.02,
                           DDDUSDT=-0.4), now=ff._clock[0])
     cov = ff.mm_monitor_state()['coverage']
     _check(cov['targeted'] == 4, f'узяли в роботу 4 монети: {cov}')
-    _check(cov['no_data'] == 1, f'одна без даних МММ: {cov}')
+    _check(cov['no_data'] == 1, f'одна без даних VSV: {cov}')
     _check(cov['in_trade'] == 0 and cov['rows'] == 3, f'у таблиці три: {cov}')
     # А тепер одна з них — уже в угоді. ⚠️ З 18.09 вона з таблиці НЕ зникає,
     # тож `in_trade` — це підмножина рядків, а не «загублені» монети.
@@ -2373,7 +2373,7 @@ def test_the_two_auto_off_states_differ_by_colour_not_by_a_duplicate_icon():
 
 
 # ═══ 25. ⏳ «ПІСЛЯ РЕСТАРТУ МОНІТОР ДОВГО ПОРОЖНІЙ» (скарга 18.09) ═════════
-# Дослівно: «Після рестарту бота, МММ-монітор довго знаходиться в такому стані
+# Дослівно: «Після рестарту бота, VSV-монітор довго знаходиться в такому стані
 # і не оновлюється, що так сильно тормозить сторінку?»
 #
 # ДІАГНОЗ. `_mm_snapshot_ts == 0` означало РІВНО «ще немає знімка» — і цей
@@ -2393,11 +2393,11 @@ def test_a_fresh_boot_says_the_first_snapshot_is_being_computed():
     print('✓ прогрів після старту названий («перший знімок рахується»)')
 
 
-# ⚠️ ВИМОГА ЗМІНИЛАСЬ (скарга 18.09: «МММ-монітор взагалі перестав працювати.
+# ⚠️ ВИМОГА ЗМІНИЛАСЬ (скарга 18.09: «VSV-монітор взагалі перестав працювати.
 # Навіть у таблиці відкритих угод не відображається»). Учора тут стояв замок
 # `test_the_master_switch_off_is_named_not_silent`: вимкнений ❤️ Fuel
 # Auto-Filter мав ЧЕСНО СКАЗАТИ, що знімка не буде. Тепер знімок ПРОСТО Є —
-# бо він живить не лише монітор, а й колонку «🧮 МММ LiQ» в угодах і
+# бо він живить не лише монітор, а й колонку «🧮 VSV LiQ» в угодах і
 # ПРАВИЛО ВИХОДУ `use_mm_flat_exit`. Замок переписано, а не «полагоджено».
 
 def _mm_only_ff():
@@ -2414,7 +2414,7 @@ def _mm_only_ff():
 
 
 def test_the_master_switch_off_still_builds_the_mm_snapshot():
-    """❤️ Fuel Auto-Filter керує ЧЕРГАМИ І ВІДКРИТТЯМ. Знімок МММ до них
+    """❤️ Fuel Auto-Filter керує ЧЕРГАМИ І ВІДКРИТТЯМ. Знімок VSV до них
     стосунку не має — на ньому тримаються колонка в угодах і правило виходу."""
     ff = _mm_only_ff()
     ff._tick()
@@ -2422,14 +2422,14 @@ def test_the_master_switch_off_still_builds_the_mm_snapshot():
     _check('SOLUSDT' in ff._mm_snapshot,
            f'монета у ВІДКРИТІЙ угоді мусить бути у знімку: {list(ff._mm_snapshot)}')
     _check(ff.mm_snapshot_for(['SOLUSDT']).get('SOLUSDT'),
-           'колонка «🧮 МММ LiQ» в угодах лишилась порожня')
+           'колонка «🧮 VSV LiQ» в угодах лишилась порожня')
     _check('BTCUSDT' in ff._registered,
            'без реєстрації liq-map просто не сканує ці монети')
     st = ff.mm_monitor_state()
     _check(st.get('queues_off') is True,
            'вужчий набір монет мусить бути НАЗВАНИЙ (черги вимкнено)')
     _check(not st.get('pending'), f'знімок є → причини бути не має: {st}')
-    print('✓ вимкнені черги знімок МММ більше НЕ вбивають')
+    print('✓ вимкнені черги знімок VSV більше НЕ вбивають')
 
 
 def test_the_reduced_tick_does_no_trading_work():
@@ -2452,7 +2452,7 @@ def test_the_daemon_starts_even_when_the_master_switch_is_off():
     i = _SRC.index('def init_fuel_filter(')
     body = _SRC[i:_SRC.index('\ndef ', i + 10)]
     _check('if _instance.is_enabled():' not in body,
-           'старт потоку знову під тумблером — знімок МММ помре разом із чергами')
+           'старт потоку знову під тумблером — знімок VSV помре разом із чергами')
     _check('_instance.start()' in body, 'потік мусить стартувати')
     print('✓ демон стартує незалежно від майстер-тумблера')
 
@@ -2650,12 +2650,12 @@ def test_the_source_tick_is_read_through_a_public_accessor():
     print('✓ позначка джерела читається публічним методом')
 
 
-# ═══ 27. ₿ БАНЕР У «🔁 ДУБЛЮВАННІ» МУСИТЬ ПОВТОРЮВАТИ «МММ-бабло» (18.09) ═══
-# Дослівно: «він має повторювати "МММ-бабло ↑ зверху → тягне в LONG" бо
+# ═══ 27. ₿ БАНЕР У «🔁 ДУБЛЮВАННІ» МУСИТЬ ПОВТОРЮВАТИ «VSV-бабло» (18.09) ═══
+# Дослівно: «він має повторювати "VSV-бабло ↑ зверху → тягне в LONG" бо
 # увімкнено "дублювання", а він показує "рівновага", це взагалі як так?»
 #
 # ДІАГНОЗ: модель тут ні до чого — джерело банера (`_btc_liqfuel_raw`) це
-# РІВНО той самий `(fa−fb)/den`, що й рядок «МММ-бабло» у `compute_bias`.
+# РІВНО той самий `(fa−fb)/den`, що й рядок «VSV-бабло» у `compute_bias`.
 # Банер показував СТАРЕ число: живі поля оновлював лише `_update_btc_verdict`,
 # який живе в ПОВНОМУ такті, а з вимкненими чергами такт не виконувався.
 
@@ -2663,7 +2663,7 @@ def test_the_reduced_tick_refreshes_the_btc_live_banner():
     ff = _mm_only_ff()
     ff._tick()
     _check(ff._btc_live_dir == 'LONG',
-           f'банер лишився без напрямку, хоча МММ-бабло каже LONG: {ff._btc_live_dir}')
+           f'банер лишився без напрямку, хоча VSV-бабло каже LONG: {ff._btc_live_dir}')
     _check(ff._btc_fuel_strength == 42,
            f'сила банера не оновилась: {ff._btc_fuel_strength}')
     _check(ff._btc_live_since, 'таймер напрямку не стартував')
@@ -2690,7 +2690,7 @@ def test_the_reduced_tick_never_touches_the_session():
 
 def test_one_writer_for_the_live_banner_fields():
     """Два писачі цих полів розійшлися б — і банер знову почав би суперечити
-    рядку «МММ-бабло». Пишемо ЛИШЕ у `_btc_banner_live_refresh`."""
+    рядку «VSV-бабло». Пишемо ЛИШЕ у `_btc_banner_live_refresh`."""
     import re as _re
     for _fld in ('_btc_live_dir', '_btc_live_since', '_btc_fuel_strength'):
         # Присвоєння `self.<поле> =` поза `__init__` мусить бути РІВНО одне.
@@ -2706,12 +2706,12 @@ def test_one_writer_for_the_live_banner_fields():
 
 
 def test_the_banner_and_the_decision_line_share_the_same_formula():
-    """⚠️ КРОС-ФАЙЛОВИЙ ЗАМОК. Рядок «МММ-бабло» рахує `compute_bias` у
+    """⚠️ КРОС-ФАЙЛОВИЙ ЗАМОК. Рядок «VSV-бабло» рахує `compute_bias` у
     `web/flask_app.py` СВОЇМ інлайном, банер — `_btc_liqfuel_raw`. Це вже
     приводили до спільного знаменника; якщо хтось змінить одну сторону, вони
     знову почнуть показувати різне під ОДНІЄЮ назвою (урок PD-зони)."""
     flask = open(os.path.join(_HERE, 'web', 'flask_app.py'), encoding='utf-8').read()
-    j = flask.index('МММ-бабло ↑ зверху')
+    j = flask.index('VSV-бабло ↑ зверху')
     dec = flask[max(0, j - 2200):j + 900]
     i = _SRC.index('def _btc_liqfuel_raw(self')
     ban = _SRC[i:_SRC.index('\n    def ', i + 10)]
@@ -2723,12 +2723,12 @@ def test_the_banner_and_the_decision_line_share_the_same_formula():
     _check('> 0.1' in dec and '< -0.1' in dec, 'поріг у compute_bias зрушив')
     _check(_m.FUEL_LONG_THR == 0.1,
            f'FUEL_LONG_THR більше не 0.1 ({_m.FUEL_LONG_THR}) — банер розійдеться')
-    print('✓ банер і рядок «МММ-бабло» рахуються однією формулою')
+    print('✓ банер і рядок «VSV-бабло» рахуються однією формулою')
 
 
 
 # ═══════════ 28. 🐢 ПОВІЛЬНИЙ ПЕРЕХІД СТАТУСУ БАНЕРА (антиспам, 18.09) ═════
-# Вимога дослівно: «Перехід в банері МММ-монітор між статусами має бути
+# Вимога дослівно: «Перехід в банері VSV-монітор між статусами має бути
 # повільним, а НЕ різким і частим, має бути антиспам.»
 def test_the_banner_waits_for_the_new_state_to_hold():
     """Фліп СПЕРШУ стає кандидатом і лише потім міняє статус."""
@@ -2969,7 +2969,7 @@ def test_the_state_of_work_is_in_the_table_signature():
     print('✓ 📍 стан монети входить у сигнатуру таблиці')
 
 
-# ═══════════ 31. БАНЕР «🧮 МММ-Trend» + КОЛОНКА «🆕 Новий МММ» (30.09) ═══════
+# ═══════════ 31. БАНЕР «🧮 VSV-Trend» + КОЛОНКА «🆕 Новий VSV» (30.09) ═══════
 def test_both_banners_share_one_pure_step():
     """Одна формула на два банери: `mm_bias_step` із ключами джерела."""
     snap = {'A': {'status': 'LONG', 'strength': 50, 'new_status': 'SHORT', 'new_strength': 20},
@@ -2990,20 +2990,20 @@ def test_new_banner_persists_and_dies_with_the_monitor():
     ff = _mk()
     ff._settings.update({'mm_bias_confirm_sec': 0})
     _cap(ff, AAAUSDT=0.80)
-    _check(ff._mm_bias_new_since > 0, 'таймер МММ-Trend не стартував')
+    _check(ff._mm_bias_new_since > 0, 'таймер VSV-Trend не стартував')
     import inspect
     _check("'mm_bias_new_since'" in inspect.getsource(FF._persist_state),
-           'таймер МММ-Trend мусить персиститись')
+           'таймер VSV-Trend мусить персиститись')
     _check("mm_bias_new_since" in inspect.getsource(FF._load_state), 'і відновлюватись')
     ff._settings['mm_monitor_enabled'] = False
     _cap(ff, AAAUSDT=0.80)
-    _check(not ff.mm_monitor_state().get('bias_new'), 'вимкнений монітор гасить і МММ-Trend')
-    print('✓ 💾 МММ-Trend переживає рестарт і гасне разом із монітором')
+    _check(not ff.mm_monitor_state().get('bias_new'), 'вимкнений монітор гасить і VSV-Trend')
+    print('✓ 💾 VSV-Trend переживає рестарт і гасне разом із монітором')
 
 
 # ═══ 32. 💪 ОДНОСТАЙНІСТЬ ≠ СИЛА (скарга 30.09) ═══════════════════════════
 def test_banner_separates_consensus_from_average_strength():
-    """«Новий МММ max 54%, решта нижче — як банер показує 83%?» 83% це
+    """«Новий VSV max 54%, решта нижче — як банер показує 83%?» 83% це
     одностайність (частка маси в один бік), а сила — середнє по монетах."""
     snap = {f'S{i}USDT': {'new_status': 'SHORT', 'new_strength': s}
             for i, s in enumerate((54, 40, 30, 20, 16))}
@@ -3031,13 +3031,13 @@ def _hist(now, start, end, span=900, pts=31):
             for i in range(pts)]
 
 
-# ═══ 34. 🗑 «РУХ РИНКУ» + «КОРЕКЦІЯ» ВИДАЛЕНО · 🧮 МММ-Trend — ВЛАСНИЙ БЛОК (01.10)
+# ═══ 34. 🗑 «РУХ РИНКУ» + «КОРЕКЦІЯ» ВИДАЛЕНО · 🧮 VSV-Trend — ВЛАСНИЙ БЛОК (01.10)
 # Дослівно: «Банер "📈 РУХ РИНКУ" і весь алгоритм дій з ним — коректно
 # видалити. Банер "Корекція" і весь алгоритм дій з ним — коректно видалити.
-# Банер "МММ-монітор" і "Список монет" … в спільний блок під єдиний тумблер …
-# Банер "🧮 МММ-Trend" також має мати свій блок із тумблером. Організуй все
-# повністю ідентичне так, як працює "МММ-монітор", тільки на алгоритмі
-# "Новий МММ".»
+# Банер "VSV-монітор" і "Список монет" … в спільний блок під єдиний тумблер …
+# Банер "🧮 VSV-Trend" також має мати свій блок із тумблером. Організуй все
+# повністю ідентичне так, як працює "VSV-монітор", тільки на алгоритмі
+# "Новий VSV".»
 def test_move_and_correction_are_gone_from_the_engine():
     for bad in ('mm_market_move', '_mm_track_move', '_mm_track_correction',
                 'correction_blocks_open', 'note_correction_block',
@@ -3077,7 +3077,7 @@ def test_the_page_has_no_move_or_correction_left():
 
 
 def test_new_book_follows_the_NEW_mm():
-    """`_cap` подає новий МММ ПРОТИЛЕЖНИМ старому — тож блоки мусять показати
+    """`_cap` подає новий VSV ПРОТИЛЕЖНИМ старому — тож блоки мусять показати
     протилежні напрямки, кожен зі свого джерела."""
     ff = _mk()
     ff._settings.update({'mm_bias_confirm_sec': 0, 'mmn_bias_confirm_sec': 0})
@@ -3093,7 +3093,7 @@ def test_new_book_follows_the_NEW_mm():
     # Та сама форма рядка — тому фронт малює обидва блоки ОДНИМ рендером.
     _check(set(old['rows'][0]) == set(new['rows'][0]),
            'форма рядка в книгах мусить бути однакова')
-    print('✓ 🧮 МММ-Trend: свій знімок із НОВОГО МММ, та сама форма рядка')
+    print('✓ 🧮 VSV-Trend: свій знімок із НОВОГО VSV, та сама форма рядка')
 
 
 def test_new_toggle_off_stops_only_the_new_book():
@@ -3103,16 +3103,16 @@ def test_new_toggle_off_stops_only_the_new_book():
     new = ff.mm_monitor_state(book='new')
     _check(new['enabled'] is False and new['rows'] == [] and not new['bias'], new)
     _check(not ff._mmn_snapshot, 'вимкнений блок не рахує знімок узагалі')
-    _check(ff.mm_monitor_state()['rows'], '🧮 МММ-монітор при цьому працює')
-    print('✓ 🔌 вимкнений МММ-Trend повністю мовчить, 🧮 не зачеплений')
+    _check(ff.mm_monitor_state()['rows'], '🧮 VSV-монітор при цьому працює')
+    print('✓ 🔌 вимкнений VSV-Trend повністю мовчить, 🧮 не зачеплений')
 
 
 def test_old_toggle_off_does_not_kill_the_new_book():
     ff = _mk(mon=False)
     _cap(ff, AAAUSDT=0.80)
     _check(ff.mm_monitor_state()['rows'] == [], '🧮 вимкнено — рядків немає')
-    _check(ff.mm_monitor_state(book='new')['rows'], 'МММ-Trend живе своїм тумблером')
-    print('✓ 🔌 вимкнений 🧮 не гасить МММ-Trend')
+    _check(ff.mm_monitor_state(book='new')['rows'], 'VSV-Trend живе своїм тумблером')
+    print('✓ 🔌 вимкнений 🧮 не гасить VSV-Trend')
 
 
 def test_group_open_from_the_new_book_uses_the_new_direction():
@@ -3121,7 +3121,7 @@ def test_group_open_from_the_new_book_uses_the_new_direction():
     _cap(ff, AAAUSDT=0.5)                # старий LONG, новий SHORT
     res = ff.group_open(['AAAUSDT'], book='new')
     _check(res['opened'] == 1, res)
-    _check(ff.opened[0]['side'] == 'SHORT', f'напрямок — з НОВОГО МММ: {ff.opened}')
+    _check(ff.opened[0]['side'] == 'SHORT', f'напрямок — з НОВОГО VSV: {ff.opened}')
     _check(ff.opened[0]['kw'].get('opened_by') == 'manual → MMN',
            ff.opened[0]['kw'].get('opened_by'))
     ff2 = _mk()
@@ -3129,12 +3129,12 @@ def test_group_open_from_the_new_book_uses_the_new_direction():
     _cap(ff2, AAAUSDT=0.5)
     r2 = ff2.group_open(['AAAUSDT'], book='new')
     _check(r2['opened'] == 0 and 'вимкнено' in str(r2.get('reason', '')), r2)
-    print('✓ ✋ групове відкриття з МММ-Trend: напрямок і мітка свої')
+    print('✓ ✋ групове відкриття з VSV-Trend: напрямок і мітка свої')
 
 
 def test_the_new_book_engine_label_is_mirrored():
     labels = importlib.import_module('detection.signal_labels')
-    _check(labels.ENGINE_BADGES.get('MMN', '').endswith('МММ-Trend'),
+    _check(labels.ENGINE_BADGES.get('MMN', '').endswith('VSV-Trend'),
            labels.ENGINE_BADGES.get('MMN'))
     _check("'MMN':" in _HTML, 'дзеркало у smart_money.html')
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
@@ -3145,7 +3145,7 @@ def test_the_new_book_engine_label_is_mirrored():
 def test_ui_new_block_is_a_full_twin_of_the_monitor():
     i = _HTML.index('id="mmn-panel"')
     _check(_HTML.index('id="mm-monitor-panel"') < i < _HTML.index('id="liq-hunter-panel"'),
-           'МММ-Trend стоїть одразу під 🧮 МММ-монітором')
+           'VSV-Trend стоїть одразу під 🧮 VSV-монітором')
     for el in ('ff-mm-new-enabled', 'mmn-body', 'mmn-off', 'mmn-live',
                'mmn-bias-banner', 'mmn-bias-bar', 'mmn-bias-timer', 'mmn-bias-status',
                'mmn-bias-cand', 'mmn-bias-restored', 'mmn-min-str', 'mmn-str-out',
@@ -3158,16 +3158,16 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
     def _sorts(tid):
         a = _HTML.index(f'id="{tid}"')
         return _re.findall(r'data-mmsort="(\w+)"', _HTML[a:_HTML.index('</table>', a)])
-    # 01.10 (друга вимога того ж дня): склад колонок РІЗНИЙ — у 🧮 є «МММ-Trend»,
-    # у 🆕 — «МММ-LiQ», «Готовність», «Запас», без «Сила росте»/«Росте»/«Ціна».
+    # 01.10 (друга вимога того ж дня): склад колонок РІЗНИЙ — у 🧮 є «VSV-Trend»,
+    # у 🆕 — «VSV-LiQ», «Готовність», «Запас», без «Сила росте»/«Росте»/«Ціна».
     _check(_sorts('mm-table') == ['symbol', 'status', 'strength', 'newstr', 'state',
                                   'runway', 'price', 'pchg'], _sorts('mm-table'))
     _check(_sorts('mmn-table') == ['symbol', 'status', 'strength', 'liqstr',
                                    'state', 'runway', 'pchg'], _sorts('mmn-table'))
     _check("mmSort('runway','new')" in _HTML and "mmSetDir('LONG','new')" in _HTML,
            'кнопки нового блоку працюють зі своєю книгою')
-    _check("'mmn', 'mmnlist'" in _HTML, 'гармошки МММ-Trend у _PANEL_IDS')
-    _check("'mmnlist'" in _HTML.split('_PANEL_CLOSED_BY_DEFAULT = ')[1].split(';')[0], 'список МММ-Trend згорнутий за замовч.')
+    _check("'mmn', 'mmnlist'" in _HTML, 'гармошки VSV-Trend у _PANEL_IDS')
+    _check("'mmnlist'" in _HTML.split('_PANEL_CLOSED_BY_DEFAULT = ')[1].split(';')[0], 'список VSV-Trend згорнутий за замовч.')
     _check("want.push('mmn')" in _HTML and '_served.mmn && d.mm_new' in _HTML,
            'секція mmn просиситься і читається за served')
     for key in ('mm_new_enabled', 'mmn_bias_confirm_sec'):
@@ -3175,8 +3175,8 @@ def test_ui_new_block_is_a_full_twin_of_the_monitor():
     # Поріг «Сила ≥» приходить у стані блоку (`str_min`), як і в 🧮.
     _check("mmn_str_min: _mmMinStr(_MMB.new, 'all')" in _HTML
            and 'mmn_str_mins: Object.assign({}, _MMB.new.strMins)' in _HTML,
-           'поріг МММ-Trend не зберігається')
-    print('✓ 🖥 МММ-Trend — повний двійник 🧮: свій тумблер, банер, фільтри, список')
+           'поріг VSV-Trend не зберігається')
+    print('✓ 🖥 VSV-Trend — повний двійник 🧮: свій тумблер, банер, фільтри, список')
 
 
 def test_ui_monitor_is_one_block_under_one_switch():
@@ -3229,20 +3229,20 @@ console.log(JSON.stringify({o:[..._MMB.old.sel], n:[..._MMB.new.sel],
     d = json.loads(out)
     _check(d['o'] == [] and d['n'] == ['AAAUSDT'], f'вибір не змішується: {d}')
     _check(d['od'] == 'all' and d['nd'] == 'SHORT', f'фільтр не змішується: {d}')
-    _check('SHORT' in d['ns'] and 'Новий МММ' in d['tip'], d)
+    _check('SHORT' in d['ns'] and 'Новий VSV' in d['tip'], d)
     _check(d['nl'].startswith('83% за SHORT') and 'легкий тиск' in d['nl'],
            f'слово тиску — від СИЛИ, а не від одностайності: {d}')
     _check('60% за LONG' in d['ol'], d)
     print('✓ JS: дві книги — свій вибір, свій фільтр, свій банер')
 
 
-# ═══ 35. СУСІДНІ КОЛОНКИ: 🧮 «МММ-Trend» · 🆕 «МММ-LiQ» + «Готовність» + «Запас» (01.10)
-# Дослівно: «В таблицю "🧮 МММ-монітор" поверни колонку "Новий МММ", назви її
-# "МММ-Trend". А для таблиці "МММ-Trend" поверни колонку "МММ-LiQ"… В таблиці
-# "МММ-Trend" видали колонки "СИЛА РОСТЕ" і "РОСТЕ" і "ЦІНА", а додай колонку
+# ═══ 35. СУСІДНІ КОЛОНКИ: 🧮 «VSV-Trend» · 🆕 «VSV-LiQ» + «Готовність» + «Запас» (01.10)
+# Дослівно: «В таблицю "🧮 VSV-монітор" поверни колонку "Новий VSV", назви її
+# "VSV-Trend". А для таблиці "VSV-Trend" поверни колонку "VSV-LiQ"… В таблиці
+# "VSV-Trend" видали колонки "СИЛА РОСТЕ" і "РОСТЕ" і "ЦІНА", а додай колонку
 # "запас" і "Готовність", як в скрипті для TradingView.»
 def test_each_table_carries_the_other_mm_from_the_same_numbers():
-    """`_cap` подає Новий МММ ПРОТИЛЕЖНИМ до МММ LiQ — тож сусідня колонка
+    """`_cap` подає Новий VSV ПРОТИЛЕЖНИМ до VSV LiQ — тож сусідня колонка
     кожної таблиці мусить показати РІВНО число іншої книги."""
     ff = _mk()
     _cap(ff, AAAUSDT=0.6)
@@ -3250,18 +3250,18 @@ def test_each_table_carries_the_other_mm_from_the_same_numbers():
     new = {r['symbol']: r for r in ff.mm_monitor_state(book='new')['rows']}['AAAUSDT']
     _check(old['mm'] == 'LONG' and old['new_mm'] == 'SHORT' and old['new_strength'] == 60, old)
     _check(new['mm'] == 'SHORT' and new['liq_mm'] == 'LONG' and new['liq_strength'] == 60, new)
-    # Одне число в обох таблицях: колонка «МММ-Trend» у 🧮 = рядок МММ-Trend.
+    # Одне число в обох таблицях: колонка «VSV-Trend» у 🧮 = рядок VSV-Trend.
     _check(old['new_strength'] == new['strength'] and new['liq_strength'] == old['strength'],
            (old, new))
-    print('✓ «МММ-Trend» у 🧮 і «МММ-LiQ» у 🆕 — ті самі числа, що сусідня книга')
+    print('✓ «VSV-Trend» у 🧮 і «VSV-LiQ» у 🆕 — ті самі числа, що сусідня книга')
 
 
 def test_legacy_is_computed_once_per_coin_for_both_books():
     ff = _mk()
     _cap(ff, AAAUSDT=0.6, BBBUSDT=-0.3)
     _check(sorted(ff._legacy_calls) == ['AAAUSDT', 'BBBUSDT'],
-           f'МММ LiQ рахуємо раз на монету за такт, а не по разу на книгу: {ff._legacy_calls}')
-    print('✓ МММ LiQ — один розрахунок на монету для обох таблиць')
+           f'VSV LiQ рахуємо раз на монету за такт, а не по разу на книгу: {ff._legacy_calls}')
+    print('✓ VSV LiQ — один розрахунок на монету для обох таблиць')
 
 
 def test_runway_is_the_same_slice_the_overlay_shows():
@@ -3272,8 +3272,8 @@ def test_runway_is_the_same_slice_the_overlay_shows():
     ff._legacy = {'AAAUSDT': 0.6}
     ff._mm_capture(fu, now=ff._clock[0])
     row = ff.mm_monitor_state(book='new')['rows'][0]
-    _check(row['runway'] == rw, f'«Запас» — той самий runway зі зрізу Нового МММ: {row}')
-    print('✓ «Запас» = runway зі зрізу Нового МММ (як у TradingView-оверлеї)')
+    _check(row['runway'] == rw, f'«Запас» — той самий runway зі зрізу Нового VSV: {row}')
+    print('✓ «Запас» = runway зі зрізу Нового VSV (як у TradingView-оверлеї)')
 
 
 def test_readiness_column_is_gone():
@@ -3287,7 +3287,7 @@ def test_readiness_column_is_gone():
     _check('setup' not in ff.mm_monitor_state(book='new')['rows'][0], 'поле setup у рядку')
     for bad in ('_mmSetupCell', 'data-mmsort="setup"', "'setup', 'state'"):
         _check(bad not in _HTML, f'на сторінці лишилось «{bad}»')
-    print('✓ 🗑 «Готовність» у МММ-Trend прибрано разом із розрахунком')
+    print('✓ 🗑 «Готовність» у VSV-Trend прибрано разом із розрахунком')
 
 
 def test_status_carries_the_side_of_the_open_trade():
@@ -3316,14 +3316,14 @@ def test_ui_tables_have_the_requested_columns():
         return [_re.sub(r'<[^>]+>', '', x).strip()
                 for x in _re.findall(r'<th[^>]*>(.*?)</th>', t, flags=_re.S)]
     o, n = heads('mm-table'), heads('mmn-table')
-    _check(o.index('МММ-Trend') == o.index('МММ LiQ') + 1, f'«МММ-Trend» праворуч від МММ LiQ: {o}')
-    _check(n.index('МММ-LiQ') == n.index('МММ-Trend') + 1, f'«МММ-LiQ» праворуч від МММ-Trend: {n}')
+    _check(o.index('VSV-Trend') == o.index('VSV LiQ') + 1, f'«VSV-Trend» праворуч від VSV LiQ: {o}')
+    _check(n.index('VSV-LiQ') == n.index('VSV-Trend') + 1, f'«VSV-LiQ» праворуч від VSV-Trend: {n}')
     _check('Запас' in n, n)
     for gone in ('Сила росте', '⏱ Росте', 'Ціна', 'Готовність'):
-        _check(gone not in n, f'у МММ-Trend лишилась колонка «{gone}»: {n}')
+        _check(gone not in n, f'у VSV-Trend лишилась колонка «{gone}»: {n}')
     _check("_MMB.new.cols = ['status', 'mm', 'liq', 'state', 'runway', 'pchg', 'f1', 'f4']" in _HTML
            and len(n) == 11 and n[0] == 'TRD', 'склад JS-колонок = заголовки (+TRD першою)')
-    print('✓ UI: 🧮 +«МММ-Trend»; 🆕 +«МММ-LiQ»/«Запас», без росту, ціни й Готовності')
+    print('✓ UI: 🧮 +«VSV-Trend»; 🆕 +«VSV-LiQ»/«Запас», без росту, ціни й Готовності')
 
 
 def test_js_new_table_draws_the_new_cells():
@@ -3344,7 +3344,7 @@ console.log(JSON.stringify({n:document.getElementById('mmn-tbody').innerHTML,
     rows = d['n'].split('</tr>')
     tr_a = [x for x in rows if 'AAAUSDT' in x][0]
     tr_b = [x for x in rows if 'BBBUSDT' in x][0]
-    _check(tr_a.count('<td') == 11, f'11 комірок у МММ-Trend (з TRD): {tr_a.count("<td")}')
+    _check(tr_a.count('<td') == 11, f'11 комірок у VSV-Trend (з TRD): {tr_a.count("<td")}')
     _check('3.2%</b> <span' in tr_a and tr_a.index('3.2%') < tr_a.index('↓'),
            'стрілка запасу праворуч від значення')
     _check('♾' in tr_b and 'простір відкритий' not in tr_b.split('title=')[0]

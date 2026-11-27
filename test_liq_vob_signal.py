@@ -3,7 +3,7 @@
 **Вимога користувача, дослівно:** «Якщо увімкнено 📦 Volumized OB Trend і
 увімкнено "Сканер ліквідності", то кожен новоутворений VOB звіряємо з таблицею
 "Сканер ліквідності", і якщо співпадає напрямок VOB + напрямок банера
-"МММ-монітор" і є така ж монета у таблиці "Сканер ліквідності", одразу маємо
+"VSV-монітор" і є така ж монета у таблиці "Сканер ліквідності", одразу маємо
 сигнал і відправляємо монету далі по алгоритму в Чергу (якщо активно) або
 відразу відкриваємо угоду, перед цим провіривши чи не існує вже відкрита така
 угода.»
@@ -130,23 +130,23 @@ class _DB:
 
 class _FF:
     # ⚠️ Стаб мусить віддавати ТЕ САМЕ, що справжній `mm_snapshot_for`: без
-    # МММ монети нова умова (28.09) мовчки різала б кожен сигнал.
-    # За замовчуванням МММ кожної монети = банер (монета у «правильній» вкладці).
+    # VSV монети нова умова (28.09) мовчки різала б кожен сигнал.
+    # За замовчуванням VSV кожної монети = банер (монета у «правильній» вкладці).
     def __init__(self, direction='LONG', coin_mm=None):
         self.direction = direction
         self.coin_mm = coin_mm or {}
 
     def mm_bias_new(self):
-        # З 01.10 банер для сигналу — 🧮 МММ-Trend.
+        # З 01.10 банер для сигналу — 🧮 VSV-Trend.
         return {'dir': self.direction}
 
     def mm_gate_view(self, sym):
-        # Вкладка монети у «Списку монет» МММ-Trend (той самий знімок, що ворота).
+        # Вкладка монети у «Списку монет» VSV-Trend (той самий знімок, що ворота).
         m = self.coin_mm.get(sym, self.direction)
         return {'on': True, 'dir': self.direction,
                 'coin': (m if m in ('LONG', 'SHORT', 'FLAT') else None)}
 
-    # 🧮 МММ-монітор свідомо ПРОТИЛЕЖНИЙ — сигнал його більше не читає.
+    # 🧮 VSV-монітор свідомо ПРОТИЛЕЖНИЙ — сигнал його більше не читає.
     def mm_bias(self):
         return {'dir': {'LONG': 'SHORT', 'SHORT': 'LONG'}.get(self.direction)}
 
@@ -487,14 +487,14 @@ def test_the_panel_shows_the_switch_and_the_signals():
 
 
 
-# ═══════ 🧮 МММ LiQ МОНЕТИ МУСИТЬ ЗБІГАТИСЬ ІЗ БАНЕРОМ (вимога 28.09) ═══════
+# ═══════ 🧮 VSV LiQ МОНЕТИ МУСИТЬ ЗБІГАТИСЬ ІЗ БАНЕРОМ (вимога 28.09) ═══════
 def test_coin_must_sit_in_the_banner_tab_of_the_mm_monitor():
-    """Монета у вкладці ⚖ Рівновага чи протилежній МММ-монітора сигналу не
+    """Монета у вкладці ⚖ Рівновага чи протилежній VSV-монітора сигналу не
     дає, навіть коли VOB, банер і таблиця 💧 зійшлись."""
     row = _table_row(side='LONG')
     ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm='LONG',
                                   check_coin=True)
-    _check(ok and '🧮 МММ-Trend вкладка LONG' in note, note)
+    _check(ok and '🧮 VSV-Trend вкладка LONG' in note, note)
     ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm='FLAT',
                                   check_coin=True)
     _check(not ok and '⚖ Рівновага' in note, note)
@@ -504,7 +504,7 @@ def test_coin_must_sit_in_the_banner_tab_of_the_mm_monitor():
     ok, note = _lh.vob_confluence(row, 'LONG', 'LONG', coin_mm=None,
                                   check_coin=True)
     _check(not ok and 'немає у «Списку монет»' in note, f'немає даних ≠ за напрямком: {note}')
-    print('✓ вкладка монети в 🧮 МММ-Trend мусить збігатися з банером')
+    print('✓ вкладка монети в 🧮 VSV-Trend мусить збігатися з банером')
 
 
 def test_vob_match_reads_the_coin_mm_from_the_monitor_snapshot():
@@ -523,11 +523,11 @@ def test_vob_match_reads_the_coin_mm_from_the_monitor_snapshot():
     body = src.split('def coin_mm(')[1].split('\n    def ')[0]
     _check('mm_gate_view' in body and 'mm_snapshot_for' not in body
            and '_fuel_dir_legacy' not in body,
-           'джерело — знімок МММ-Trend (той самий, що ворота «Через МММ-Trend»)')
+           'джерело — знімок VSV-Trend (той самий, що ворота «Через VSV-Trend»)')
     hb = src.split('def bias_dir(')[1].split('\n    def ')[0]
     _check('mm_bias_new' in hb and 'mm_bias()' not in hb,
-           'банер — 🧮 МММ-Trend, не 🧮 МММ-монітор')
-    print('✓ vob_match бере банер і вкладку монети з 🧮 МММ-Trend')
+           'банер — 🧮 VSV-Trend, не 🧮 VSV-монітор')
+    print('✓ vob_match бере банер і вкладку монети з 🧮 VSV-Trend')
 
 
 def test_a_coin_that_turns_into_the_banner_tab_fires_later():

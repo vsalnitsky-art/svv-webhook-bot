@@ -442,10 +442,10 @@ def test_min_conf_default_is_off():
 
 
 
-# ═════ 4. 🧮 МММ LiQ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ═══════════════
-# «Додай вихід із угоди по показнику "🧮 МММ LiQ" — якщо нейтраль,
+# ═════ 4. 🧮 VSV LiQ БЕЗ НАПРЯМКУ → ВИХІД (вимога 15.09) ═══════════════
+# «Додай вихід із угоди по показнику "🧮 VSV LiQ" — якщо нейтраль,
 # закриваємо угоду.» Показник беремо З ТОГО САМОГО знімка, що малює колонку
-# «🧮 МММ LiQ» у таблиці угод і рядок 🧮 МММ-монітора.
+# «🧮 VSV LiQ» у таблиці угод і рядок 🧮 VSV-монітора.
 _SRC_TM = open(os.path.join(_ROOT, 'detection', 'trade_manager.py'),
                encoding='utf-8').read()
 _HTML_SM = open(os.path.join(_ROOT, 'templates', 'smart_money.html'),
@@ -469,14 +469,14 @@ def _use_ff(ff):
 
 
 def _mm(side='SHORT', rows=None, **settings):
-    """TM з увімкненим правилом 🧮 + підставленим знімком МММ."""
+    """TM з увімкненим правилом 🧮 + підставленим знімком VSV."""
     cfg = {'use_mm_flat_exit': True, 'mm_flat_exit_mode': 'flat',
            'mm_flat_exit_confirm_sec': 0, 'use_opposite_ob_exit': False}
     cfg.update(settings)
     t = _reset(side=side, **cfg)
     ff = _FF(rows if rows is not None else {})
     _use_ff(ff)
-    # Доступ до зрізу з тесту: сценарії «МММ розвернувся → повернувся» мусять
+    # Доступ до зрізу з тесту: сценарії «VSV розвернувся → повернувся» мусять
     # міняти дані МІЖ тактами, а не створювати новий TM (таймери б зникли).
     t._ff = ff
     return t
@@ -488,21 +488,21 @@ def _row(mm, strength=5):
 
 
 def test_flat_mm_closes_the_trade():
-    """Дослівна вимога: МММ став ⚖ рівновагою → угоду закрито."""
+    """Дослівна вимога: VSV став ⚖ рівновагою → угоду закрито."""
     t = _mm(side='SHORT', rows={'MNTUSDT': _row(None, 4)})
     closed = t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
     _check(closed and t.closed == [('real', 'mm_flat_exit')],
            f'⚖ рівновага мусить закривати угоду: {t.closed}')
     _check(any('рівновага' in x for x in _LOG),
            f'причина не названа в 🧾 Лозі: {_LOG}')
-    print('✓ 🧮 МММ ⚖ рівновага → вихід')
+    print('✓ 🧮 VSV ⚖ рівновага → вихід')
 
 
 def test_directional_mm_keeps_the_trade():
     t = _mm(side='SHORT', rows={'MNTUSDT': _row('SHORT', 62)})
     t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
-    _check(t.closed == [], f'МММ тримає напрямок — виходу бути не може: {t.closed}')
-    print('✓ 🧮 МММ у бік угоди → тримаємо')
+    _check(t.closed == [], f'VSV тримає напрямок — виходу бути не може: {t.closed}')
+    print('✓ 🧮 VSV у бік угоди → тримаємо')
 
 
 def test_missing_snapshot_is_not_flat():
@@ -521,7 +521,7 @@ def test_missing_snapshot_is_not_flat():
 
 
 def test_opposite_mm_holds_by_default_and_closes_in_the_other_mode():
-    """Дослівна вимога — про НЕЙТРАЛЬ, тож розворот МММ за замовчуванням угоду
+    """Дослівна вимога — про НЕЙТРАЛЬ, тож розворот VSV за замовчуванням угоду
     НЕ чіпає. Для тих, хто вважає розворот гіршим за згасання, є окремий режим."""
     t = _mm(side='SHORT', rows={'MNTUSDT': _row('LONG', 55)})
     t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
@@ -534,7 +534,7 @@ def test_opposite_mm_holds_by_default_and_closes_in_the_other_mode():
     # історії угод розворот підписувався як «⚖ рівновага» (скарга зі скріном).
     _check(t2.closed == [('real', 'mm_against_exit')],
            f'режим «рівновага АБО проти» мусить закрити: {t2.closed}')
-    print('✓ 🧮 розворот МММ: тримаємо (деф.) / закриваємо (окремий режим)')
+    print('✓ 🧮 розворот VSV: тримаємо (деф.) / закриваємо (окремий режим)')
 
 
 def test_the_two_reasons_are_never_mixed_up():
@@ -554,10 +554,10 @@ def test_the_two_reasons_are_never_mixed_up():
     # І підписи мусять бути РІЗНІ в усіх трьох місцях показу.
     for src, name in ((_SRC_TM, 'trade_manager'), (_HTML_SM, 'сторінка')):
         _check('mm_against_exit' in src, f'{name} не знає нової причини')
-    _check("'mm_against_exit': '🧮 МММ LiQ РОЗВЕРНУВСЯ ПРОТИ позиції'" in _SRC_TM,
+    _check("'mm_against_exit': '🧮 VSV LiQ РОЗВЕРНУВСЯ ПРОТИ позиції'" in _SRC_TM,
            'немає розгорнутого підпису розвороту')
-    _check("'mm_against_exit': '🧮 МММ LiQ ПРОТИ'" in _SRC_TM
-           and "'mm_against_exit': '🧮 МММ LiQ ПРОТИ'" in _HTML_SM,
+    _check("'mm_against_exit': '🧮 VSV LiQ ПРОТИ'" in _SRC_TM
+           and "'mm_against_exit': '🧮 VSV LiQ ПРОТИ'" in _HTML_SM,
            'бейдж розвороту мусить відрізнятись від бейджа рівноваги')
     print('✓ 🧮 ⚖ рівновага і РОЗВОРОТ — різні причини з різними підписами')
 
@@ -639,13 +639,13 @@ def test_the_reversal_timer_resets_when_mm_comes_back():
             mm_flat_exit_mode='flat_or_against', mm_against_exit_confirm_sec=900)
     t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
     _check('MNTUSDT' in t._mm_against_since, 'відлік розвороту не стартував')
-    t._ff.rows['MNTUSDT'] = _row('SHORT', 40)        # МММ знову в бік угоди
+    t._ff.rows['MNTUSDT'] = _row('SHORT', 40)        # VSV знову в бік угоди
     t._signal_exit_at.clear()
     t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
     _check('MNTUSDT' not in t._mm_against_since,
-           'відлік розвороту мусить обнулятись, коли МММ повернувся')
+           'відлік розвороту мусить обнулятись, коли VSV повернувся')
     _check(t.closed == [], f'угода мусить лишитись відкритою: {t.closed}')
-    print('✓ 🧮 повернення МММ обнуляє відлік розвороту')
+    print('✓ 🧮 повернення VSV обнуляє відлік розвороту')
 
 
 def test_the_two_windows_never_inherit_each_other():
@@ -707,7 +707,7 @@ def test_ui_has_a_separate_window_for_each_state():
     _check('Розворот тримається' in block,
            'друге поле не підписане як витримка РОЗВОРОТУ')
     _check('обнуляється' in block or 'обнуля' in block,
-           'у підказці не сказано, що повернення МММ скидає відлік')
+           'у підказці не сказано, що повернення VSV скидає відлік')
     _check('mm_against_exit_confirm_sec' in _HTML_SM,
            'ключ не їде на сервер')
     print('✓ UI: у ⚖ і 🔄 власні поля витримки, обидва підписані')
@@ -749,11 +749,11 @@ def test_rule_stays_out_of_the_and_or_combination():
     t._check_signal_exits('MNTUSDT', t._positions['MNTUSDT'], 0.5, False)
     _check(t.closed == [('real', 'mm_flat_exit')],
            f'🧮 мусить спрацювати незалежно від режиму комбінування: {t.closed}')
-    # І навпаки: у самому комбінуванні МММ не згадується.
+    # І навпаки: у самому комбінуванні VSV не згадується.
     i = _SRC_TM.index('def _signal_exit_reason(')
     fn = _SRC_TM[i:_SRC_TM.index('\n    def ', i + 10)]
     _check('mm_flat' not in fn and 'mm_snapshot_for' not in fn,
-           'МММ просочився в комбінування трьох вердиктів')
+           'VSV просочився в комбінування трьох вердиктів')
     print('✓ 🧮 правило живе ОКРЕМО від АБО/AND-комбінування')
 
 
@@ -771,7 +771,7 @@ def test_source_is_the_shared_snapshot_and_nothing_is_recomputed():
         fn = fn[fn.index('"""', fn.index('"""') + 3) + 3:]
     _check('mm_snapshot_for' in fn, 'правило не читає спільний знімок')
     for bad in ('_fuel_dir_legacy', 'compute_mm', '_liq_state', 'get_state('):
-        _check(bad not in fn, f'правило рахує МММ саме ({bad}) — розійдеться з UI')
+        _check(bad not in fn, f'правило рахує VSV саме ({bad}) — розійдеться з UI')
     print('✓ 🧮 джерело — спільний знімок, власних розрахунків немає')
 
 
@@ -809,11 +809,11 @@ def test_throttle_is_per_book_not_per_symbol():
 def test_reason_has_human_labels_everywhere():
     """Код причини мусить мати підпис у ВСІХ трьох місцях показу, інакше в
     історії угод стоятиме сире `mm_flat_exit`."""
-    _check("'mm_flat_exit': '🧮 МММ LiQ втратив напрямок" in _SRC_TM,
+    _check("'mm_flat_exit': '🧮 VSV LiQ втратив напрямок" in _SRC_TM,
            'немає розгорнутого підпису причини закриття')
-    _check("'mm_flat_exit': '🧮 МММ LiQ ⚖'" in _SRC_TM,
+    _check("'mm_flat_exit': '🧮 VSV LiQ ⚖'" in _SRC_TM,
            'немає короткого бейджа причини')
-    _check("'mm_flat_exit': '🧮 МММ LiQ ⚖'" in _HTML_SM,
+    _check("'mm_flat_exit': '🧮 VSV LiQ ⚖'" in _HTML_SM,
            'JS-мапа причин на сторінці не знає про нове правило')
     print('✓ причина має людський підпис у TM і на сторінці')
 

@@ -1,6 +1,6 @@
-"""🔮 МММ-LOCAL — четвертий банер/монітор на 🔮 Forecast 1H + 4H (вимога 15.10).
+"""🔮 VSV-LOCAL — четвертий банер/монітор на 🔮 Forecast 1H + 4H (вимога 15.10).
 
-Дослівно: «Зроби ще один такий самий МММ (монітор) банер, як і "⚡ МММ-CTR"
+Дослівно: «Зроби ще один такий самий VSV (монітор) банер, як і "⚡ VSV-CTR"
 тільки на основі ось цих даних» (бейджі «1H: 🔴 SHORT −12% · 50%» /
 «4H: 🔴 SHORT −41% · 60%»).
 """
@@ -50,7 +50,7 @@ def test_same_weights_as_ctr_block():
     a = _m.fc_mm_dir(_f(0, 50), _f(40))
     b = _m.fc_mm_dir(_f(40), _f(0, 50))
     _check(a['strength'] > b['strength'], (a, b))
-    print('✓ ваги 0.4/0.6 — ті самі, що в ⚡ МММ-CTR; 4H важить більше')
+    print('✓ ваги 0.4/0.6 — ті самі, що в ⚡ VSV-CTR; 4H важить більше')
 
 
 def test_confidence_is_not_counted_twice():
@@ -88,7 +88,7 @@ class _FE:
                 'forecast_4h': {'side': 1 if d[1] > 0 else -1, 'pct': d[1], 'confidence': 60}}
 
     def ensure_fresh(self, *a, **k):
-        raise AssertionError('МММ-Local не має ходити по свічки')
+        raise AssertionError('VSV-Local не має ходити по свічки')
 
 
 def _ff_with(data):
@@ -150,10 +150,10 @@ def test_state_persists_and_exposes_the_section():
 def test_labels_mirrors():
     sl = open(os.path.join(_HERE, 'detection', 'signal_labels.py'), encoding='utf-8').read()
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
-    _check("'MMF':              '🔮 МММ-Local'" in sl and sl.count("'MMF': '🔮'") == 2, 'labels')
-    _check('"MMF": "🔮 МММ-Local"' in js and js.count('"MMF": "🔮"') == 2, 'infosite')
-    _check("'MMF': '🔮 МММ-Local'" in _HTML and _HTML.count("'MMF': '🔮'") == 2, 'page')
-    print('✓ мітка MMF = 🔮 МММ-Local у Python і обох JS-дзеркалах')
+    _check("'MMF':              '🔮 VSV-Local'" in sl and sl.count("'MMF': '🔮'") == 2, 'labels')
+    _check('"MMF": "🔮 VSV-Local"' in js and js.count('"MMF": "🔮"') == 2, 'infosite')
+    _check("'MMF': '🔮 VSV-Local'" in _HTML and _HTML.count("'MMF': '🔮'") == 2, 'page')
+    print('✓ мітка MMF = 🔮 VSV-Local у Python і обох JS-дзеркалах')
 
 
 # ═══════════ 3. UI ═════════════════════════════════════════════════════
@@ -176,7 +176,7 @@ def test_ui_block_is_a_twin_with_its_own_columns():
     _check('mm_fc_enabled: _c(' in _HTML and 'mmf_str_mins:' in _HTML, 'збереження')
     _check('[_MMB.old, _MMB.new, _MMB.ctr, _MMB.fc, _MMB.pull, _MMB.dec, _MMB.rdy, _MMB.sbr].forEach' in _HTML, 'банер малює 1с-тікер')
     i = _HTML.index('id="mmc-panel"'); j = _HTML.index('id="mmf-panel"')
-    _check(i < j, 'блок 🔮 стоїть під ⚡ МММ-CTR')
+    _check(i < j, 'блок 🔮 стоїть під ⚡ VSV-CTR')
     print('✓ UI: блок-двійник під ⚡ CTR, колонки 🔮 1H/4H, гармошки, збереження')
 
 
@@ -211,7 +211,7 @@ def test_banner_change_goes_to_telegram_once_per_confirmed_flip():
     _check(not sent, f'перший стан після старту не шлемо: {sent}')
     ff._mm_forecast_engine().data['BTCUSDT'] = (50, 60)
     ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1030.0)
-    _check(len(sent) == 1 and sent[0][0] == 'btc' and 'МММ-LOCAL' in sent[0][1]
+    _check(len(sent) == 1 and sent[0][0] == 'btc' and 'VSV-LOCAL' in sent[0][1]
            and 'LONG' in sent[0][1], sent)
     ff._mm_capture(_mon._fuels(BTCUSDT=0.3), now=1060.0)
     _check(len(sent) == 1, 'той самий статус — не подія')
