@@ -1,10 +1,10 @@
-"""📨 TELEGRAM: тема «🧮 VSV-монітор» + угоди в групу (вимога 21.09).
+"""📨 TELEGRAM: тема «🧮 МММ-монітор» + угоди в групу (вимога 21.09).
 
 **Вимоги користувача, дослівно:**
   1. «Перероби все оповіщення в Телеграм, яке стосувалось ₿ BTCUSDT тепер на
-     "🧮 VSV-МОНІТОР", зміни в групі назву і напрявляй туди як і було раніше
+     "🧮 МММ-МОНІТОР", зміни в групі назву і напрявляй туди як і було раніше
      ₿ BTCUSDT якщо увімкнено відправку, а основним тепер сюди напрявляй
-     оповіщення стосовно змін банера "🧮 VSV-МОНІТОР".»
+     оповіщення стосовно змін банера "🧮 МММ-МОНІТОР".»
   2. «Також проаналізуй повідомлення, які ідуть в основний телеграм бот
      стосовно відкритих угод поза потом "External", напрляй їх в основну
      групу, а не в телеграм бот.»
@@ -12,7 +12,7 @@
      вимикати, тобто можливість контролювати відправку всіх оповіщень.»
 
 Що стережуть ці тести:
-  • підпис теми став «🧮 VSV-монітор», а КЛЮЧ категорії лишився `btc` —
+  • підпис теми став «🧮 МММ-монітор», а КЛЮЧ категорії лишився `btc` —
     його знають env-змінні, збережені id тем і тумблер кабінету `notify_btc`;
   • ВЖЕ СТВОРЕНА тема РЕАЛЬНО перейменовується в групі (`editForumTopic`), і
     рівно один раз — інакше вимога «зміни в групі назву» не виконана;
@@ -196,15 +196,15 @@ def _short(n=6, strength=60):
 
 # ═══════════ 1. ТЕМА В ГРУПІ: ПІДПИС ЗМІНЕНО, КЛЮЧ — НІ ══════════════════
 def test_topic_is_labelled_the_monitor_now():
-    """Підпис теми і хештег стосуються 🧮 VSV-монітора — саме туди тепер іде
+    """Підпис теми і хештег стосуються 🧮 МММ-монітора — саме туди тепер іде
     головний потік (банер + корекція), а ₿-сеанс лишається сусідом."""
-    _check(tg._CAT_LABEL['btc'] == '🧮 VSV-монітор',
-           f'підпис теми мусить бути 🧮 VSV-монітор: {tg._CAT_LABEL["btc"]!r}')
+    _check(tg._CAT_LABEL['btc'] == '🧮 МММ-монітор',
+           f'підпис теми мусить бути 🧮 МММ-монітор: {tg._CAT_LABEL["btc"]!r}')
     _check('₿ BTCUSDT' not in tg._CAT_LABEL.values(),
            'старого підпису «₿ BTCUSDT» у темах лишатись не має')
-    _check(tg._CAT_TAG['btc'] == '#VSV_монітор',
+    _check(tg._CAT_TAG['btc'] == '#МММ_монітор',
            f'хештег теж мусить назвати монітор: {tg._CAT_TAG["btc"]!r}')
-    print('✓ тема називається «🧮 VSV-монітор»')
+    print('✓ тема називається «🧮 МММ-монітор»')
 
 
 def test_the_category_key_itself_never_changed():
@@ -232,7 +232,7 @@ def test_an_already_created_topic_is_actually_renamed_in_the_group():
     os.environ['TELEGRAM_FORUM_CHAT'] = '-100500'
     chat, tid = tg._forum_thread('btc')
     _check((chat, tid) == ('-100500', 7), f'тема мусить лишитись тією самою: {chat}/{tid}')
-    _check(any(m == 'editForumTopic' and p.get('name') == '🧮 VSV-монітор'
+    _check(any(m == 'editForumTopic' and p.get('name') == '🧮 МММ-монітор'
                and int(p.get('message_thread_id')) == 7 for m, p in calls),
            f'мусив піти editForumTopic із новою назвою: {calls}')
     print('✓ наявна тема РЕАЛЬНО перейменовується в групі')
@@ -254,7 +254,7 @@ def test_the_rename_is_asked_for_only_once():
     _check(calls.count('editForumTopic') == 1,
            f'перейменування мусить бути ОДНЕ на всі виклики: {calls}')
     saved = _DB.store.get('tg_forum_topic_names') or {}
-    _check(saved.get('-100500', {}).get('btc') == '🧮 VSV-монітор',
+    _check(saved.get('-100500', {}).get('btc') == '🧮 МММ-монітор',
            f'назву мусили запамʼятати в БД (переживає рестарт): {saved}')
     # Рестарт процесу: кеш порожній, але БД памʼятає → API не смикаємо.
     tg._forum_names_cache = None
@@ -306,7 +306,7 @@ def test_a_confirmed_banner_change_is_announced():
     cat, pref = [(c, p) for c, p, t in ff.sent if t == txt][0]
     _check(cat == 'btc' and pref == 'notify_btc',
            f'іти має в ту саму тему, що й раніше ₿: {cat}/{pref}')
-    _check('VSV-МОНІТОР' in txt, f'повідомлення мусить назвати джерело: {txt}')
+    _check('МММ-МОНІТОР' in txt, f'повідомлення мусить назвати джерело: {txt}')
     _check('SHORT' in txt and 'LONG' in txt,
            f'мусить бути видно і новий статус, і попередній: {txt}')
     _check('монет:' not in txt, f'рядок «монет: …» прибрано (вимога 17.10): {txt}')
@@ -427,7 +427,7 @@ def test_the_external_close_message_goes_to_the_group_too():
     src = _TM_SRC
     i = src.find('🔄 External close')
     _check(i > 0, 'повідомлення про зовнішнє закриття зникло')
-    _check("category='trades'" in src[i:i + 1200],
+    _check("category='trades'" in src[i:i + 700],
            'External close мусить нести category=trades')
     print('✓ 🔄 External close → груповий топік')
 
@@ -505,8 +505,8 @@ def test_the_cabinet_still_calls_the_topic_by_its_new_name():
     src = open(os.path.join(_HERE, 'web', 'admin_pages.py'), encoding='utf-8').read()
     i = src.find('id="nbtc"')
     _check(i > 0, 'тумблер теми зник із кабінету')
-    _check('VSV-монітор' in src[i - 400:i],
-           'підпис тумблера мусить назвати 🧮 VSV-монітор')
+    _check('МММ-монітор' in src[i - 400:i],
+           'підпис тумблера мусить назвати 🧮 МММ-монітор')
     print('✓ кабінет називає тему її новим імʼям')
 
 
@@ -557,7 +557,7 @@ def test_a_topic_set_by_env_is_renamed_too():
     try:
         chat, thread = tg._cat_chat('btc')
         _check((chat, thread) == ('-100777', '42'), f'маршрут: {chat}/{thread}')
-        _check(any(m == 'editForumTopic' and p.get('name') == '🧮 VSV-монітор'
+        _check(any(m == 'editForumTopic' and p.get('name') == '🧮 МММ-монітор'
                    and int(p.get('message_thread_id')) == 42 for m, p in calls),
                f'тему з env теж мусить перейменувати: {calls}')
     finally:
@@ -717,7 +717,7 @@ def test_a_refused_send_really_reaches_the_log():
 
 # ═══ 8. 🩺 ЗВІТ ПЕРЕВІРКИ НЕ БРЕШЕ (реальний прогін на проді, 22.09) ═════════
 # Перша ж перевірка кнопкою віддала:
-#   тема «🧮 VSV-монітор» · форум-група · чат … · тема #42 · тумблер ✓ ·
+#   тема «🧮 МММ-монітор» · форум-група · чат … · тема #42 · тумблер ✓ ·
 #   ✅ повідомлення надіслано · перейменування: trades: Bad Request:
 #   TOPIC_NOT_MODIFIED
 # Тобто канал ПРАЦЮЄ, а «помилка» — подвійний дефект МОГО ж коду.
@@ -742,7 +742,7 @@ def test_topic_not_modified_is_success_not_a_failure():
 def test_the_check_reports_this_categorys_error_not_someone_elses():
     """🩺 перевірка ОДНІЄЇ теми мусить казати ПРО НЕЇ.
 
-    Глобальний рядок помилки давав звіт про «🧮 VSV-монітор» із причиною від
+    Глобальний рядок помилки давав звіт про «🧮 МММ-монітор» із причиною від
     категорії `trades` — тобто перевірка звинувачувала не ту тему."""
     _check(hasattr(tg, 'rename_error'), 'потрібен читач причини ПО КАТЕГОРІЇ')
     _check(isinstance(tg._forum_rename_err, dict),
@@ -775,15 +775,15 @@ def test_a_successful_rename_clears_only_its_own_error():
     print('✓ 🏷 успіх стирає причину лише своєї категорії')
 
 
-# ═══════════ 9. 🆕 БАНЕР VSV-Trend → TELEGRAM (вимога 09.10) ════════════════
+# ═══════════ 9. 🆕 БАНЕР МММ-Trend → TELEGRAM (вимога 09.10) ════════════════
 def _tick_new(ff, snap, now=NOW):
     ff._mm_track_bias_new(snap, now, ff.get_settings())
     return dict(ff._mm_bias_new)
 
 
 def test_the_new_banner_change_is_announced_like_the_monitor():
-    """«Додай оповіщення в телеграм стосовно зміни статусу панелі VSV-Trend,
-    таке саме як і в 🧮 VSV-МОНІТОР»."""
+    """«Додай оповіщення в телеграм стосовно зміни статусу панелі МММ-Trend,
+    таке саме як і в 🧮 МММ-МОНІТОР»."""
     ff = _mk(mmn_bias_confirm_sec=0)
     _tick_new(ff, _long(), NOW)                    # перший такт — тиха база
     _check(_banner(ff) == [], f'перший такт мовчить: {ff.sent}')
@@ -792,9 +792,9 @@ def test_the_new_banner_change_is_announced_like_the_monitor():
     _check(len(_msgs) == 1, ff.sent)
     cat, pref = [(c, p) for c, p, t in ff.sent if t == _msgs[0]][0]
     _check(cat == 'btc' and pref == 'notify_btc', 'та сама тема')
-    _check('VSV-Trend' in _msgs[0] and 'VSV-МОНІТОР' not in _msgs[0]
+    _check('МММ-Trend' in _msgs[0] and 'МММ-МОНІТОР' not in _msgs[0]
            and 'SHORT' in _msgs[0] and 'LONG' in _msgs[0], _msgs[0])
-    print('✓ зміна статусу банера VSV-Trend → повідомлення в тему')
+    print('✓ зміна статусу банера МММ-Trend → повідомлення в тему')
 
 
 def test_the_two_banners_keep_separate_marks_and_toggles():

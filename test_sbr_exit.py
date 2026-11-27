@@ -1,7 +1,7 @@
-"""🔔 Вихід із угоди по протилежному сигналу VSV-SBR 1H / 4H (вимога 30.10).
+"""🔔 Вихід із угоди по протилежному сигналу МММ-SBR 1H / 4H (вимога 30.10).
 
 Дослівно: «Додай ще один варіант виходу із угоди. Вихід по протилежному
-сигналу від 🔔 VSV-SBR 1Н або 4Н.»
+сигналу від 🔔 МММ-SBR 1Н або 4Н.»
 Правило: після ВХОДУ на обраному TF зʼявився сигнал Session Band Reversal
 протилежного боку → закриваємо. Сигнал, що був ДО входу, — не подія.
 """
@@ -118,7 +118,7 @@ def test_rule_closes_on_new_opposite_signal():
     t = _TM(side='LONG', opened_at=10_000.0)
     closed = _run(t, {'4h': {'tail': [_sig('SHORT', 14_400 + 10_000)]}})
     _check(closed and t.closed == [('real', 'sbr_exit')], t.closed)
-    _check(any('VSV-SBR 4H' in x and 'SHORT' in x for x in _LOG), _LOG)
+    _check(any('МММ-SBR 4H' in x and 'SHORT' in x for x in _LOG), _LOG)
 
 
 def test_rule_respects_the_tf_choice_and_the_switch():

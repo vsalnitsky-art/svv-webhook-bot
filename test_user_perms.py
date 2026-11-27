@@ -39,24 +39,25 @@ def test_admin_gets_everything():
 def test_user_defaults_and_dependency():
     e = P.effective(False, None)
     assert e['sec_terminal'] and e['ly_ob'] and e['ntf_sbr']
+    assert not e['sec_paper']                                  # новий користувач — P&L вимкнено
     assert not e['trade_paper'] and not e['trade_real']        # торгівлю дає лише адмін
     e = P.effective(False, {'sec_terminal': False, 'trade_paper': True, 'ly_ob': True})
     # без Термінала немає ні шарів, ні сповіщень, ні торгівлі
     assert not any(e[k] for k in P.KEYS if k.startswith(('ly_', 'ntf_', 'trade_')))
-    assert e['sec_signals'] and not e['sec_paper']             # 🧪 paper — лише адмін (24.11)
+    assert e['sec_signals'] and not e['sec_paper']
 
 
-def test_paper_is_admin_only():
-    """🧪 24.11: «paper — розрахований лише для роботи адміністратора»."""
-    assert set(P.ADMIN_ONLY) == {'sec_paper', 'trade_paper'}
-    e = P.effective(False, {k: True for k in P.KEYS})
-    assert not e['sec_paper'] and not e['trade_paper'] and e['trade_real']
-    assert P.books(e) == ('real',)
+def test_paper_defaults_off_and_admin_can_enable():
+    """25.11: P&L вимкнений за замовчуванням, адмін може надати його явно."""
+    d = P.defs()
+    paper = next(x for x in d['perms'] if x['key'] == 'sec_paper')
+    assert paper['default'] is False
+    assert P.effective(False, None)['sec_paper'] is False
+    e = P.effective(False, {'sec_paper': True, 'trade_paper': True, 'trade_real': True})
+    assert e['sec_paper'] and e['trade_paper'] and e['trade_real']
+    assert P.books(e) == ('paper', 'real')
     a = P.effective(True, {})
     assert a['sec_paper'] and a['trade_paper']
-    d = P.defs()
-    assert not any(x['key'] in P.ADMIN_ONLY for x in d['perms'])
-    assert set(d['admin_only']) == set(P.ADMIN_ONLY)
     js = open(os.path.join(ROOT, 'infosite/js/app.js'), encoding='utf-8').read()
     assert 'var PERM_ADMIN_ONLY = ["sec_paper", "trade_paper"]' in js
     assert 'return !!(PERMS && PERMS[k] === true)' in js         # paper лише явним «так»

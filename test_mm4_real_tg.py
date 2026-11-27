@@ -1,6 +1,6 @@
 """25.11: (1) події РЕАЛЬНИХ угод бота → лише особисто власнику від головного
 TG-бота, а не в спільну групу; (2) інфосайт — зведення чотирьох банерів
-(🧮 VSV-Trend · 🔮 VSV-Local · 🧠 VSV-Decision · 🧩 VSV-Готовність): загальний
+(🧮 МММ-Trend · 🔮 МММ-Local · 🧠 МММ-Decision · 🧩 МММ-Готовність): загальний
 відсоток + додаткова візуалізація, коли всі чотири зійшлись у напрямку."""
 import os
 import sys
@@ -63,17 +63,11 @@ def test_view_reads_the_same_banner_snapshots():
 def test_infosite_renders_total_chips_and_agreement():
     assert 'id="spb-mm4"' in IDX
     f = APP[APP.index('function mm4Render('):APP.index('setInterval(function () { document.querySelectorAll(".spb-tm')]
-    # 26.11 (дизайн): зведення «VSV · СИНХРОН», бейдж ЗБІГ 4/4 з таймером прибрано,
-    # збіг показує підсвічування картки.
-    for w in ('VSV · СИНХРОН', 'mm4-up', 'mm4-dn', 'items.map(mm4Chip)'):
+    for w in ('МММ · ЗАГАЛОМ', 'ЗБІГ 4/4', 'mm4-tm', 'mm4-up', 'mm4-dn', 'items.map(mm4Chip)'):
         assert w in f, w
-    assert 'mm4Render(d.mm4)' in APP
-    # Колір: напрямок стоїть ПІД підписом — більша частина чипа праворуч.
-    assert 'var split = 50 - pct / 2;' in APP
-    assert ('.mm4-chip.up{background:linear-gradient(90deg,#a92b3c 0%,#a92b3c var(--split),'
-            '#08775b var(--split),#08775b 100%)}') in CSS
-    assert ('.mm4-chip.dn{background:linear-gradient(90deg,#08775b 0%,#08775b var(--split),'
-            '#a92b3c var(--split),#a92b3c 100%)}') in CSS
+    assert 'mm4Render(d.mm4)' in APP and '.mm4-tm[data-since]' in APP
+    for c in ('.mm4-agree.up', '.spb-card.mm4-up', '.mm4-bar i.l'):
+        assert c in CSS, c
     src = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
     assert "'mm4': mm4" in src and 'mm4_view()' in src
 

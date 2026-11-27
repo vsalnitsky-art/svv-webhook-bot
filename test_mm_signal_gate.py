@@ -1,17 +1,17 @@
-"""🧮 СИГНАЛИ ЧЕРЕЗ VSV-Trend (вимога 01.10; до того — через VSV-монітор, 29.09).
+"""🧮 СИГНАЛИ ЧЕРЕЗ МММ-Trend (вимога 01.10; до того — через МММ-монітор, 29.09).
 
 01.10 дослівно: «Кожен сигнал має перевірятись у таблиці "Список монет" банера
-"VSV-Trend" за відповідним напрямком. Якщо сигнал LONG і є ця монета в таблиці в
+"МММ-Trend" за відповідним напрямком. Якщо сигнал LONG і є ця монета в таблиці в
 закладці LONG — пропускаємо далі по алгоритму. Інакше ігноруємо з відповідним
 записом в лог бота. І додай ще тумблер (за замовчуванням вимкнений), пропускати
-сигнали лише за напрямком банера "VSV-Trend".»
+сигнали лише за напрямком банера "МММ-Trend".»
 
 Історія (29.09):
 
 Дослівно: «Давай ось такі сигнали [рядок ALERTS: CHoCH / CHoCH+BOS, Volumized
-OB…] буде проганяти через VSV-монітор, якщо він увімкнений. Тобто сигнал
-пропускаємо, якщо він відповідає напрямку VSV-монітор і є у відповідній
-VSV-монітор таблиці за напрямком.»
+OB…] буде проганяти через МММ-монітор, якщо він увімкнений. Тобто сигнал
+пропускаємо, якщо він відповідає напрямку МММ-монітор і є у відповідній
+МММ-монітор таблиці за напрямком.»
 
 Реалізовано у СПІЛЬНИХ воротах `SMCScanner._signal_allowed`, тож умова діє на
 ВСІ сигнали сканера разом, а не на кожен шлях окремо.
@@ -67,7 +67,7 @@ def test_passes_when_the_coin_sits_in_the_signal_tab():
                        (_v(coin=None), 'немає у «Списку монет»')):
         app, ok, chip, why = sc.mm_gate_decide(view, 'LONG')
         _check(app and not ok and word in why and '✗' in chip, (view, why))
-    print('✓ пропуск лише коли монета у вкладці того ж напрямку VSV-Trend')
+    print('✓ пропуск лише коли монета у вкладці того ж напрямку МММ-Trend')
 
 
 def test_banner_toggle_adds_the_banner_requirement():
@@ -79,7 +79,7 @@ def test_banner_toggle_adds_the_banner_requirement():
     _check(ok and 'банер LONG' in chip, chip)
     _check(not sc.mm_gate_decide(_v(coin='SHORT'), 'LONG', True)[1],
            'банер збігся, але вкладка чужа — відмова')
-    print('✓ тумблер «за банером VSV-Trend» додає вимогу напрямку банера')
+    print('✓ тумблер «за банером МММ-Trend» додає вимогу напрямку банера')
 
 
 def test_short_mirrors_long():
@@ -92,7 +92,7 @@ def test_monitor_off_or_missing_does_not_apply():
     for view in ({}, None, _v(on=False, d=None, coin=None)):
         app, ok, chip, why = sc.mm_gate_decide(view, 'LONG')
         _check(not app and ok and not chip, (view, app, ok, chip))
-    print('✓ блок VSV-Trend вимкнено / FF недоступний — умова не діє')
+    print('✓ блок МММ-Trend вимкнено / FF недоступний — умова не діє')
 
 
 # ── 2. читання монітора ─────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ def _ff(bias=None, snap=None, on=True):
     f._mm_bias_new = bias or {}
     f._mmn_snapshot = snap or {}
     f._mmn_on = on
-    # VSV LiQ свідомо подаємо ПРОТИЛЕЖНИМ — ворота мусять читати саме VSV-Trend.
+    # МММ LiQ свідомо подаємо ПРОТИЛЕЖНИМ — ворота мусять читати саме МММ-Trend.
     f._mm_bias = {'dir': 'SHORT'}
     f._mm_snapshot = {k: {'status': 'SHORT'} for k in (snap or {})}
     f._mm_mon_on = True
@@ -122,15 +122,15 @@ def test_view_reads_the_same_snapshot_that_sorts_the_tabs():
     _check(f.mm_gate_view('BBBUSDT')['coin'] == 'FLAT', 'без напрямку = ⚖')
     _check(f.mm_gate_view('CCCUSDT')['coin'] is None, 'немає рядка = None')
     _check(_ff({'dir': None}).mm_gate_view('X')['dir'] is None, 'банер ⚖')
-    _check(_ff(on=False).mm_gate_view('X')['on'] is False, 'VSV-Trend вимкнено')
-    print('✓ mm_gate_view читає готовий знімок VSV-Trend (не VSV LiQ)')
+    _check(_ff(on=False).mm_gate_view('X')['on'] is False, 'МММ-Trend вимкнено')
+    print('✓ mm_gate_view читає готовий знімок МММ-Trend (не МММ LiQ)')
 
 
 def test_capture_records_the_monitor_switch():
     src = ast.get_source_segment(open(ffm.__file__, encoding='utf-8').read(),
                                  next(n for n in ast.walk(ast.parse(open(ffm.__file__, encoding='utf-8').read()))
                                       if isinstance(n, ast.FunctionDef) and n.name == '_mm_capture'))
-    _check('self._mmn_on = _new' in src, 'такт пише стан тумблера VSV-Trend')
+    _check('self._mmn_on = _new' in src, 'такт пише стан тумблера МММ-Trend')
     print('✓ такт двигуна запамʼятовує тумблер монітора (без походу в БД у воротах)')
 
 
@@ -146,7 +146,7 @@ def test_gate_blocks_signal_in_shared_gate():
     try:
         sc._mm_gate_view = lambda sym, book='new': _v(d='SHORT', coin='SHORT')
         ok, why, detail = S._signal_allowed(_ns(), 'AAAUSDT', 'LONG')
-        _check(ok is False and 'вкладці' in why and '🧮VSV-Trend' in detail,
+        _check(ok is False and 'вкладці' in why and '🧮МММ-Trend' in detail,
                (ok, why, detail))
         sc._mm_gate_view = lambda sym, book='new': _v(d='SHORT', coin='LONG')
         ns = _ns(); ns._settings['mm_gate_banner'] = True
@@ -172,7 +172,7 @@ def test_toggle_off_skips_the_gate():
         _check(not called, 'вимкнений тумблер не питає монітор узагалі')
     finally:
         sc._mm_gate_view = old
-    print('✓ тумблер «🧮 Через VSV-монітор» вимикає умову')
+    print('✓ тумблер «🧮 Через МММ-монітор» вимикає умову')
 
 
 def test_gate_sits_right_after_direction_buttons_before_other_filters():
@@ -180,8 +180,8 @@ def test_gate_sits_right_after_direction_buttons_before_other_filters():
     i_dg = body.index('_dg.allows(')
     i_mm = body.index('mm_gate_decide(')
     i_ob = body.index("self._settings.get('ob_filter_enabled'")
-    _check(i_dg < i_mm < i_ob, 'порядок: 🚦 кнопки → 🧮 VSV → решта фільтрів')
-    print('✓ 🧮 VSV стоїть одразу за головними кнопками')
+    _check(i_dg < i_mm < i_ob, 'порядок: 🚦 кнопки → 🧮 МММ → решта фільтрів')
+    print('✓ 🧮 МММ стоїть одразу за головними кнопками')
 
 
 def test_setting_default_whitelist_and_ui():
@@ -192,15 +192,15 @@ def test_setting_default_whitelist_and_ui():
            and "'mm_gate_enabled', 'mm_gate_banner'," in _SC_SRC, 'у білому списку')
     for cid in ('sm-mm-gate', 'sm-mm-gate-banner', 'sm-mmo-gate', 'sm-mmo-gate-banner'):
         _check(f'id="{cid}"' in _HTML, cid)
-    _check('Через VSV-Trend' in _HTML and 'Через VSV-МОНІТОР' in _HTML
-           and 'за банером VSV-МОНІТОР' in _HTML, 'підписи')
+    _check('Через МММ-Trend' in _HTML and 'Через МММ-МОНІТОР' in _HTML
+           and 'за банером МММ-МОНІТОР' in _HTML, 'підписи')
     _check("['sm-mmo-gate', 'sm-mmo-gate-banner', 'mmo_gate_enabled', 'mmo_gate_banner']" in _HTML,
            'updateMmGate шле обидві пари')
     _check('id="sm-mm-gate" checked' not in _HTML, 'чекбокс не увімкнений за замовчуванням')
     print('✓ чотири тумблери: дефолт ВИМК, білий список, UI')
 
 
-# ── 3а. 🧮 ВОРОТА «ЧЕРЕЗ VSV-МОНІТОР» (вимога 09.10) ────────────────────────
+# ── 3а. 🧮 ВОРОТА «ЧЕРЕЗ МММ-МОНІТОР» (вимога 09.10) ────────────────────────
 def test_view_old_book_reads_the_monitor_snapshot():
     f = _ff({'dir': 'LONG'}, {'AAAUSDT': {'status': 'LONG'}})
     v = f.mm_gate_view('AAAUSDT', book='old')
@@ -208,15 +208,15 @@ def test_view_old_book_reads_the_monitor_snapshot():
     f._mm_mon_on = False
     _check(f.mm_gate_view('AAAUSDT', book='old')['on'] is False,
            'вимкнений монітор → ворота не діють')
-    print('✓ mm_gate_view(book=old) читає знімок і банер 🧮 VSV-монітора')
+    print('✓ mm_gate_view(book=old) читає знімок і банер 🧮 МММ-монітора')
 
 
 def test_old_book_gate_uses_its_own_labels():
     app, ok, chip, why = sc.mm_gate_decide(_v(coin='SHORT'), 'LONG', False, 'old')
-    _check(app and not ok and '🧮VSV-монітор' in chip and 'VSV-МОНІТОР' in why, (chip, why))
+    _check(app and not ok and '🧮МММ-монітор' in chip and 'МММ-МОНІТОР' in why, (chip, why))
     app, ok, chip, _ = sc.mm_gate_decide(_v(d='SHORT'), 'LONG', True, 'old')
     _check(not ok and 'банер SHORT' in chip, chip)
-    print('✓ ворота VSV-монітора — те саме правило, свої підписи')
+    print('✓ ворота МММ-монітора — те саме правило, свої підписи')
 
 
 def test_both_gates_apply_independently():
@@ -229,10 +229,10 @@ def test_both_gates_apply_independently():
         sc._mm_gate_view = fake
         ns = _ns(False); ns._settings['mmo_gate_enabled'] = True
         ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
-        _check(ok is False and 'VSV-МОНІТОР' in why and seen == ['old'], (why, seen))
+        _check(ok is False and 'МММ-МОНІТОР' in why and seen == ['old'], (why, seen))
         seen.clear(); ns._settings['mm_gate_enabled'] = True
         ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
-        _check(ok is False and seen == ['new', 'old'] and '🧮VSV-Trend[вкладка LONG]:✓' in detail,
+        _check(ok is False and seen == ['new', 'old'] and '🧮МММ-Trend[вкладка LONG]:✓' in detail,
                (seen, detail))
     finally:
         sc._mm_gate_view = old
@@ -270,7 +270,7 @@ def test_liq_gate_is_separate_and_off_by_default():
     old_r, old_m = sc._liq_gate_row, sc._mm_gate_view
     calls = []
     try:
-        sc._mm_gate_view = lambda sym, book='new': {}            # VSV-Trend не діє
+        sc._mm_gate_view = lambda sym, book='new': {}            # МММ-Trend не діє
         sc._liq_gate_row = lambda sym, book='new': calls.append(sym) or (True, None)
         ns = _ns(); ns._settings['liq_gate_enabled'] = True
         ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
@@ -328,7 +328,7 @@ def test_view_carries_the_threshold_of_the_coin_tab_per_book():
                               'BBBUSDT': {'status': None, 'strength': 7}})
     f._mmn_str_mins_c = {'all': 5, 'LONG': 40, 'SHORT': 60, 'flat': 3}
     f._mm_str_mins_c = {'all': 0, 'LONG': 0, 'SHORT': 25, 'flat': 0}
-    _check(f.mm_gate_view('AAAUSDT')['str_min'] == 40, 'вкладка LONG VSV-Trend')
+    _check(f.mm_gate_view('AAAUSDT')['str_min'] == 40, 'вкладка LONG МММ-Trend')
     _check(f.mm_gate_view('BBBUSDT')['str_min'] == 3, 'вкладка ⚖')
     _check(f.mm_gate_view('AAAUSDT', 'old')['str_min'] == 25, '🧮: SHORT-вкладка свого блоку')
     print('✓ ⚑ view несе поріг САМЕ вкладки монети і САМЕ свого блоку')
@@ -350,7 +350,7 @@ def test_strength_toggle_reaches_the_shared_gate_and_ui():
     print('✓ ⚑ тумблер доходить до воріт; UI має чекбокс і позначку вкладки')
 
 
-# ── 3в. ⚡ ВОРОТА «ЧЕРЕЗ VSV-CTR» (вимога 15.10) ─────────────────────────────
+# ── 3в. ⚡ ВОРОТА «ЧЕРЕЗ МММ-CTR» (вимога 15.10) ─────────────────────────────
 def test_view_ctr_book_reads_the_ctr_snapshot():
     f = _ff({'dir': 'LONG'}, {'AAAUSDT': {'status': 'LONG'}})
     f._mm_bias_ctr = {'dir': 'SHORT'}
@@ -362,12 +362,12 @@ def test_view_ctr_book_reads_the_ctr_snapshot():
            == {'on': True, 'dir': 'SHORT', 'coin': 'FLAT', 'str_min': 7}, v)
     f._mmc_on = False
     _check(f.mm_gate_view('AAAUSDT', book='ctr')['on'] is False, 'вимкнений CTR → не діє')
-    print('✓ mm_gate_view(book=ctr) читає знімок, банер і пороги ⚡ VSV-CTR')
+    print('✓ mm_gate_view(book=ctr) читає знімок, банер і пороги ⚡ МММ-CTR')
 
 
 def test_ctr_gate_rule_labels_and_activation():
     app, ok, chip, why = sc.mm_gate_decide(_v(coin='SHORT'), 'LONG', False, 'ctr')
-    _check(app and not ok and '⚡VSV-CTR' in chip and '⚡ VSV-CTR' in why, (chip, why))
+    _check(app and not ok and '⚡МММ-CTR' in chip and '⚡ МММ-CTR' in why, (chip, why))
     _check(sc.mm_gates_active({'mmc_gate_enabled': True, 'mmc_gate_banner': True})
            == [('ctr', True)], 'ctr у переліку воріт')
     seen = []
@@ -379,8 +379,8 @@ def test_ctr_gate_rule_labels_and_activation():
         sc._mm_gate_view = fake
         ns = _ns(False); ns._settings['mmc_gate_enabled'] = True
         ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
-        _check(ok is False and seen == ['ctr'] and '⚡ VSV-CTR' in why
-               and '⚡VSV-CTR[вкладка SHORT]:✗' in detail, (seen, why, detail))
+        _check(ok is False and seen == ['ctr'] and '⚡ МММ-CTR' in why
+               and '⚡МММ-CTR[вкладка SHORT]:✗' in detail, (seen, why, detail))
     finally:
         sc._mm_gate_view = old
     for k in ('mmc_gate_enabled', 'mmc_gate_banner'):
@@ -388,12 +388,12 @@ def test_ctr_gate_rule_labels_and_activation():
     _check("'mmc_gate_enabled', 'mmc_gate_banner'," in _SC_SRC, 'білий список')
     for need in ('id="sm-mmc-gate"', 'id="sm-mmc-gate-banner"',
                  "['sm-mmc-gate', 'sm-mmc-gate-banner', 'mmc_gate_enabled', 'mmc_gate_banner']",
-                 "'⚡ VSV-CTR'],"):
+                 "'⚡ МММ-CTR'],"):
         _check(need in _HTML, f'на сторінці немає «{need}»')
-    print('✓ «Через VSV-CTR» — те саме правило, свої підписи, деф. ВИМК, UI')
+    print('✓ «Через МММ-CTR» — те саме правило, свої підписи, деф. ВИМК, UI')
 
 
-# ── 3г. 🔮 ВОРОТА «ЧЕРЕЗ VSV-LOCAL» (вимога 15.10) ─────────────────────────
+# ── 3г. 🔮 ВОРОТА «ЧЕРЕЗ МММ-LOCAL» (вимога 15.10) ─────────────────────────
 def test_view_fc_book_reads_the_forecast_snapshot():
     f = _ff({'dir': 'LONG'}, {'AAAUSDT': {'status': 'LONG'}})
     f._mm_bias_fc = {'dir': 'SHORT'}
@@ -408,12 +408,12 @@ def test_view_fc_book_reads_the_forecast_snapshot():
     f._mmf_str_mins_c = None
     f._mm_str_mins_cache({'mmf_str_mins': {'all': 0, 'LONG': 5, 'SHORT': 9, 'flat': 0}})
     _check(f._mmf_str_mins_c and f._mmf_str_mins_c['SHORT'] == 9, f._mmf_str_mins_c)
-    print('✓ mm_gate_view(book=fc) читає знімок, банер і пороги 🔮 VSV-Local')
+    print('✓ mm_gate_view(book=fc) читає знімок, банер і пороги 🔮 МММ-Local')
 
 
 def test_fc_gate_rule_labels_and_activation():
     app, ok, chip, why = sc.mm_gate_decide(_v(coin='SHORT'), 'LONG', False, 'fc')
-    _check(app and not ok and '🔮VSV-Local' in chip and '🔮 VSV-LOCAL' in why, (chip, why))
+    _check(app and not ok and '🔮МММ-Local' in chip and '🔮 МММ-LOCAL' in why, (chip, why))
     _check(sc.mm_gates_active({'mmf_gate_enabled': True})
            == [('fc', False)], 'fc у переліку воріт')
     seen = []
@@ -425,8 +425,8 @@ def test_fc_gate_rule_labels_and_activation():
         sc._mm_gate_view = fake
         ns = _ns(False); ns._settings['mmf_gate_enabled'] = True
         ok, why, detail = S._signal_allowed(ns, 'AAAUSDT', 'LONG')
-        _check(ok is False and seen == ['fc'] and '🔮 VSV-LOCAL' in why
-               and '🔮VSV-Local[вкладка SHORT]:✗' in detail, (seen, why, detail))
+        _check(ok is False and seen == ['fc'] and '🔮 МММ-LOCAL' in why
+               and '🔮МММ-Local[вкладка SHORT]:✗' in detail, (seen, why, detail))
     finally:
         sc._mm_gate_view = old
     for k in ('mmf_gate_enabled', 'mmf_gate_banner'):
@@ -434,9 +434,9 @@ def test_fc_gate_rule_labels_and_activation():
     _check("'mmf_gate_enabled', 'mmf_gate_banner'," in _SC_SRC, 'білий список')
     for need in ('id="sm-mmf-gate"', 'id="sm-mmf-gate-banner"',
                  "['sm-mmf-gate', 'sm-mmf-gate-banner', 'mmf_gate_enabled', 'mmf_gate_banner']",
-                 "'🔮 VSV-Local'],"):
+                 "'🔮 МММ-Local'],"):
         _check(need in _HTML, f'на сторінці немає «{need}»')
-    print('✓ «Через VSV-Local» — те саме правило, свої підписи, деф. ВИМК, UI')
+    print('✓ «Через МММ-Local» — те саме правило, свої підписи, деф. ВИМК, UI')
 
 
 

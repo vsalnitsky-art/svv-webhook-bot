@@ -1,7 +1,7 @@
-"""🧮 VSV-Trend + компактний 🧮 VSV LiQ + 🏷 OB 4H у таблицях відкритих угод (12.10).
+"""🧮 МММ-Trend + компактний 🧮 МММ LiQ + 🏷 OB 4H у таблицях відкритих угод (12.10).
 
-Вимога дослівно: «Додай до таблиць відкритих угод ще поле "VSV-Trend" і зроби їх
-компактнішими ці поля "🧮 VSV LiQ". І додай … помітку, який останній був OB 4Н
+Вимога дослівно: «Додай до таблиць відкритих угод ще поле "МММ-Trend" і зроби їх
+компактнішими ці поля "🧮 МММ LiQ". І додай … помітку, який останній був OB 4Н
 (розмалюй відповідним кольором) по монеті. В полі "Side" зроби невеличку
 позначку стосовно OB 4Н.»
 """
@@ -33,8 +33,8 @@ def _check(c, m):
         raise AssertionError(m)
 
 
-# ⚠️ 22.10: колонки «🧮 VSV LiQ»/«🧮 VSV-Trend» у таблицях угод замінено на
-# «🧠 VSV-Decision» + 🚨 сигнал (див. test_trades_mmd.py); `mmn_snapshot_for`
+# ⚠️ 22.10: колонки «🧮 МММ LiQ»/«🧮 МММ-Trend» у таблицях угод замінено на
+# «🧠 МММ-Decision» + 🚨 сигнал (див. test_trades_mmd.py); `mmn_snapshot_for`
 # видалено разом із колонкою.
 def test_flask_only_reads_snapshots():
     i = _FLASK.index("_dec_map = ff.dec_trade_for(")
@@ -105,7 +105,7 @@ def test_tables_have_the_new_column_and_matching_colspans():
     # ⚠️ 22.10: позначка OB 4H стоїть ЛІВОРУЧ від сторони угоди.
     _check(_HTML.count('${ob4hMarkHTML(p, null, true)}${ob1hMarkHTML(p, null, true)}${p.side}') == 2,
            'позначка OB 4H мусить стояти ЛІВОРУЧ у полі Side обох таблиць')
-    print('✓ колонка VSV-Decision + позначка OB 4H ліворуч у Side, colspan 16/15')
+    print('✓ колонка МММ-Decision + позначка OB 4H ліворуч у Side, colspan 16/15')
 
 
 def _js(body):

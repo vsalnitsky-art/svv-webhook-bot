@@ -76,8 +76,8 @@ def test_poc_label_not_choch():
     assert 'CHoCH' not in sl.pretty_opened_by('poc → Q4')
 
 
-# ═══ 🧮 КАРТИНКА УГОДИ З «VSV-МОНІТОРА» (вимога 15.09) ═══════════════════
-# «🟪 заміни на 🧮, щоб видно було, що ця угода із "🧮 VSV-монітор"».
+# ═══ 🧮 КАРТИНКА УГОДИ З «МММ-МОНІТОРА» (вимога 15.09) ═══════════════════
+# «🟪 заміни на 🧮, щоб видно було, що ця угода із "🧮 МММ-монітор"».
 # Угоди монітора несуть ТОЙ САМИЙ сигнал, що й угоди Черги-4 (`vob_alert`),
 # тож картинка сигналу їх не розрізняла. Тепер картинку дає ДВИГУН.
 
@@ -88,7 +88,7 @@ def test_mmm_trade_shows_the_monitor_icon_not_the_signal_one():
 
 
 def test_other_engines_keep_the_signal_icon():
-    # нічого, крім VSV-монітора, не змінилось
+    # нічого, крім МММ-монітора, не змінилось
     assert sl.icon_of('vob_alert → Q4') == '🟪'
     assert sl.icon_of('choch_bos → Q1') == '🟦'
     assert sl.icon_of('manual → Q4') == '✋'
@@ -106,7 +106,7 @@ def test_single_code_is_a_signal_not_an_engine():
 def test_icon_change_does_not_touch_the_label_or_the_logic():
     raw = 'vob_alert → MMM'
     # повна мітка (підказка) лишається як була
-    assert sl.pretty_opened_by(raw) == '🟪 Volumized OB → 🧮 VSV-монітор'
+    assert sl.pretty_opened_by(raw) == '🟪 Volumized OB → 🧮 МММ-монітор'
     # код сигналу для логіки — теж
     assert sl.signal_code_of(raw) == 'vob_alert'
 
