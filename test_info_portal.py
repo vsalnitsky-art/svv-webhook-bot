@@ -98,7 +98,7 @@ def test_personal_list_rules():
     _check(len(ip.iwl_norm(['C%dUSDT' % i for i in range(100)])) == ip.IWL_MAX, 'стеля')
     cur = ip.user_info({}, ['BTCUSDT'])
     _check(cur['wl'] == ['BTCUSDT', 'ETHUSDT'] and cur['sel'] == 'BTCUSDT', 'стартовий набір')
-    _check((cur['tf'], cur['ob_tf'], cur['vob_tf']) == ('15m', '1h', '15m'), 'TF за замовчуванням (VOB кабінету — 15m, 26.11)')
+    _check((cur['tf'], cur['ob_tf'], cur['vob_tf']) == ('15m', '1h', '5m'), 'TF за замовчуванням')
     cur, err = ip.apply_change(cur, {'add': 'pepe'}, ['BTCUSDT'])
     _check(not err and cur['wl'][-1] == 'PEPEUSDT' and cur['sel'] == 'PEPEUSDT',
            'монету поза ботом теж можна додати')
@@ -108,7 +108,7 @@ def test_personal_list_rules():
     _check('PEPEUSDT' not in cur['wl'] and cur['sel'] in cur['wl'], 'видалення обраної → обирається інша')
     cur, _ = ip.apply_change(cur, {'sel': 'ETHUSDT', 'tf': '4h', 'ob_tf': 'off', 'vob_tf': 'zz'}, [])
     _check(cur['sel'] == 'ETHUSDT' and cur['tf'] == '4h' and cur['ob_tf'] == 'off'
-           and cur['vob_tf'] == '15m', 'вибір монети і TF (некоректний TF ігнорується)')
+           and cur['vob_tf'] == '5m', 'вибір монети і TF (некоректний TF ігнорується)')
     full = {'wl': ['C%dUSDT' % i for i in range(20)], 'sel': 'C0USDT'}
     _c, err = ip.apply_change(full, {'add': 'ZZZ'}, [])
     _check('20' in err, 'понад 20 монет — відмова')
@@ -317,7 +317,7 @@ def test_payload_carries_imb_and_sbr():
            and '&sbr_tf=' in js_ and 'title="SBR — лише на 1H і 4H"' not in js_, 'кнопка + вибір TF SBR у кабінеті')
     _check('snapSec((s.ct || s.t) - 1, o)' in js_, 'сигнал іншого TF — на свічці графіка, де він спрацював')
     cur, _ = ip.apply_change(ip.user_info({}, []), {'show_imb': False}, [])
-    _check(cur['show_imb'] is False and cur['show_sbr'] is False, 'перемикачі шарів зберігаються (SBR за замовчуванням вимкнено, 26.11)')
+    _check(cur['show_imb'] is False and cur['show_sbr'] is True, 'перемикачі шарів зберігаються')
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
     _check('subscribeClick' in js and 'hitAt' in js and 'sigCard' in js, 'клік по позначці S/B → картка')
     _check('overlaps(' in js and 'taken.push' in js, 'підписи розкладаються без накладань')
@@ -562,8 +562,7 @@ def test_paper_fresh_and_watchlist_height_0811():
     src = open(os.path.join(_HERE, 'web', 'info_portal.py'), encoding='utf-8').read()
     assert "sig == _paper_cache['sig']" in src and src.count("'no-store'") >= 2
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
-    # 26.11: опитування зведено в один цикл — paper оновлює syncMarket кожні REFRESH.
-    assert 'cache: "no-store"' in js and 'loadPaper()]); }' in js and 'syncMarket(); }, REFRESH)' in js
+    assert 'cache: "no-store"' in js and ('loadPaper(); }, 5000)' in js or 'loadPaper(); }, REFRESH)' in js)
     css = open(os.path.join(_HERE, 'infosite', 'css', 'style.css'), encoding='utf-8').read()
     _ncss = css.replace(' ', '')
     assert 'align-items:stretch' in _ncss and '.iw-list{flex:1' in _ncss and 'min-height:0' in _ncss

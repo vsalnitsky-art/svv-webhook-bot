@@ -1,8 +1,8 @@
-"""🧠 VSV-DECISION — шостий банер/монітор на вердикті банера Decision (22.10).
+"""🧠 МММ-DECISION — шостий банер/монітор на вердикті банера Decision (22.10).
 
-Дослівно: «Будуємо ще один VSV банер (монітор), за основу беремо ось ці
+Дослівно: «Будуємо ще один МММ банер (монітор), за основу беремо ось ці
 показники» (банер Decision «SHORT 85% СИЛЬНИЙ») «І фільтр угод також додаємо
-до налаштувань ("Через VSV ..." і "за банером VSV ...")».
+до налаштувань ("Через МММ ..." і "за банером МММ ...")».
 """
 import os
 import re
@@ -223,24 +223,24 @@ def test_source_is_the_banner_compute_decision():
 def test_labels_mirrors():
     sl = open(os.path.join(_HERE, 'detection', 'signal_labels.py'), encoding='utf-8').read()
     js = open(os.path.join(_HERE, 'infosite', 'js', 'app.js'), encoding='utf-8').read()
-    _check("'MMD':              '🧠 VSV-Decision'" in sl and sl.count("'MMD': '🧠'") == 2, 'labels')
-    _check('"MMD": "🧠 VSV-Decision"' in js and js.count('"MMD": "🧠"') == 2, 'infosite')
-    _check("'MMD': '🧠 VSV-Decision'" in _HTML and _HTML.count("'MMD': '🧠'") == 2, 'page')
-    print('✓ мітка MMD = 🧠 VSV-Decision у Python і обох JS-дзеркалах')
+    _check("'MMD':              '🧠 МММ-Decision'" in sl and sl.count("'MMD': '🧠'") == 2, 'labels')
+    _check('"MMD": "🧠 МММ-Decision"' in js and js.count('"MMD": "🧠"') == 2, 'infosite')
+    _check("'MMD': '🧠 МММ-Decision'" in _HTML and _HTML.count("'MMD': '🧠'") == 2, 'page')
+    print('✓ мітка MMD = 🧠 МММ-Decision у Python і обох JS-дзеркалах')
 
 
-# ═══════════ 3. ВОРОТА «ЧЕРЕЗ VSV-DECISION» ════════════════════════════
+# ═══════════ 3. ВОРОТА «ЧЕРЕЗ МММ-DECISION» ════════════════════════════
 def test_gate_pair_is_declared_and_off_by_default():
     _check("('mmd_gate_enabled', 'mmd_gate_banner', 'dec')" in _SC_SRC, 'пара в MM_GATES')
     _check("'mmd_gate_enabled': False" in _SC_SRC and "'mmd_gate_banner': False" in _SC_SRC,
            'деф. ВИМК')
     _check(_SC_SRC.count("'mmd_gate_enabled', 'mmd_gate_banner',") == 3, 'MM_GATES + білий список + валідація')
-    _check("'dec': ('🧠VSV-Decision', '🧠 VSV-DECISION')" in _SC_SRC, 'підписи')
+    _check("'dec': ('🧠МММ-Decision', '🧠 МММ-DECISION')" in _SC_SRC, 'підписи')
     for need in ('id="sm-mmd-gate"', 'id="sm-mmd-gate-banner"',
                  "['sm-mmd-gate', 'sm-mmd-gate-banner', 'mmd_gate_enabled', 'mmd_gate_banner']",
-                 "['sm-mmd-gate', 'mmd_gate_enabled']", "'🧠 VSV-Decision']"):
+                 "['sm-mmd-gate', 'mmd_gate_enabled']", "'🧠 МММ-Decision']"):
         _check(need in _HTML, f'на сторінці немає «{need}»')
-    print('✓ «Через VSV-Decision» + «за банером» — деф. ВИМК, білий список, UI')
+    print('✓ «Через МММ-Decision» + «за банером» — деф. ВИМК, білий список, UI')
 
 
 # ═══════════ 4. UI ═════════════════════════════════════════════════════
@@ -264,7 +264,7 @@ def test_ui_block_is_a_twin_with_its_own_columns():
     _check('_MMB.pull, _MMB.dec, _MMB.rdy, _MMB.sbr].forEach' in _HTML, 'банер малює 1с-тікер')
     _check('ff-mmd-bias-tg' in _HTML and "🧠 банер Decision" in _HTML, 'TG-тумблер і шапка')
     i = _HTML.index('id="mmp-panel"'); j = _HTML.index('id="mmd-panel"')
-    _check(i < j, 'блок 🧠 стоїть під 🧭 VSV-Pull')
+    _check(i < j, 'блок 🧠 стоїть під 🧭 МММ-Pull')
     print('✓ UI: блок-двійник під 🧭 Pull, колонка 🧠 Вердикт, гармошки, збереження')
 
 

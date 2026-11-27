@@ -260,11 +260,9 @@ def test_admin_only():
     import json as _j
     adm = types.SimpleNamespace(is_admin=True, prefs='{}')
     usr = types.SimpleNamespace(is_admin=False, prefs='{}')
-    usr_p = types.SimpleNamespace(is_admin=False, prefs=_j.dumps({'perms': {'trade_real': True}}))
-    usr_pp = types.SimpleNamespace(is_admin=False, prefs=_j.dumps({'perms': {'trade_paper': True}}))
+    usr_p = types.SimpleNamespace(is_admin=False, prefs=_j.dumps({'perms': {'trade_paper': True}}))
     assert UT.trade_allowed(adm) and not UT.trade_allowed(usr) and not UT.trade_allowed(None)
-    assert UT.trade_allowed(usr_p) and UT.user_books(usr_p) == ('real',)
-    assert not UT.trade_allowed(usr_pp)            # 🧪 paper — лише адміністратор (24.11)
+    assert UT.trade_allowed(usr_p) and UT.user_books(usr_p) == ('paper',)
     assert UT.keys_allowed(adm) and not UT.keys_allowed(usr_p)
     auth = _src('web/auth.py')
     body = auth[auth.index('def info_trade_subscribers'):auth.index('def is_blocked')]

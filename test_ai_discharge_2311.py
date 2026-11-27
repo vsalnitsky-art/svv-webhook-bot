@@ -1,5 +1,5 @@
 """23.11: 💥 підтвердження розряду / 🪤 хибний старт · 🛑 «SL з» ШІ вимикається
-(деф. ВИМК) · 🧩 фільтр і статистика за банером «VSV-Готовність» · ⏰ будильник
+(деф. ВИМК) · 🧩 фільтр і статистика за банером «МММ-Готовність» · ⏰ будильник
 перемикає ШІ · рядок «ШІ вчиться» прибрано з таблиці."""
 import importlib.util
 import os
@@ -105,7 +105,7 @@ def test_rdy_filter():
     assert A.rdy_block('LONG', v, 'off') == ''
     assert A.rdy_block('LONG', v, 'banner') == ''
     assert 'вкладці SHORT' in A.rdy_block('LONG', v, 'coin')
-    assert A.rdy_block('SHORT', v, 'banner').startswith('🧩 банер VSV-Готовність LONG')
+    assert A.rdy_block('SHORT', v, 'banner').startswith('🧩 банер МММ-Готовність LONG')
     assert 'вимкнено' in A.rdy_block('LONG', {'on': False}, 'banner')
     assert '⚖' in A.rdy_block('LONG', {'on': True, 'dir': None}, 'banner')
     s = A.ai_settings_norm({'rdy_filter': 'banner'})
