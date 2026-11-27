@@ -1,0 +1,141 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
+// ─────────────────────────────────────────────────────────────────────────────
+// Session Band Reversal — реконструкція сигналів зі скрінів (4H, ETH/BTC).
+//
+// ВЕРСІЯ 2 — звірено з РЕАЛЬНИМИ 4H-барами ETH (OKX) проти трьох сигналів
+// оригіналу (25.10):
+//   SHORT 2456.93 → бар 20.10 19:00, його HIGH 2455.85 (OKX)
+//   SHORT 2526.62 → бар 21.10 19:00, його HIGH 2527.63
+//   LONG  2294.84 → бар 24.10 19:00, його LOW  2293.00
+// Різниця ±1-2$ — це різниця котирувань OKX/Bybit.
+// ⇒ TRIGGER = ЕКСТРЕМУМ сесійного бару (high для SHORT, low для LONG),
+//    а НЕ рівень смуги. Тому v1 давала інші числа: на історії вона брала
+//    смугу на ЗАКРИТТІ бару (напр. 2328.80 замість low ≈2293).
+//
+// ⇒ SCORE лінійно росте з тим, наскільки екстремум пробив смугу
+//    ПОПЕРЕДНЬОГО (закритого) бару, у одиницях його ATR:
+//      пробій 0.69 ATR → 76.27 · 1.21 → 97.70 · 1.32 → 100 (стеля)
+//    Score ≈ 47.8 + 41.2 × пробій (обрізано до 0..100).
+//    Через те, що екстремум БАРУ і смуга ПОПЕРЕДНЬОГО бару однакові на історії
+//    й у реальному часі, скрипт НЕ перемальовується.
+//
+// ЧОМУ v1 НЕ ПОКАЗУВАЛА SHORT: її композитний Score (розтяг/RSI/тренд) на цих
+// барах давав 22.7 і 47.2 — нижче порогу 50, і сигнали відсіювались.
+//
+// ВЕРСІЯ 3 — ФІЛЬТРА СЕСІЇ НЕМАЄ. «Time» у мітці — це просто час бару, на
+// якому сигнал виявлено (в оригіналі бувають 03/07/11/19/23 Київ = межі 4H).
+// Замість сесії відбір робить СВІЧКА-РОЗВОРОТ: SHORT — лише червона свічка
+// (close < open), LONG — лише зелена (close > open). Це пояснює всі 4 опорні
+// точки: 20.10 і 21.10 19:00 SHORT — червоні, 24.10 19:00 LONG — зелена, а
+// 22.10 19:00 LONG (Score 100, без мітки в оригіналі) — ЧЕРВОНА свічка.
+// Колір відомий лише на закритті бару → сигнал підтверджується на закритті.
+// Мін. Score 55 (найнижчий бачений в оригіналі — 56.8).
+// v4: + «Закриття за межею смуги» — бар мусить ЗАКРИТИСЬ за смугою
+// попереднього бару (усі три звірені сигнали оригіналу так закрились). На ETH
+// 14-25.10 це 7 сигналів замість 15 у v3.
+
+// ЩО ВСЕ ЩЕ НАБЛИЖЕНО (лише 3 опорні точки, інша біржа):
+//  • коефіцієнти Score (47.8 / 41.2) — дві незалежні точки + стеля 100;
+//  • SL = close ± 3.7·ATR(14) поточного бару (калібровано 04.11, розкид 3.64…3.83);
+//  • довжина/джерело середньої лінії (EMA 5 hlc3) — на сигнали майже не
+//    впливає, бо Score рахується від неї лише через смугу.
+// ─────────────────────────────────────────────────────────────────────────────
+//@version=5
+indicator("Session Band Reversal Signals", shorttitle="SBR", overlay=true, max_labels_count=500)
+
+// ── Інпути ───────────────────────────────────────────────────────────────────
+grpS = "Час і відбір"
+tz        = input.string("Europe/Kyiv", "Часова зона для мітки Time", group=grpS)
+tzLabel   = input.string("Kyiv", "Підпис зони в мітці", group=grpS)
+revCandle = input.bool(true, "Лише свічка-розворот", group=grpS,
+     tooltip="SHORT — лише на червоній свічці (close < open), LONG — лише на зеленій. Саме цим оригінал відсіює пробої (22.10 19:00 LONG Score 100 без мітки — червона свічка). Вимкнено — сигнал на кожному пробої смуги.")
+closeOut  = input.bool(true, "Закриття за межею смуги", group=grpS,
+     tooltip="SHORT — бар закрився ВИЩЕ верхньої смуги попереднього бару, LONG — НИЖЧЕ нижньої. Усі три звірені сигнали оригіналу закрились за смугою; ґніт, що лише проколов смугу й повернувся всередину, сигналом не вважається.")
+
+grpB = "Смуги"
+midSrc    = input.source(hlc3, "Джерело середньої лінії", group=grpB)
+midLen    = input.int(5, "Довжина EMA середньої лінії", minval=1, group=grpB)
+atrLen    = input.int(14, "Довжина ATR", minval=1, group=grpB)
+bandK     = input.float(0.5, "Напівширина смуги, × ATR", step=0.05, group=grpB)
+
+grpC = "Score"
+scBase    = input.float(47.8, "Score при дотику смуги", step=0.1, group=grpC)
+scSlope   = input.float(41.2, "Score за кожен 1 ATR пробою", step=0.1, group=grpC)
+minScore  = input.float(55.0, "Мін. Score для сигналу", step=1, group=grpC)
+
+grpR = "Ризик"
+slK       = input.float(3.7, "SL від закриття, × ATR", step=0.1, group=grpR)
+thAdd     = input.float(90.0, "Score ≥ → «1R + Add»", group=grpR)
+th1R      = input.float(70.0, "Score ≥ → «1R»", group=grpR)
+thHalf    = input.float(60.0, "Score ≥ → «0.5R» (нижче — 0.25R)", group=grpR)
+
+grpV = "Вигляд"
+onClose   = input.bool(true, "Показувати лише після закриття бару", group=grpV,
+     tooltip="Колір свічки остаточний лише на закритті — інакше мітка може зʼявитись і зникнути всередині бару.")
+pxDec     = input.int(2, "Знаків після коми в цінах", minval=0, maxval=8, group=grpV)
+
+// ── Смуги ────────────────────────────────────────────────────────────────────
+mid   = ta.ema(midSrc, midLen)
+atr   = ta.atr(atrLen)
+upper = mid + bandK * atr
+lower = mid - bandK * atr
+
+plot(upper, "Верхня", color.new(#26a69a, 0), 1)
+plot(mid,   "Середина", color.new(#9e9e9e, 0), 2)
+plot(lower, "Нижня", color.new(#ef5350, 0), 1)
+
+// Рівні ПОПЕРЕДНЬОГО закритого бару — відомі на відкритті сесійного бару,
+// однакові на історії й у реальному часі (немає перемальовування).
+upP  = upper[1]
+loP  = lower[1]
+atrP = atr[1]
+
+confirmed = not onClose or barstate.isconfirmed
+
+f_clamp(x) => math.max(0.0, math.min(100.0, x))
+riskText(sc) => sc >= thAdd ? "1R + Add" : sc >= th1R ? "1R" : sc >= thHalf ? "0.5R" : "0.25R"
+fmt(x) => str.tostring(x, "0." + str.repeat("0", pxDec))
+
+// ── Сигнали ──────────────────────────────────────────────────────────────────
+shortScore = f_clamp(scBase + scSlope * (high - upP) / atrP)
+longScore  = f_clamp(scBase + scSlope * (loP - low) / atrP)
+shortSig = confirmed and high >= upP and shortScore >= minScore and (not revCandle or close < open) and (not closeOut or close > upP)
+longSig  = confirmed and low <= loP and longScore >= minScore and (not revCandle or close > open) and (not closeOut or close < loP)
+
+// Нумерація в межах доби (за часовою зоною мітки)
+var int sCount = 0
+var int lCount = 0
+var int lastDay = na
+d = dayofmonth(time, tz)
+if na(lastDay) or d != lastDay
+    sCount := 0
+    lCount := 0
+    lastDay := d
+
+// Time = час відкриття бару, на якому виявлено сигнал
+tStr = str.format_time(time, "HH:mm", tz) + " " + tzLabel
+
+if shortSig
+    sCount += 1
+    label.new(bar_index, high, "SHORT #" + str.tostring(sCount) +
+         "\nTime: " + tStr +
+         "\nTrigger: " + fmt(high) +
+         "\nScore: " + str.tostring(shortScore, "#.##") +
+         "\nRisk: " + riskText(shortScore) +
+         "\nSL: " + fmt(close + slK * atr),
+         style=label.style_label_down, color=color.new(#f23645, 0), textcolor=color.white, size=size.normal)
+    alert("SHORT " + syminfo.ticker + " · Trigger " + fmt(high) + " · Score " + str.tostring(shortScore, "0.0"), alert.freq_once_per_bar)
+
+if longSig
+    lCount += 1
+    label.new(bar_index, low, "LONG #" + str.tostring(lCount) +
+         "\nTime: " + tStr +
+         "\nTrigger: " + fmt(low) +
+         "\nScore: " + str.tostring(longScore, "#.##") +
+         "\nRisk: " + riskText(longScore) +
+         "\nSL: " + fmt(close - slK * atr),
+         style=label.style_label_up, color=color.new(#089981, 0), textcolor=color.white, size=size.normal)
+    alert("LONG " + syminfo.ticker + " · Trigger " + fmt(low) + " · Score " + str.tostring(longScore, "0.0"), alert.freq_once_per_bar)
+
+plot(shortSig ? close + slK * atr : na, "SL SHORT", color.new(#f23645, 30), 1, plot.style_linebr)
+plot(longSig  ? close - slK * atr : na, "SL LONG",  color.new(#089981, 30), 1, plot.style_linebr)

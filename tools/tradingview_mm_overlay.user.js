@@ -1,0 +1,555 @@
+// ==UserScript==
+// @name         VSV МММ overlay for TradingView
+// @namespace    svv-webhook-bot
+// @version      1.7.3
+// @description  Показує реальний МММ (liquidation-fuel) + стан ₿ BTC (і фандинг + скальп-Готовність для funding-монет) із VSV WebHook BOT поверх графіка TradingView для поточної монети.
+// @author       VSV
+// @match        https://*.tradingview.com/chart/*
+// @match        https://tradingview.com/chart/*
+// @run-at       document-idle
+// @grant        GM_xmlhttpRequest
+// @grant        GM_setValue
+// @grant        GM_getValue
+// @grant        GM_registerMenuCommand
+// @connect      *
+// ==/UserScript==
+
+/*
+ Як це працює
+ ────────────
+ • Скрипт визначає монету, відкриту на графіку TradingView (з URL / заголовка).
+ • Раз на кілька секунд запитує у твого бота ендпоінт
+       GET <URL_бота>/api/fuel-filter/panel/<SYMBOL>
+   і показує СПРАВЖНІЙ МММ (|fuel dir|×100), напрямок, силу тиску (рівновага/
+   легкий/помірний/сильний/потужний), виснаженість — ті самі числа, що в боті.
+ • Дані рахуються з карти ліквідацій бота, тож для монети, яку бот ще не
+   сканував, перший запит може бути «немає даних», а за ~хвилину зʼявиться
+   (ендпоінт реєструє монету в liq-map на вимогу).
+
+ Перше налаштування
+ ──────────────────
+ 1. Постав Tampermonkey (Chrome/Edge/Firefox) або Violentmonkey.
+ 2. Додай цей файл як новий userscript.
+ 3. Задай URL свого бота: меню Tampermonkey → «VSV МММ: задати URL бота»
+    (напр. http://31.131.21.224  або  http://localhost:10000).
+    Без завершального «/».
+ 4. Задай API-ключ: меню Tampermonkey → «VSV МММ: задати API-ключ».
+    Це значення змінної INFO_API_KEY з .env бота. БЕЗ нього бот віддає
+    401 auth_required, і бейдж показує «Потрібен API-ключ». Ендпоінт панелі
+    захищений авторизацією — скрипт не має cookie-сесії, тож ходить із
+    заголовком X-API-Key (той самий read-only обхід, що й інфо-сайт).
+ 5. Відкрий будь-який графік на tradingview.com/chart/… — бейдж зʼявиться
+    праворуч зверху. Його можна перетягувати мишкою.
+
+ Примітки
+ ────────
+ • GM_xmlhttpRequest обходить CORS і mixed-content, тож http-localhost працює
+   навіть на https-TradingView.
+ • Символи TradingView виду BYBIT:VELVETUSDT.P нормалізуються у VELVETUSDT.
+*/
+
+(function () {
+    'use strict';
+
+    // ── Config ────────────────────────────────────────────────────────────
+    const POLL_MS = 4000;           // як часто оновлювати МММ
+    const K_URL = 'svv_bot_url';    // ключ зберігання URL бота
+    const K_KEY = 'svv_bot_key';    // ключ зберігання API-ключа (INFO_API_KEY)
+    const K_POS = 'svv_badge_pos';  // ключ позиції бейджа
+
+    function getBotUrl() {
+        return (GM_getValue(K_URL, '') || '').replace(/\/+$/, '');
+    }
+    function setBotUrl() {
+        const cur = getBotUrl();
+        const v = prompt('URL твого VSV-бота (без / в кінці):\n' +
+            'напр. http://31.131.21.224  або  http://localhost:10000', cur);
+        if (v != null) {
+            GM_setValue(K_URL, v.trim().replace(/\/+$/, ''));
+            lastSym = null;   // форс-оновлення
+            tick();
+        }
+    }
+    // API-ключ = значення INFO_API_KEY з .env бота. Ендпоінт панелі захищений
+    // авторизацією; скрипт не має cookie-сесії, тож шле X-API-Key (read-only обхід).
+    function getBotKey() {
+        return (GM_getValue(K_KEY, '') || '').trim();
+    }
+    function setBotKey() {
+        const cur = getBotKey();
+        const v = prompt('API-ключ бота (значення INFO_API_KEY з .env):\n' +
+            'потрібен, бо ендпоінт панелі захищений авторизацією.', cur);
+        if (v != null) {
+            GM_setValue(K_KEY, v.trim());
+            lastSym = null;   // форс-оновлення
+            tick();
+        }
+    }
+    try { GM_registerMenuCommand('VSV МММ: задати URL бота', setBotUrl); } catch (e) {}
+    try { GM_registerMenuCommand('VSV МММ: задати API-ключ', setBotKey); } catch (e) {}
+
+    // ── Symbol detection ──────────────────────────────────────────────────
+    // TradingView symbol → base coin the bot knows (VANRYUSDT).
+    // ВАЖЛИВО: беремо символ з ЖИВОГО DOM (легенда/заголовок графіка), бо
+    // TradingView — SPA і НЕ оновлює ?symbol= в URL при зміні монети в застосунку.
+    // Раніше URL стояв першим → оверлей «залипав» на старій монеті (BTCUSDT).
+    function _cleanSym(raw) {
+        if (!raw) return '';
+        try { raw = decodeURIComponent(raw); } catch (e) {}
+        if (raw.indexOf(':') >= 0) raw = raw.split(':').pop();  // прибрати "BYBIT:"
+        raw = raw.trim().split(/[\s.·]/)[0];                    // до пробілу/крапки/·
+        return raw.toUpperCase().trim();
+    }
+    function _symFromDom() {
+        // Легенда графіка ("VANRYUSDT Perpetual Contract · 15 · Bybit") + кнопка
+        // символу у верхній панелі. Пробуємо кілька селекторів (версії TV різні).
+        const sels = [
+            '[data-name="legend-source-title"]',
+            '.js-button-text',
+            '#header-toolbar-symbol-search',
+            '[class*="symbolNameText"]',
+            '[class*="mainSourceWrapper"] [class*="title"]',
+        ];
+        for (const s of sels) {
+            try {
+                const el = document.querySelector(s);
+                const t = el && el.textContent ? el.textContent.trim() : '';
+                if (!t) continue;
+                const m = t.match(/[A-Z0-9]{2,20}USDT?(?:\.P)?/i) || t.match(/[A-Z0-9]{2,20}/);
+                if (m) return m[0];
+            } catch (e) {}
+        }
+        return '';
+    }
+    function currentSymbol() {
+        // 1) DOM (оновлюється при зміні монети) → 2) заголовок вкладки → 3) URL.
+        let raw = _symFromDom();
+        if (!raw) {
+            const m = (document.title || '').match(/[A-Z0-9]{2,20}(?:\.[A-Z]+)?/);
+            raw = m ? m[0] : '';
+        }
+        if (!raw) {
+            try { raw = new URLSearchParams(location.search).get('symbol') || ''; } catch (e) {}
+        }
+        return _cleanSym(raw);
+    }
+
+    // ── МММ bands — сила ТИСКУ МММ (той самий 5-рівневий поділ, що в головному UI):
+    // рівновага <10 · легкий 10–30 · помірний 30–60 · сильний 60–85 · потужний 85+.
+    // «рівновага» (а не «немає») = тиск МММ незначний, ліквідації/МММ з обох
+    // боків збалансовані → напрямку немає. Це НЕ «немає даних».
+    function band(mm) {
+        if (mm == null) return { label: '—' };
+        if (mm < 10) return { label: 'рівновага' };
+        if (mm < 30) return { label: 'легкий тиск' };
+        if (mm < 60) return { label: 'помірний тиск' };
+        if (mm < 85) return { label: 'сильний тиск' };
+        return { label: 'потужний тиск' };
+    }
+    // Єдине пояснення показника МММ (тултип при наведенні на бейдж).
+    const MM_HELP =
+        'МММ — тиск маркетмейкера/ліквідності на ціну (куди тягне).\n' +
+        'Напрямок: 🟢 вгору (лонг) · 🔴 вниз (шорт) · ⚪ рівновага.\n' +
+        '% — сила тиску (наскільки односторонні ліквідації/МММ):\n' +
+        'рівновага <10 · легкий 10–30 · помірний 30–60 · сильний 60–85 · потужний 85+.';
+    function dirColor(dir) {
+        if (dir === 'LONG') return '#22c55e';
+        if (dir === 'SHORT') return '#ef4444';
+        return '#8b93a7';
+    }
+    function dirLabel(dir) {
+        if (dir === 'LONG') return '🟢 LONG';
+        if (dir === 'SHORT') return '🔴 SHORT';
+        return '⚪ —';
+    }
+
+    // ── Badge UI ──────────────────────────────────────────────────────────
+    let badge, elSym, elMM, elDir, elScore, elOld, elRun, elBtc, elFund, elFoot;
+    // SCORE label EN→UA (той самий поділ, що в боті). Це ЯКІСТЬ сетапу, не команда.
+    const SCORE_UA = {
+        'STRONG HOLD': 'ВІДМІННИЙ', 'HOLD': 'ХОРОШИЙ',
+        'NEUTRAL': 'СЕРЕДНІЙ', 'WEAK': 'СЛАБКИЙ', 'EXHAUSTED': 'ВИЧЕРПАНО'
+    };
+    function buildBadge() {
+        if (badge) return;
+        badge = document.createElement('div');
+        badge.id = 'svv-mm-badge';
+        badge.style.cssText = [
+            'position:fixed', 'z-index:2147483000', 'top:96px', 'right:18px',
+            'min-width:172px', 'padding:9px 12px', 'border-radius:10px',
+            'background:rgba(17,20,28,0.94)', 'border:1px solid rgba(255,255,255,0.14)',
+            'box-shadow:0 6px 22px rgba(0,0,0,0.45)', 'color:#e5e7eb',
+            'font-family:-apple-system,Segoe UI,Roboto,sans-serif', 'font-size:12px',
+            'line-height:1.35', 'user-select:none', 'cursor:grab', 'backdrop-filter:blur(3px)'
+        ].join(';');
+        badge.innerHTML =
+            '<div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">' +
+              '<span style="font-weight:800;letter-spacing:.3px">💰 МММ</span>' +
+              '<span id="svv-mm-sym" style="font-weight:700;color:#cbd5e1;font-size:11px"></span>' +
+            '</div>' +
+            '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">' +
+              '<span id="svv-mm-val" style="font-weight:900;font-size:22px">—</span>' +
+              '<span id="svv-mm-dir" style="font-weight:700;font-size:12px"></span>' +
+              '<span id="svv-mm-old" style="font-size:11px;color:#8b93a7"></span>' +
+            '</div>' +
+            '<div id="svv-mm-score" style="font-size:11px;margin-top:3px"></div>' +
+            '<div id="svv-mm-run" style="font-size:10.5px;color:#9aa3b5;margin-top:3px"></div>' +
+            '<div id="svv-mm-btc" style="font-size:10.5px;color:#9aa3b5;margin-top:3px"></div>' +
+            '<div id="svv-mm-fund" style="font-size:10.5px;color:#34d399;margin-top:2px"></div>' +
+            '<div id="svv-mm-foot" style="font-size:9.5px;color:#6b7280;margin-top:3px"></div>';
+        document.body.appendChild(badge);
+        elSym = badge.querySelector('#svv-mm-sym');
+        elMM = badge.querySelector('#svv-mm-val');
+        elDir = badge.querySelector('#svv-mm-dir');
+        elScore = badge.querySelector('#svv-mm-score');
+        elOld = badge.querySelector('#svv-mm-old');
+        elRun = badge.querySelector('#svv-mm-run');
+        elBtc = badge.querySelector('#svv-mm-btc');
+        elFund = badge.querySelector('#svv-mm-fund');
+        elFoot = badge.querySelector('#svv-mm-foot');
+        badge.addEventListener('dblclick', setBotUrl);   // подвійний клік → налаштувати URL
+        restorePos();
+        makeDraggable();
+    }
+
+    function restorePos() {
+        const p = GM_getValue(K_POS, null);
+        if (p && typeof p.left === 'number') {
+            badge.style.left = p.left + 'px';
+            badge.style.top = p.top + 'px';
+            badge.style.right = 'auto';
+        }
+    }
+    function makeDraggable() {
+        let sx, sy, ox, oy, dragging = false;
+        badge.addEventListener('mousedown', (e) => {
+            dragging = true; badge.style.cursor = 'grabbing';
+            sx = e.clientX; sy = e.clientY;
+            const r = badge.getBoundingClientRect(); ox = r.left; oy = r.top;
+            e.preventDefault();
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (!dragging) return;
+            const left = Math.max(0, ox + e.clientX - sx);
+            const top = Math.max(0, oy + e.clientY - sy);
+            badge.style.left = left + 'px'; badge.style.top = top + 'px'; badge.style.right = 'auto';
+        });
+        window.addEventListener('mouseup', () => {
+            if (!dragging) return;
+            dragging = false; badge.style.cursor = 'grab';
+            const r = badge.getBoundingClientRect();
+            GM_setValue(K_POS, { left: Math.round(r.left), top: Math.round(r.top) });
+        });
+    }
+
+    // Countdown "HH:MM:SS" until a future ms-timestamp (for funding settlement).
+    function fmtLeft(ms) {
+        if (ms == null) return '';
+        let s = Math.floor((Number(ms) - Date.now()) / 1000);
+        if (s < 0) s = 0;
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+        return (h > 0 ? h + ':' : '') + pad(m) + ':' + pad(ss);
+    }
+
+    // Compact USD volume: $9.77M / $1.2K / $980 (same as the Vol 24h column).
+    function fmtVol(v) {
+        if (v == null || !(v > 0)) return '—';
+        return v >= 1e9 ? '$' + (v / 1e9).toFixed(2) + 'B'
+             : v >= 1e6 ? '$' + (v / 1e6).toFixed(1) + 'M'
+             : v >= 1e3 ? '$' + (v / 1e3).toFixed(0) + 'K' : '$' + v.toFixed(0);
+    }
+
+    // Читабельна ціна за масштабом: 67 458 · 3.45 · 0.06572 (без зайвих цифр).
+    function fmtPrice(p) {
+        if (p == null || !isFinite(p)) return '';
+        const a = Math.abs(p);
+        if (a >= 1000) return Math.round(p).toLocaleString('en-US');
+        if (a >= 1) return p.toFixed(2);
+        if (a >= 0.1) return p.toFixed(4);
+        if (a >= 0.001) return p.toFixed(5);
+        return p.toPrecision(4);
+    }
+
+    function render(sym, state) {
+        buildBadge();
+        elSym.textContent = sym || '—';
+        // Reset the extra lines each render.
+        elBtc.innerHTML = ''; elFund.innerHTML = '';
+        if (elRun) { elRun.innerHTML = ''; elRun.style.display = 'none'; }
+        if (elScore) { elScore.innerHTML = ''; elScore.style.display = 'none'; }
+        if (elOld) { elOld.innerHTML = ''; elOld.style.display = 'none'; }
+        if (state === 'noconfig') {
+            elMM.textContent = '⚙'; elMM.style.color = '#f59e0b';
+            elDir.textContent = ''; elBtc.textContent = 'Задай URL бота (2× клік по бейджу)';
+            elFoot.textContent = '';
+            return;
+        }
+        if (state === 'waking') {
+            elMM.textContent = '⏳'; elMM.style.color = '#f59e0b';
+            elDir.textContent = ''; elBtc.textContent = 'Бот прокидається… (Render sleep)';
+            elFoot.textContent = getBotUrl() || '';
+            return;
+        }
+        if (state === 'auth') {
+            elMM.textContent = '🔑'; elMM.style.color = '#f59e0b';
+            elDir.textContent = '';
+            elBtc.textContent = 'Потрібен API-ключ (меню TM → «задати API-ключ»)';
+            elFoot.textContent = getBotUrl() || '';
+            return;
+        }
+        if (state === 'error') {
+            elMM.textContent = '⚠'; elMM.style.color = '#f59e0b';
+            elDir.textContent = ''; elBtc.textContent = 'Бот недоступний за URL';
+            elFoot.textContent = getBotUrl() || '';
+            return;
+        }
+        const d = state || {};
+        const mm = (d.mm_str != null) ? Number(d.mm_str) : null;
+        const dir = d.mm || d.fuel_status || null;
+        elMM.textContent = (mm != null) ? (mm.toFixed(0) + '%') : '—';
+        elMM.style.color = dirColor(dir);
+        elMM.title = MM_HELP;
+        // Слова про «тиск» мають сенс лише коли є БІК. Без напрямку (⚪) — завжди
+        // «рівновага», навіть якщо дрібний дисбаланс не дотягнув до порога.
+        const _bandLbl = (dir === 'LONG' || dir === 'SHORT') ? band(mm).label : 'рівновага';
+        elDir.textContent = dirLabel(dir) + (mm != null ? ' · ' + _bandLbl : '');
+        elDir.style.color = dirColor(dir);
+        elDir.title = MM_HELP;
+
+        // МММ LiQ — в ОДНОМУ ряду з головним «5% · рівновага» (розмір шрифту свій).
+        if (elOld) {
+            if (d.mm_old && d.mm_old.dir != null) {
+                const mo = d.mm_old, st = mo.status;
+                const dl = st === 'LONG' ? '🟢 LONG' : (st === 'SHORT' ? '🔴 SHORT' : '⚪');
+                const col = st === 'LONG' ? '#4ade80' : (st === 'SHORT' ? '#f87171' : '#8b93a7');
+                elOld.innerHTML = `<span style="color:#4b5563">·</span> МММ LiQ `
+                    + `<span style="color:${col}">${dl}</span> ${mo.strength}%`;
+                elOld.style.display = '';
+                elOld.title = 'МММ LiQ — за розташуванням кластерів ліквідації ((fa−fb)/den).';
+            } else {
+                elOld.innerHTML = ''; elOld.style.display = 'none';
+            }
+        }
+
+        // 📊 Готовність (SMC-сетап) + 🚪 Готовність виходу (якщо є угода) + МММ — в ОДНОМУ рядку.
+        if (elScore) {
+            const parts = [];
+            if (d.setup && d.setup.ok) {
+                const su = d.setup;
+                const scol = su.color || '#94a3b8';
+                const sic = su.dir === 'LONG' ? '🟢' : (su.dir === 'SHORT' ? '🔴' : '⚪');
+                const hot = su.hot ? ' 🎯' : '';
+                parts.push(`Готовність <b style="color:${scol}">${su.score}%</b> `
+                    + `<span style="color:${scol};font-weight:700">${sic} ${su.grade || ''}${hot}</span>`);
+            }
+            // ⚡ Скальперська «Готовність» (швидкий TF) — лише для funding-монет,
+            // коли ввімкнено «⚡ Скальп-Готовність» у боті. Окремий показник поряд
+            // із 1H-«Готовністю» (на швидких TF структура/зона шумніші).
+            if (d.setup_scalp && d.setup_scalp.ok) {
+                const ss = d.setup_scalp;
+                const sscol = ss.color || '#c9b8ff';
+                const ssic = ss.dir === 'LONG' ? '🟢' : (ss.dir === 'SHORT' ? '🔴' : '⚪');
+                const sshot = ss.hot ? ' 🎯' : '';
+                parts.push(`⚡ Скальп <b style="color:${sscol}">${ss.score}%</b> `
+                    + `<span style="color:${sscol};font-weight:700">${ssic} ${ss.grade || ''}${sshot}</span>`);
+            }
+            // 🚪 Показники ВИХОДУ — лише коли по монеті відкрита угода (d.exit).
+            if (d.exit && d.exit.ok) {
+                const ex = d.exit;
+                const ecol = ex.color || '#94a3b8';
+                const eic = ex.dir === 'LONG' ? '🟢' : (ex.dir === 'SHORT' ? '🔴' : '⚪');
+                const eflag = ex.hot ? ' 🚪' : '';
+                parts.push(`Вихід <b style="color:${ecol}">${ex.score}%</b> `
+                    + `<span style="color:${ecol};font-weight:700">${eic} ${ex.grade || ''}${eflag}</span>`);
+            }
+            if (parts.length) {
+                elScore.innerHTML = parts.join(' <span style="color:#4b5563">·</span> ');
+                elScore.style.display = '';
+                elScore.title = 'Готовність — SMC-якість сетапу для ВХОДУ (0–100): '
+                    + 'ВІДМІННИЙ ≥72 · ХОРОШИЙ ≥55 · СЕРЕДНІЙ ≥40 · СЛАБКИЙ ≥25 · ВИЧЕРПАНО <25.\n'
+                    + '⚡ Скальп — та сама SMC-«Готовність», але на швидкому TF (лише '
+                    + 'funding-монети, коли ввімкнено в боті). На швидких TF структура/зона '
+                    + 'шумніші — окремий показник, не 1:1 з 1H.\n'
+                    + 'Вихід (лише у відкритій угоді) — наскільки картина розвернулась ПРОТИ позиції: '
+                    + 'ЗАКРИВАТИ ≥72 · СКОРО ВИХІД ≥55 · УВАГА ≥40 · ТРИМАТИ. Це РАДНИК, не команда.';
+            } else {
+                elScore.innerHTML = ''; elScore.style.display = 'none';
+            }
+        }
+
+        // 🎯 Запас ходу — відстань до значущої ліквідності попереду руху (ймовірна
+        // ціль-магніт). Показує, скільки орієнтовно простору ще є до великого пулу.
+        if (elRun && d.runway) {
+            const rw = d.runway;
+            const rdir = rw.dir === 'LONG' ? '<span style="color:#22c55e;font-weight:700">↑ вгору</span>'
+                       : (rw.dir === 'SHORT' ? '<span style="color:#ef4444;font-weight:700">↓ вниз</span>' : '');
+            if (rw.room_pct != null) {
+                const m = rw.main || {};
+                const tail = (m.price != null) ? ` → ціль ${fmtVol(m.usd)} @ ${fmtPrice(m.price)}` : '';
+                elRun.innerHTML = `🎯 запас ${rdir} <b style="color:#e5e7eb">${rw.room_pct}%</b> · ${rw.label}${tail}`;
+            } else {
+                elRun.innerHTML = `🎯 запас ${rdir}: ${rw.label}`;
+            }
+            elRun.style.color = '#9aa3b5';
+            elRun.style.display = '';
+            elRun.title = 'Скільки простору до значущої ліквідності В БІК напрямку МММ (↑/↓):\n'
+                + 'room% — відстань до головного пулу-цілі; «ціль» — його розмір і ціна.\n'
+                + 'Малий запас = рух близько до великого кластера (ймовірне сповільнення/розворот).\n'
+                + 'Коли напрямку немає (⚪ рівновага) — запас не показується, бо «куди» невизначено.';
+        }
+
+        // ── ₿ BTC напрямок line — три взаємовиключні стани: LONG / SHORT / FLAT.
+        // LONG/SHORT показуємо ЛИШЕ коли сеанс активний (не на паузі). Коли живе ML
+        // у зоні WAIT (|dir| ≤ 0.1) — сеанс на паузі → показуємо ТІЛЬКИ «⏸ FLAT»
+        // (сірий, без стрілки напрямку), бо LONG+FLAT в одному рядку — суперечність. ──
+        if (d.enabled === false) {
+            elBtc.style.color = '#9aa3b5';
+            elBtc.textContent = 'FF вимкнено в боті';
+        } else {
+            const b = d.btc || {};
+            const bs = (b.strength != null) ? Number(b.strength) : null;
+            if (b.paused) {
+                // Пауза = FLAT: без напрямку, лише сірий бейдж.
+                elBtc.style.color = '#9aa3b5';
+                elBtc.innerHTML = `₿ BTC напрямок: <span style="color:#9aa3b5;font-weight:700">⏸ FLAT</span>`;
+            } else if (b.dir === 'LONG' || b.dir === 'SHORT') {
+                const tail = (bs != null) ? ` · ${bs}% · ${band(bs).label}` : '';
+                elBtc.innerHTML = `₿ BTC напрямок: <span style="color:${dirColor(b.dir)};font-weight:700">${dirLabel(b.dir)}</span>${tail}`;
+            } else {
+                elBtc.style.color = '#9aa3b5';
+                // Без напрямку → «рівновага» (не «легкий тиск»).
+                elBtc.innerHTML = (bs != null)
+                    ? `₿ BTC напрямок: ⚪ — · ${bs}% · рівновага`
+                    : '₿ BTC напрямок: ⚪ —';
+            }
+            elBtc.title = MM_HELP;
+        }
+
+        // ── 💰 Funding line — only for coins in the «💰 Funding — МММ» table.
+        // Funding is coloured by TREND exactly like the table: 🔴 глибше в мінус /
+        // 🟢 до нуля / cyan стабільний / ✦ золоте (стабільне чітке 0.5-крокове
+        // значення). Vol 24h (+ ↑/↓ vs ~2-хв базою) додається тим самим значенням,
+        // що й у колонці Vol 24h таблиці. ──
+        if (d.funding && d.funding_rate != null) {
+            const r = Number(d.funding_rate);
+            const prev = d.funding_prev_rate;
+            let rc = '#cbd5e1', mark = '', extra = '';
+            if (prev != null) {
+                if (r < prev - 0.0005) { rc = '#f87171'; }        // глибше в мінус
+                else if (r > prev + 0.0005) { rc = '#4ade80'; }   // до нуля
+                else {
+                    const av = Math.abs(r), step = Math.round(av / 0.5) * 0.5;
+                    if (Math.abs(av - step) < 0.01 && step >= 0.5 && step <= 4) {
+                        rc = '#fbbf24'; mark = '✦ ';
+                        extra = ';text-shadow:0 0 8px rgba(251,191,36,0.9)';
+                    } else { rc = '#7dd3fc'; }                     // стабільний
+                }
+            } else {
+                rc = r >= 0 ? '#4ade80' : '#f87171';              // без тренду → знак
+            }
+            const left = d.funding_next_ms ? ` · ⏳ ${fmtLeft(d.funding_next_ms)}` : '';
+            // Vol 24h segment (only for funding coins — matches the table column).
+            let volSeg = '';
+            if (d.vol24h != null && d.vol24h > 0) {
+                let arr = '';
+                if (d.vol24h_prev != null && d.vol24h_prev > 0) {
+                    if (d.vol24h > d.vol24h_prev * 1.005) arr = ' <span style="color:#4ade80">▲</span>';
+                    else if (d.vol24h < d.vol24h_prev * 0.995) arr = ' <span style="color:#f87171">▼</span>';
+                    else arr = ' <span style="color:#9aa3b5">→</span>';
+                }
+                volSeg = ` · 📊 <span style="color:#cbd5e1;font-weight:700">${fmtVol(d.vol24h)}</span>${arr}`;
+            }
+            elFund.innerHTML = `💰 фандинг <span style="color:${rc};font-weight:700${extra}">${mark}${r >= 0 ? '+' : ''}${r.toFixed(4)}%</span>${left}${volSeg}`;
+        }
+
+        // ── ⚡ CTR line (замість «оновлено») — нахил STC по цій монеті ──
+        const c = d.ctr;
+        if (c && c.stc != null) {
+            const tf = (c.tf && c.tf !== 'scanner') ? String(c.tf).toLowerCase() : '';
+            const lean = c.lean;   // 'LONG' | 'SHORT' | null
+            const icon = lean === 'LONG' ? '🟢' : (lean === 'SHORT' ? '🔴' : '⚪');
+            const col = lean === 'LONG' ? '#4ade80' : (lean === 'SHORT' ? '#f87171' : '#9aa3b5');
+            const pct = (c.lean_pct != null) ? c.lean_pct : 0;
+            // Компактно: сірий TF-тег = роздільник + КОЛЬОРОВІ цифри (STC + %),
+            // щоб сегменти ТФ не зливались. Без слів «нахил»/«STC».
+            let foot = `⚡ <span style="color:#8b93a7">${tf}</span>`
+                + `<span style="color:${col};font-weight:700">${icon} ${Math.round(c.stc)} · ${pct}%</span>`;
+            if (c.stc_1h != null) {
+                const l1 = c.lean_1h;
+                const i1 = l1 === 'LONG' ? '🟢' : (l1 === 'SHORT' ? '🔴' : '⚪');
+                const cc1 = l1 === 'LONG' ? '#4ade80' : (l1 === 'SHORT' ? '#f87171' : '#9aa3b5');
+                const p1 = (c.lean_pct_1h != null) ? c.lean_pct_1h : 0;
+                foot += ` <span style="color:#8b93a7">· 1H</span>`
+                    + `<span style="color:${cc1};font-weight:700"> ${i1} ${Math.round(c.stc_1h)} · ${p1}%</span>`;
+            }
+            if (c.stc_4h != null) {
+                const l4 = c.lean_4h;
+                const i4 = l4 === 'LONG' ? '🟢' : (l4 === 'SHORT' ? '🔴' : '⚪');
+                const cc4 = l4 === 'LONG' ? '#4ade80' : (l4 === 'SHORT' ? '#f87171' : '#9aa3b5');
+                const p4 = (c.lean_pct_4h != null) ? c.lean_pct_4h : 0;
+                foot += ` <span style="color:#8b93a7">· 4H</span>`
+                    + `<span style="color:${cc4};font-weight:700"> ${i4} ${Math.round(c.stc_4h)} · ${p4}%</span>`;
+            }
+            elFoot.innerHTML = foot;
+        } else {
+            elFoot.style.color = '#9aa3b5';
+            elFoot.textContent = '⚡ CTR — (немає даних)';
+        }
+    }
+
+    // ── Fetch ─────────────────────────────────────────────────────────────
+    let _inFlight = false;   // avoid stacking requests during a slow wake-up
+    function fetchPanel(sym) {
+        const url = getBotUrl();
+        if (!url) { render(sym, 'noconfig'); return; }
+        if (_inFlight) return;
+        _inFlight = true;
+        const done = () => { _inFlight = false; };
+        // Ендпоінт панелі за авторизацією → шлемо X-API-Key (значення INFO_API_KEY
+        // з .env бота). Без нього бот віддає 401 auth_required.
+        const key = getBotKey();
+        const headers = key ? { 'X-API-Key': key } : {};
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: url + '/api/fuel-filter/panel/' + encodeURIComponent(sym),
+            headers: headers,
+            // Render free tier spins the bot DOWN after ~15 min idle; the first
+            // request then triggers a cold start that can take 30-60s. Long
+            // timeout so we ride the wake-up instead of flashing an error.
+            timeout: 60000,
+            onload: (r) => {
+                done();
+                // 401/403 → авторизація. Розрізняємо, щоб показати «Потрібен ключ».
+                if (r.status === 401 || r.status === 403) { render(sym, 'auth'); return; }
+                try {
+                    const j = JSON.parse(r.responseText);
+                    if (j && j.ok !== false) render(sym, j);
+                    else if (j && (j.error === 'auth_required'
+                                   || j.error === 'no_bot_access')) render(sym, 'auth');
+                    else render(sym, 'error');
+                } catch (e) { render(sym, 'error'); }
+            },
+            onerror: () => { done(); render(sym, 'error'); },
+            ontimeout: () => { done(); render(sym, 'waking'); },
+        });
+    }
+
+    // ── Loop ──────────────────────────────────────────────────────────────
+    let lastSym = null;
+    function tick() {
+        const sym = currentSymbol();
+        if (!sym) return;
+        lastSym = sym;
+        fetchPanel(sym);
+    }
+    // Реагуємо і на періодику, і на зміну символу без перезавантаження (TV SPA).
+    setInterval(() => {
+        const sym = currentSymbol();
+        if (sym && sym !== lastSym) { tick(); }   // символ змінився → одразу
+        else fetchPanel(sym || lastSym || '');     // інакше просто оновлюємо
+    }, POLL_MS);
+
+    // Старт (дати TV прогрузитись)
+    setTimeout(tick, 1500);
+})();
