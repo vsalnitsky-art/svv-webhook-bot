@@ -38,8 +38,7 @@ PERSONAL_KEYS = ('enabled', 'test_mode', 'sizing_mode', 'fixed_usd_amount',
                  'paper_margin_pct', 'paper_margin_usd', 'paper_leverage',
                  'paper_risk_pct', 'paper_fee_pct', 'telegram_alerts',
                  'test_telegram_alerts')
-# 🧪 Paper — лише адміністратор (24.11) → копія угод бота йде в РЕАЛЬНУ книгу.
-META_DEFAULTS = {'mirror_settings': True, 'mirror_signals': False, 'mirror_book': 'real'}
+META_DEFAULTS = {'mirror_settings': True, 'mirror_signals': False, 'mirror_book': 'paper'}
 META_KEY = 'utm_meta'
 LOG_KEY = 'tm_user_log'
 LOG_MAX = 300
@@ -186,8 +185,6 @@ class UserTradeManager(TradeManager):
                 cfg = mirror_merge(cfg, bt.get_settings())
             except Exception:
                 pass
-        # 🧪 Paper — лише для роботи адміністратора (24.11): TM користувача
-        # тестової книги не веде.
         cfg.update({'enabled': False, 'test_mode': False})
         return cfg
 
@@ -283,26 +280,9 @@ class UserTradeManager(TradeManager):
             new = personal_only(new)
         return self.update_settings(new)
 
-    def paper_guard(self) -> bool:
-        """🧪 Paper — лише адміністратор (24.11): адміністратор не дав книгу
-        paper → Test Mode TM користувача завжди вимкнений (у т.ч. збережений
-        раніше чи принесений дзеркалом налаштувань). True — вимкнули зараз."""
-        if 'paper' in (self.books() or ()):
-            return False
-        with self._lock:
-            if not self._settings.get('test_mode'):
-                return False
-            self._settings['test_mode'] = False
-        self._persist_settings()
-        return True
-
     def _tick(self):
         try:
             self.mirror_sync()
-        except Exception:
-            pass
-        try:
-            self.paper_guard()
         except Exception:
             pass
         super()._tick()

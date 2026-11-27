@@ -820,7 +820,8 @@ DEFAULT_SETTINGS = {
     # No Bybit orders. Exit rules still evaluate and send Telegram alerts
     # so the user can validate strategy behavior without real risk.
     # Real positions (when TM enabled=True) take precedence over shadow.
-    'test_mode': True,
+    # Після нового встановлення paper-угоди вимкнені; оператор вмикає їх у «Керуванні».
+    'test_mode': False,
     
     # === Global directional gates ===
     # Master toggles that gate ALL position opens — real and shadow alike —
@@ -3088,7 +3089,7 @@ class TradeManager:
         """
         s = self._settings
         enabled = self.is_enabled()
-        test_mode = s.get('test_mode', True)
+        test_mode = s.get('test_mode', False)
         # Auto-reverse on an opposite QUALIFIED entry signal (close + reopen the
         # other way). This is SEPARATE from the "Reverse SMC (CHoCH only)" exit
         # rule (use_reverse_smc), which only CLOSES on an opposite CHoCH. OFF by
@@ -10798,7 +10799,7 @@ class TradeManager:
             except Exception as e:
                 print(f"[TM] FF intercept error (manual) for {symbol}: {e}")
 
-        test_mode = self._settings.get('test_mode', True)
+        test_mode = self._settings.get('test_mode', False)
 
         # 📒 Вибір книги — ЄДИНЕ правило `route_book` (вимога 27.10), для ВСІХ
         # шляхів, ✋ ручних теж: real = TRD ✓ + TM ✓ + стеля дозволяє; інакше
