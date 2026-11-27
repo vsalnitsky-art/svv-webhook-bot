@@ -3265,9 +3265,8 @@
     if (!it.on) return '<span class="mm4-chip off" title="' + esc(tip + "блок вимкнено в боті — у зведенні не бере участі") + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + '</span><span class="mm4-v flat">вимк</span></span>';
     if (!it.data) return '<span class="mm4-chip off" title="' + esc(tip + "даних ще немає") + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + '</span><span class="mm4-v flat">—</span></span>';
     var cls = it.dir === "LONG" ? "up" : it.dir === "SHORT" ? "dn" : "flat", pct = Math.max(0, Math.min(100, Number(it.pct) || 0));
-    /* Напрямок завжди домінує і стоїть ПІД підписом (праворуч): LONG — зелена
-       більша частина, SHORT — червона; ліва менша частина — протилежний бік. */
-    var split = 50 - pct / 2;
+    /* Напрямок завжди домінує: LONG — зелений, SHORT — червоний; відсоток посилює перевагу. */
+    var split = it.dir === "LONG" ? 50 - pct / 2 : 50 + pct / 2;
     tip += (it.dir === "LONG" ? "LONG" : it.dir === "SHORT" ? "SHORT" : "⚖ рівновага") + " · важіль " + (it.pct != null ? Number(it.pct).toFixed(0) + "%" : "—");
     return '<span class="mm4-chip ' + cls + '" style="--split:' + split.toFixed(1) + '%" title="' + esc(tip) + '">' + mm4Icon(it.key) + '<span class="mm4-name">' + esc(nm) + "</span>" + mm4DirTxt(it.dir, it.pct) + "</span>";
   }

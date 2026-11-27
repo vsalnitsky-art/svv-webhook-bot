@@ -5,9 +5,7 @@
   var CFG = window.INFOSITE_CONFIG || {};
   var BASE = String(CFG.BOT_API_BASE || "").replace(/\/+$/, "") || location.origin;
   var scriptUrl = document.currentScript && document.currentScript.src || "";
-  // Сайт, відданий самим ботом (/info/ або сторінки бота), має той самий origin,
-  // що й API бота; окремо розгорнутий інфосайт ходить на BOT_API_BASE.
-  var botServed = BASE === location.origin || /\/info\/js\/version-sync\.js(?:\?|$)/.test(scriptUrl);
+  var botServed = /\/static\/info\/js\/version-sync\.js(?:\?|$)/.test(scriptUrl);
   var STORE_KEY = botServed ? "vsv-bot-client-version-v1" : "vsv-info-client-version-v1";
   var CHECK_MS = 45000;
   var TIMEOUT_MS = 8000;

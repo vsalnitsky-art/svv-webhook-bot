@@ -1,0 +1,243 @@
+/* VSV shared visual system — InfoSite + main bot */
+:root{
+  --bg-dark:#000;--bg-card:#17191e;--bg-hover:#24272e;--border:#30343d;
+  --text-primary:#eef0f4;--text-secondary:#a6acb8;--text-muted:#737b89;
+  --accent-blue:#f0b90b;--accent-green:#28c98b;--accent-red:#f0626f;
+  --accent-yellow:#f0b90b;--accent-purple:#a98bf4;--accent-orange:#e89443;
+  --vsv-gold:#f0b90b;--vsv-gold-hi:#ffd75e;--vsv-black:#000;
+  --vsv-surface:#17191e;--vsv-elev:#20232a;--vsv-line:#30343d;
+}
+html{background:#000;scroll-padding-top:118px}
+body.vsv-bot-body{background:#000;color:var(--text-primary);font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;line-height:1.45;overflow-x:hidden}
+body.vsv-bot-body button,body.vsv-bot-body input,body.vsv-bot-body select{font-family:inherit}
+body.vsv-bot-body button,body.vsv-bot-body .btn,body.vsv-bot-body .nav-link{transition:background .18s,color .18s,border-color .18s,transform .12s,box-shadow .18s}
+body.vsv-bot-body button:active,body.vsv-bot-body .btn:active{transform:scale(.96)}
+body.vsv-bot-body :focus-visible{outline:2px solid var(--vsv-gold);outline-offset:2px}
+
+/* Full-screen boot: no content is exposed before all registered views are ready. */
+.vsv-boot-loader{position:fixed;inset:0;z-index:10000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#000;color:#f3f4f6;font:700 18px 'IBM Plex Mono',monospace;letter-spacing:.18em;transition:opacity .28s ease,visibility .28s}
+.vsv-boot-loader .boot-mark{width:84px;height:84px;display:block}
+.vsv-boot-loader .boot-mark img{display:block;width:84px;height:84px;filter:drop-shadow(0 10px 25px rgba(240,185,11,.2))}
+.vsv-boot-loader .boot-spin{width:24px;height:24px;border:2px solid #272b32;border-top-color:var(--vsv-gold);border-radius:50%;animation:vsvBootSpin .8s linear infinite}
+.vsv-app-ready .vsv-boot-loader{opacity:0;visibility:hidden;pointer-events:none}
+body.vsv-bot-body:not(.vsv-app-ready) .navbar,body.vsv-bot-body:not(.vsv-app-ready) .container,body.vsv-bot-body:not(.vsv-app-ready) .footer{visibility:hidden}
+@keyframes vsvBootSpin{to{transform:rotate(360deg)}}
+
+/* Header and identity */
+.navbar.vsv-navbar{display:block;padding:0;background:#111318;border-bottom:1px solid var(--vsv-line);position:sticky;top:0;z-index:500;box-shadow:0 8px 30px rgba(0,0,0,.28)}
+.nav-main{min-height:66px;display:flex;align-items:center;gap:18px;padding:8px 18px}
+.nav-brand{display:flex;align-items:center;gap:11px;color:#fff;text-decoration:none;flex:none}
+.nav-brand .brand-mark{width:42px;height:42px;padding:0;display:block;border:1px solid #3b3420;border-radius:11px;overflow:hidden;background:#101114;box-shadow:inset 0 0 0 1px rgba(255,215,94,.04)}
+.nav-brand .brand-mark img{width:100%;height:100%;object-fit:cover;display:block}
+.brand-copy{display:flex;flex-direction:column;line-height:1}
+.brand-copy b{font:800 24px/1 'Inter',sans-serif;letter-spacing:.07em;background:linear-gradient(105deg,#fff 15%,#f0b90b 48%,#fff 78%);background-size:220% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:vsvBrandSheen 6s ease-in-out infinite}
+.brand-copy small{font:500 8px/1.3 'IBM Plex Mono',monospace;letter-spacing:.14em;color:#929aa8;margin-top:5px}
+@keyframes vsvBrandSheen{0%,30%{background-position:100% 0}70%,100%{background-position:-100% 0}}
+.nav-links{display:flex;align-items:center;gap:3px;min-width:0}
+.nav-link{position:relative;display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:0 11px;border:1px solid transparent;border-radius:7px;color:#aab1bd;font-size:12px;font-weight:600;white-space:nowrap}
+.nav-link svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7}
+.nav-link:hover{background:#20232a;color:#fff;border-color:#30343d}
+.nav-link.active{background:rgba(240,185,11,.1);color:#f6c82f;border-color:rgba(240,185,11,.25)}
+.nav-link.active:after{content:'';position:absolute;left:11px;right:11px;bottom:-9px;height:2px;background:var(--vsv-gold)}
+.nav-spacer{flex:1}
+#nav-user-chip{display:flex;align-items:center;gap:8px;min-width:0;max-width:360px;padding:6px 9px;border:1px solid #30343d;border-radius:8px;background:#191c22;font-size:11px;color:#d4d9e1;white-space:nowrap}
+#nav-user-chip .nav-user-email{overflow:hidden;text-overflow:ellipsis;min-width:80px}
+#nav-user-chip a{color:#e7bb32;text-decoration:none}#nav-user-chip a:hover{color:#ffda68}
+.nav-status{margin:0!important}.status-badge{display:inline-flex;align-items:center;min-height:29px;padding:0 10px;border-radius:6px;font:700 10px 'IBM Plex Mono',monospace;letter-spacing:.05em;border:1px solid}
+.status-badge.paper{background:rgba(240,185,11,.09);color:#f4c637;border-color:rgba(240,185,11,.28)}
+.status-badge.live{background:rgba(40,201,139,.09);color:#45d89e;border-color:rgba(40,201,139,.28)}
+.language-slot{position:relative;flex:none}.lang-control{display:flex;align-items:center;gap:7px;height:36px;padding:0 10px;border:1px solid #30343d;border-radius:7px;background:#191c22;color:#d5dae3;font-size:11px}
+.lang-control:hover{border-color:#615126;background:#22252c}.lang-globe{width:16px;height:16px;fill:none;stroke:#e8b92e;stroke-width:1.5}.lang-orbit{transform-origin:center;animation:vsvBootSpin 5s linear infinite}.lang-chev{width:12px;height:12px;fill:none;stroke:currentColor}.lang-current{text-transform:uppercase;color:#f2c53d;font:700 10px 'IBM Plex Mono',monospace}
+.lang-menu{position:absolute;right:0;top:calc(100% + 7px);z-index:1000;width:210px;padding:6px;background:#20232a;border:1px solid #3a3e47;border-radius:10px;box-shadow:0 18px 45px rgba(0,0,0,.55)}
+.lang-menu[hidden]{display:none}.lang-option{display:grid;grid-template-columns:28px 1fr 16px;align-items:center;gap:8px;width:100%;padding:9px;border:0;border-radius:6px;background:transparent;color:#e7eaf0;text-align:left}.lang-option:hover,.lang-option[aria-checked=true]{background:#2b2e36}.lang-code{font:600 10px 'IBM Plex Mono',monospace;color:#e8b92e;text-transform:uppercase}.lang-check{color:#e8b92e}
+
+/* Dashboard layout and cards */
+.container.vsv-container{max-width:1920px;width:100%;margin:0 auto;padding:12px 14px 28px}
+.dashboard{width:100%}.page-header{min-height:62px;margin:0 0 12px;padding:10px 14px;background:#15181d;border:1px solid #2c3139;border-radius:10px}
+.page-header h1{font-size:22px;letter-spacing:-.025em;color:#f4f5f7}.header-actions{gap:8px}
+.section,.vsv-terminal-shell{position:relative;margin-bottom:12px;background:#15181d;border:1px solid #2e333c;border-radius:10px;overflow:hidden}
+.section-header{min-height:51px;padding:10px 14px;background:#20232a;border-bottom:1px solid #343943}
+.section-header h2{font-size:14px;color:#eef0f4;letter-spacing:.01em}
+.btn{min-height:36px;padding:0 13px;border-radius:7px;border:1px solid #363b45;background:#20232a;color:#e9ecf1;font-size:12px;font-weight:600}
+.btn:hover{background:#2b2f37;border-color:#515864}.btn-primary{background:#f0b90b;border-color:#f0b90b;color:#181204}.btn-primary:hover{background:#ffd04a;border-color:#ffd04a;box-shadow:0 6px 20px rgba(240,185,11,.18)}
+.btn-secondary{background:#23262d}.btn-danger{background:rgba(240,98,111,.12);border-color:rgba(240,98,111,.45);color:#ff8791}.btn-success{background:#28c98b;border-color:#28c98b;color:#04170f}
+input,select,textarea{color-scheme:dark}input:focus,select:focus,textarea:focus{border-color:#c79b20!important;box-shadow:0 0 0 2px rgba(240,185,11,.12);outline:none}
+.data-table,.pp-tbl{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+.data-table th,.pp-tbl th{padding:8px 11px;background:#252930;color:#dfe3e9;border-right:1px solid #3a3f49;border-bottom:1px solid #3a3f49;font-size:11px;font-weight:600;text-align:left;white-space:nowrap}
+.data-table th:last-child,.pp-tbl th:last-child{border-right:0}
+.data-table td,.pp-tbl td{padding:7px 11px;background:#101215;color:#dfe3e9;border-bottom:1px solid #292d34;font-size:12px}
+.data-table tbody tr:nth-child(even) td,.pp-tbl tbody tr:nth-child(even) td{background:#15181d}
+.data-table tbody tr:hover td,.pp-tbl tbody tr:hover td{background:#20242b}
+.positive{color:var(--accent-green)!important}.negative{color:var(--accent-red)!important}.symbol{color:#f4f5f7;font-weight:700}
+.empty-state{color:#929aa8;background:#101215;padding:20px;text-align:center}
+
+/* Shared InfoSite terminal inside the bot */
+.vsv-terminal-shell{padding:0;overflow:visible;background:transparent;border:0}
+.vsv-terminal-intro{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;background:linear-gradient(110deg,#1b1e24,#121419);border:1px solid #30343d;border-radius:10px 10px 0 0}
+.vsv-terminal-intro h2{margin:2px 0 0;font-size:22px;letter-spacing:-.025em}.vsv-eyebrow{font:600 9px 'IBM Plex Mono',monospace;letter-spacing:.16em;color:#e7b82f}
+.vsv-bot-terminal{max-width:none;padding:12px 0 0;gap:12px}
+.vsv-terminal-shell .foot{padding:4px 4px 18px}.vsv-terminal-shell .boot-loader{display:none!important}
+.vsv-terminal-shell .card{background:#17191e;border-color:#30343d}
+.vsv-terminal-shell .iw-chart,.vsv-terminal-shell .iw-box,.vsv-terminal-shell .chart-workspace{background:#000}
+.vsv-terminal-shell .iw-wl{background:#14171b}
+.vsv-terminal-shell .pp-tbl th{background:#252930;color:#e6e9ee;border-right:1px solid #3a3f49}
+
+/* Liquidity chart and bot-specific panels */
+.api-health-strip{background:#191c22!important;border:1px solid #30343d!important;border-radius:8px!important;color:#aab1bd}
+.liqmap-section{background:#121418}.liqmap-chart-wrap{background:#000!important;border-top:1px solid #292e36}
+#liqmap-chart{background:#000}.liqmap-status-bar,.liqmap-watchlist-bar{background:#171a20!important;border-color:#30343d!important;color:#b8bec9}
+.liqmap-ind-card{background:linear-gradient(145deg,#20242b,#171a20)!important;border:1px solid #343a44!important;box-shadow:none!important}
+.liqmap-candle-toggle button.active,.liqmap-lookback-toggle button.active{background:#f0b90b!important;border-color:#f0b90b!important;color:#181204!important}
+.liqmap-candle-toggle button,.liqmap-lock-btn,.liqmap-refresh-btn{background:#20242a!important;border:1px solid #363c46!important;color:#d5dae2}
+.liqmap-symbol-wrap input,.liqmap-decay-select{background:#111419!important;border:1px solid #363c46!important;color:#eef0f4!important}
+.fr-toggle-slider{background:#292d35!important;border:1px solid #414751!important}.fr-toggle input:checked+.fr-toggle-slider{background:#b48b13!important;border-color:#f0b90b!important}
+
+.footer.vsv-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;max-width:1920px;margin:0 auto;padding:10px 18px 22px;color:#727b89;font:500 10px 'IBM Plex Mono',monospace;letter-spacing:.05em}
+
+@media(max-width:1380px){.nav-main{flex-wrap:wrap;gap:8px}.nav-links{order:3;width:100%;overflow-x:auto;padding-bottom:3px}.nav-link.active:after{bottom:-3px}.nav-spacer{display:none}#nav-user-chip{margin-left:auto}.nav-status{margin-left:0!important}}
+@media(max-width:760px){.nav-main{padding:8px 10px}.brand-copy small{display:none}.brand-copy b{font-size:21px}.nav-brand .brand-mark{width:38px;height:38px}.lang-label{display:none}#nav-user-chip{max-width:230px}.container.vsv-container{padding:8px}.page-header{align-items:flex-start;gap:10px;flex-wrap:wrap}.vsv-terminal-intro{padding:12px}.vsv-terminal-intro h2{font-size:18px}.section-header{flex-wrap:wrap;gap:8px}.footer.vsv-footer{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){.vsv-boot-loader .boot-spin,.brand-copy b,.lang-orbit{animation:none!important}.vsv-boot-loader{transition:none}}
+
+
+/* Unified bot surfaces: higher specificity intentionally wins over legacy page-local themes. */
+body.vsv-bot-body .vf-section,
+body.vsv-bot-body .liq-section,
+body.vsv-bot-body .em-section,
+body.vsv-bot-body .sv-section,
+body.vsv-bot-body .funding-section,
+body.vsv-bot-body .liqmap-section,
+body.vsv-bot-body .tk-section,
+body.vsv-bot-body .settings-section,
+body.vsv-bot-body .stat-card,
+body.vsv-bot-body .sm-watchlist{
+  background:#15181d;border:1px solid #2e333c;box-shadow:none
+}
+body.vsv-bot-body .section{overflow-x:auto}
+body.vsv-bot-body .section>.section-header{margin:-16px -16px 14px;width:calc(100% + 32px)}
+body.vsv-bot-body .stats-grid{gap:12px}
+body.vsv-bot-body .stat-card{padding:14px 16px;border-radius:10px;gap:14px}
+body.vsv-bot-body .stat-icon{display:grid;place-items:center;width:42px;height:42px;flex:none;border:1px solid #3b3420;border-radius:10px;background:#211d11;font-size:21px;animation:vsvStatBreathe 5s ease-in-out infinite}
+body.vsv-bot-body .stat-value{font-size:23px;line-height:1.15;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
+body.vsv-bot-body .stat-label{margin-top:5px;font-size:12px;color:#a6acb8}
+@keyframes vsvStatBreathe{0%,100%{border-color:#3b3420;transform:translateY(0)}50%{border-color:#806719;transform:translateY(-2px)}}
+body.vsv-bot-body .job-card,
+body.vsv-bot-body .signal-card,
+body.vsv-bot-body .info-box,
+body.vsv-bot-body .legend,
+body.vsv-bot-body .vf-win,
+body.vsv-bot-body .vf-signal,
+body.vsv-bot-body .liq-bias,
+body.vsv-bot-body .bias-chart-section,
+body.vsv-bot-body .funding-chart-section,
+body.vsv-bot-body .tk-diff-col,
+body.vsv-bot-body .tr-keys{background:#101215;border-color:#30343d;color:#dfe3e9}
+body.vsv-bot-body .count-badge{background:#20242b;border:1px solid #343a44}
+body.vsv-bot-body .page-header{background:#15181d;border:1px solid #2e333c;border-radius:10px}
+
+body.vsv-bot-body input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+body.vsv-bot-body select,
+body.vsv-bot-body textarea,
+body.vsv-bot-body .form-control{
+  background:#101215!important;border:1px solid #363c46!important;border-radius:6px!important;color:#eef0f4!important;min-height:34px
+}
+body.vsv-bot-body option{background:#171a20;color:#eef0f4}
+body.vsv-bot-body .btn-sm,
+body.vsv-bot-body .btn-xs,
+body.vsv-bot-body .tk-btn,
+body.vsv-bot-body .sm-add-form button,
+body.vsv-bot-body .back-link{
+  background:#20242b;border:1px solid #414751;color:#eef0f4;border-radius:6px;font-weight:600
+}
+body.vsv-bot-body .btn-primary,
+body.vsv-bot-body .sm-add-form button{background:#f0b90b;border-color:#f0b90b;color:#181204}
+body.vsv-bot-body .btn-primary:hover,
+body.vsv-bot-body .sm-add-form button:hover{background:#ffd04a;border-color:#ffd04a;color:#181204}
+body.vsv-bot-body .tk-btn:hover,
+body.vsv-bot-body .back-link:hover{background:#2b2f37;border-color:#806719;color:#ffd75e}
+
+body.vsv-bot-body .funding-table,
+body.vsv-bot-body .em-table,
+body.vsv-bot-body .sv-table,
+body.vsv-bot-body .tk-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12px}
+body.vsv-bot-body .funding-table th,
+body.vsv-bot-body .em-table th,
+body.vsv-bot-body .sv-table th,
+body.vsv-bot-body .tk-table th{padding:8px 10px;background:#252930;color:#dfe3e9;border-right:1px solid #3a3f49;border-bottom:1px solid #3a3f49;font-size:11px;font-weight:600;white-space:nowrap}
+body.vsv-bot-body .funding-table td,
+body.vsv-bot-body .em-table td,
+body.vsv-bot-body .sv-table td,
+body.vsv-bot-body .tk-table td{padding:7px 10px;background:#101215;color:#dfe3e9;border-bottom:1px solid #292d34;font-size:12px}
+body.vsv-bot-body .funding-table tbody tr:nth-child(even) td,
+body.vsv-bot-body .em-table tbody tr:nth-child(even) td,
+body.vsv-bot-body .sv-table tbody tr:nth-child(even) td,
+body.vsv-bot-body .tk-table tbody tr:nth-child(even) td{background:#15181d}
+body.vsv-bot-body .funding-table tbody tr:hover td,
+body.vsv-bot-body .em-table tbody tr:hover td,
+body.vsv-bot-body .sv-table tbody tr:hover td,
+body.vsv-bot-body .tk-table tbody tr:hover td{background:#20242b}
+
+body.vsv-bot-body .sm-container{width:100%;max-width:1920px;min-width:0;padding:0}
+body.vsv-bot-body .sm-header h1,
+body.vsv-bot-body .page-header h1{color:#f4f5f7;letter-spacing:-.025em}
+body.vsv-bot-body .sm-chart-area{background:#000;border:1px solid #2e333c;border-radius:10px}
+body.vsv-bot-body .sm-wl-item{border-left-width:1px;border-radius:5px;transition:background .18s,border-color .18s,color .18s}
+body.vsv-bot-body .sm-wl-item.active{background:rgba(240,185,11,.1);border-left-color:#f0b90b;color:#ffd75e}
+body.vsv-bot-body .sm-wl-item:hover{background:#20242b}
+body.vsv-bot-body .sm-chart-header{border-color:#30343d}
+body.vsv-bot-body .tk-scroll,
+body.vsv-bot-body .tk-tv-out,
+body.vsv-bot-body .heatmap{background:#000;border-color:#30343d}
+body.vsv-bot-body .settings-tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+body.vsv-bot-body .tab-btn{background:#191c22;border:1px solid #343a44;color:#b7bec9;border-radius:7px;min-height:36px;padding:0 12px;cursor:pointer}
+body.vsv-bot-body .tab-btn:hover{background:#252930;color:#fff}
+body.vsv-bot-body .tab-btn.active{background:rgba(240,185,11,.12);border-color:#806719;color:#ffd75e}
+body.vsv-bot-body .notification{background:#20242b;border:1px solid #4a515d;color:#eef0f4;box-shadow:0 16px 40px rgba(0,0,0,.45)}
+
+@media(max-width:900px){
+  body.vsv-bot-body .sm-layout{grid-template-columns:minmax(0,1fr);height:auto;min-height:0}
+  body.vsv-bot-body .sm-watchlist{max-height:360px}
+  body.vsv-bot-body .sm-chart-area{min-height:480px}
+  body.vsv-bot-body .vf-windows{grid-template-columns:repeat(2,minmax(0,1fr))}
+  body.vsv-bot-body .sm-side-gates,
+  body.vsv-bot-body .sm-side-gates-left{width:100%;max-width:100%;min-width:0;flex-wrap:wrap}
+  body.vsv-bot-body .sm-alarm{max-width:100%;min-width:0;white-space:normal;flex-wrap:wrap}
+  body.vsv-bot-body .sm-alarm-tfs{max-width:100%;flex-wrap:wrap}
+  body.vsv-bot-body .tm-panel,
+  body.vsv-bot-body .tm-section{max-width:100%;min-width:0}
+  body.vsv-bot-body .sm-bias-top{flex-wrap:wrap;overflow-x:visible}
+  body.vsv-bot-body .sm-bias-verdict{font-size:1.4rem}
+  body.vsv-bot-body .sm-bias-confbar{flex:1 1 140px}
+  body.vsv-bot-body .sm-bias-body{grid-template-columns:minmax(0,1fr)}
+  body.vsv-bot-body #ff-btc-start-banner{flex-wrap:wrap;gap:10px;max-width:100%}
+  body.vsv-bot-body #ff-btc-start-banner>span{max-width:100%}
+  body.vsv-bot-body #ff-btc-start-banner>div:nth-of-type(1){flex:1 1 150px}
+  body.vsv-bot-body .mm-ban{flex-wrap:wrap;gap:9px;max-width:100%}
+  body.vsv-bot-body .mm-ban-title{flex:1 1 150px;min-width:0}
+  body.vsv-bot-body .mm-ban-bar{flex:1 1 140px}
+  body.vsv-bot-body .mm-ban-tm,
+  body.vsv-bot-body .mm-ban-st{flex:0 1 auto;max-width:100%;min-width:0}
+  body.vsv-bot-body #spring-panel>div:first-child>div{min-width:0;max-width:100%}
+  body.vsv-bot-body #spring-panel>div:first-child>div:last-child{flex-wrap:wrap}
+  body.vsv-bot-body #spring-panel .tm-toggle-switch{flex:0 0 44px}
+}
+@media(max-width:600px){
+  body.vsv-bot-body{font-size:14px}
+  body.vsv-bot-body .section>.section-header{margin:-16px -16px 12px}
+  body.vsv-bot-body .stats-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  body.vsv-bot-body .stat-card{padding:12px;gap:9px}
+  body.vsv-bot-body .stat-icon{width:36px;height:36px;font-size:18px}
+  body.vsv-bot-body .stat-value{font-size:19px}
+  body.vsv-bot-body .liqmap-indicators{grid-template-columns:minmax(0,1fr)}
+  body.vsv-bot-body .data-table{min-width:640px}
+}
+@media(prefers-reduced-motion:reduce){body.vsv-bot-body .stat-icon{animation:none}}
+
+/* 25.11: єдине вирівнювання числових і текстових даних у таблицях бота */
+body.vsv-bot-body table{font-variant-numeric:tabular-nums lining-nums}
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) th,
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td{vertical-align:middle}
+body.vsv-bot-body :is(th,td):is(.r,.num,.number,.numeric,.text-right){text-align:right!important;font-variant-numeric:tabular-nums lining-nums}
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td{line-height:1.3}
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td>span{vertical-align:middle}
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td.sym,
+body.vsv-bot-body :is(.data-table,.tm-table,.tk-table,.pp-tbl,.em-table,.sv-table,.funding-table,.results-table,.db-table,.ob-table,.trades-table,.sleepers-table,.poc-tbl) td.symbol{text-align:left}
