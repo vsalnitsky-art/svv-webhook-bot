@@ -57,7 +57,7 @@ class AccessNotificationTests(unittest.TestCase):
         self.assertIn('Your account is active', text)
         self.assertEqual(buttons[0][0]['text'], '🔐 Sign in')
         self.assertTrue(buttons[0][0]['url'].endswith('/login?lang=en'))
-        fake.invite_user_to_group.assert_called_once_with('777', back=False)
+        fake.invite_user_to_group.assert_called_once_with('777')
 
     def test_api_failure_is_not_reported_as_delivered(self):
         fake = types.ModuleType('web.tg_bot')

@@ -1833,7 +1833,7 @@ def _paper_snapshot(tm):
         'stats_all': st.get('shadow_stats') or {},
         'positions': [paper_pos_view(p, spr.get(str(p.get('symbol') or '').upper())) for p in pos],
         'closed': [paper_closed_view(c) for c in (st.get('shadow_closed') or [])[-PAPER_CLOSED_SHOW:]][::-1],
-        'test_mode': bool((st.get('settings') or {}).get('test_mode', True)),
+        'test_mode': bool((st.get('settings') or {}).get('test_mode', False)),
     }
     with _lock:
         _paper_cache.update(at=now, data=data, sig=sig)

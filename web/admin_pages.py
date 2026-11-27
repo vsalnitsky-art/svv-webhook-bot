@@ -221,7 +221,7 @@ def _shell(title, active, me_email, info_url, body, script, nav=None, brand='ADM
             '<link rel="stylesheet" href="/static/css/vsv-theme.css?v=300"></head>'
             '<body class="vsv-bot-body vsv-admin-body">'
             f'<header class="topbar"><a class="brand" href="{escape(home)}">'
-            '<img src="/info/img/logo.png" alt="VSV">'
+            '<img src="/static/info/img/logo.png" alt="VSV">'
             f'<span>VSV<small>{escape(brand)}</small></span></a>'
             f'<nav class="nav" aria-label="Навігація кабінету">{nav_html}</nav>'
             f'<div class="who" id="nav-user-chip"><span><b>{escape(me_email or "")}</b></span>'

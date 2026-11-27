@@ -48,31 +48,25 @@ class AuthNavigationTests(unittest.TestCase):
                 follow_redirects=False,
             )
 
-    def test_login_returns_to_the_page_it_came_from(self):
-        """26.11: після входу — туди, звідки прийшли (як було раніше)."""
-        for destination in ('/', '/smart-money', '/dashboard', '/tickr', '/settings'):
+    def test_every_bot_login_lands_on_smart_money(self):
+        for destination in ('/', '/smart-money', '/dashboard', '/tickr',
+                            '/settings', 'https://example.com/unsafe'):
             with self.subTest(destination=destination):
                 response = self._login(destination)
                 self.assertEqual(response.status_code, 302)
-                self.assertEqual(response.headers['Location'], destination)
-
-    def test_foreign_destination_falls_back_to_home(self):
-        for destination in ('https://example.com/unsafe', '//example.com/x', '/\\example.com'):
-            with self.subTest(destination=destination):
-                response = self._login(destination)
-                self.assertEqual(response.headers['Location'], '/')
+                self.assertEqual(response.headers['Location'], '/smart-money')
 
     def test_info_site_token_handoff_is_preserved(self):
         response = self._login('/info-login')
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers['Location'], '/info-login')
 
-    def test_active_session_on_login_page_goes_home(self):
+    def test_active_bot_session_cannot_choose_another_start_page(self):
         with patch.object(auth, 'current_user', return_value=self.user), \
              patch.object(auth, '_is_active', return_value=True):
             response = self.app.test_client().get('/login?next=/dashboard')
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers['Location'], '/')
+        self.assertEqual(response.headers['Location'], '/smart-money')
 
     def test_protected_pages_require_login_before_any_navigation(self):
         for path in ('/', '/smart-money', '/dashboard', '/tickr', '/settings', '/cabinet'):
@@ -85,7 +79,7 @@ class AuthNavigationTests(unittest.TestCase):
         for path in ('/smart-money', '/dashboard', '/tickr', '/settings', '/admin/users'):
             with self.subTest(path=path):
                 self.assertFalse(auth._is_public(path))
-        for path in ('/login', '/register', '/info/img/logo.png', '/info/'):
+        for path in ('/login', '/register', '/static/info/img/logo.png', '/info/'):
             with self.subTest(path=path):
                 self.assertTrue(auth._is_public(path))
 

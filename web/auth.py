@@ -402,8 +402,8 @@ def notify_user_approved(uid, silent=False):
         _st = (_load_prefs(u) or {}).get('grp_state')
         try:
             from web.tg_bot import invite_user_to_group
-            # сам знімає бан у КОЖНОМУ чаті бота
-            invite_user_to_group(u.telegram_chat_id, back=(_st == 'banned'))
+            # Функція приймає лише chat_id; зайвий `back` раніше переривав запрошення.
+            invite_user_to_group(u.telegram_chat_id)
             set_user_pref(uid, 'grp_banned', None)
         except Exception as _e:
             print(f"[AUTH][TG] group invite error: {_e}")
@@ -1541,7 +1541,7 @@ body.full{align-items:flex-start;justify-content:flex-start}
 <link rel="stylesheet" href="/static/css/vsv-theme.css?v=300">
 </head><body class="vsv-bot-body vsv-auth-body {{ 'full' if full else '' }}">
 <div class="card {{ 'fullcard' if full else '' }}" style="max-width:{{width or 400}}px">
-{% if not full %}<img class="brandlogo" src="/info/img/logo.png" alt="VSV" onerror="this.style.display='none'">{% endif %}
+{% if not full %}<img class="brandlogo" src="/static/info/img/logo.png" alt="VSV" onerror="this.style.display='none'">{% endif %}
 {{body|safe}}</div>
 <script>{{script|safe}}</script>
 <script src="/static/js/vsv-theme.js?v=300"></script></body></html>"""
@@ -1651,9 +1651,13 @@ def register_auth_routes(app):
     @app.route('/login', methods=['GET', 'POST'])
     def auth_login():
         from web.i18n import normalize_language, tr
+        nxt = request.args.get('next') or request.form.get('next') or '/smart-money'
+        # The bot always starts at Smart Money. A protected deep link must not
+        # become the post-login destination; the only exception is the separate
+        # info-site's signed-token handoff, which is not a bot-page navigation.
+        destination = '/info-login' if nxt == '/info-login' else '/smart-money'
         if current_user() and _is_active(current_user()):
-            return redirect('/')
-        nxt = request.args.get('next') or request.form.get('next') or '/'
+            return redirect(destination)
         lang = normalize_language(request.values.get('lang') or request.form.get('language'))
         if request.method == 'POST':
             email = _norm_email(request.form.get('email'))
@@ -1679,11 +1683,7 @@ def register_auth_routes(app):
             login_user(u)
             if not _is_active(u):
                 return redirect(url_for('auth_pending'))
-            # Як і раніше (рішення 26.11): після входу — на сторінку, з якої прийшли.
-            # Лише власні шляхи сайту: «//host» і «/\\host» — це вже інший домен.
-            safe = (nxt.startswith('/') and not nxt.startswith('//')
-                    and '\\' not in nxt)
-            return redirect(nxt if safe else '/')
+            return redirect(destination)
         _info = tr(lang, 'session_superseded') if request.args.get('superseded') else ''
         return _page(tr(lang, 'login_title'), _login_form(nxt, err=_info, lang=lang), lang=lang)
 
@@ -1850,7 +1850,7 @@ def register_auth_routes(app):
         return ('', 404)
 
     # ---- info-site served by the bot itself (same domain → auth + API work) ----
-    _INFOSITE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'infosite')   # ЄДИНА копія інфосайту
+    _INFOSITE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'static', 'info')
 
     @app.route('/info')
     def info_site_root():
