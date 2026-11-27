@@ -1,0 +1,710 @@
+"""
+detection/forecast_engine.py — Pine SMC PRO BOT indicators ported 1:1.
+
+Implements 2 of 3 Pine indicators (Strength postponed by user):
+  - Forecast 1H (Прогноз 1Н) — 6 Fibonacci horizons aggregated into ±100% prediction
+  - CTR (Cyclic Trend Reversal) — Schaff Trend Cycle momentum signals
+
+Pine reference: SMC_PRO_BOT__47_.pine (lines 1294-1668)
+
+Data fetching:
+  - Forecast 1H: 300 1H bars per symbol (~12 days, covers all 6 horizons + ATR averaging)
+  - CTR: uses LTF klines passed by caller (scanner already fetches them)
+
+Real-time: includes the live (unclosed) bar — no waiting for bar close.
+This matches Pine `request.security(... lookahead=barmerge.lookahead_off)` semantics.
+"""
+
+import time
+import threading
+from typing import Dict, List, Optional
+
+
+# ============================================================
+# Pine TA helpers — 1:1 implementations
+# ============================================================
+
+def _ema(values: List[float], period: int) -> List[float]:
+    """Pine-accurate ta.ema().
+    
+    Pine semantics for ta.ema(src, length):
+        - Bars 0 .. length-2:   value is na (we model this as None)
+        - Bar  length-1:        SMA seed = mean(values[0..length-1])
+        - Bars length+:         alpha*src + (1-alpha)*prev_ema
+    
+    Why it matters for CTR specifically:
+        STC chains 4 EMAs on top of one another. A naive EMA that just sets
+        out[0] = values[0] (without the SMA seed phase) drifts noticeably for
+        the first ~3-5*period bars. Through 4 chained EMAs that drift
+        compounds — early STC values can sit at saturated 0 or 100 for many
+        bars longer than they should, producing crossovers that don't exist
+        in TradingView.
+    
+    Returned shape: same length as input. None entries for the na region;
+    callers should treat None as "not yet defined" in stoch/cross logic.
+    """
+    n = len(values) if values else 0
+    if n == 0 or period < 1:
+        return []
+    
+    out: List = [None] * n
+    if n < period:
+        return out  # entirely na — caller must guard length
+    
+    # Bar period-1: SMA seed
+    seed = sum(values[:period]) / period
+    out[period - 1] = seed
+    
+    # Bar period+: standard EMA recurrence
+    alpha = 2.0 / (period + 1)
+    for i in range(period, n):
+        out[i] = alpha * values[i] + (1 - alpha) * out[i - 1]
+    return out
+
+
+def _sma(values: List[float], period: int) -> List[float]:
+    """Pine ta.sma()."""
+    if not values:
+        return []
+    out = []
+    for i in range(len(values)):
+        start = max(0, i - period + 1)
+        w = values[start:i + 1]
+        out.append(sum(w) / len(w))
+    return out
+
+
+def _atr(klines: List[Dict], period: int) -> List[float]:
+    """Pine ta.atr() — Wilder's RMA of True Range."""
+    if not klines:
+        return []
+    if len(klines) < 2:
+        return [0.0]
+    
+    trs = [0.0]
+    for i in range(1, len(klines)):
+        h = klines[i].get('h', klines[i]['p'])
+        l = klines[i].get('l', klines[i]['p'])
+        prev_c = klines[i - 1].get('p', 0)
+        tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+        trs.append(tr)
+    
+    # Wilder's RMA
+    out = [trs[0]]
+    alpha = 1.0 / period
+    for i in range(1, len(trs)):
+        out.append(alpha * trs[i] + (1 - alpha) * out[-1])
+    return out
+
+
+def _stoch_pct(values: List, length: int) -> List:
+    """Pine-accurate proCTR_stoch(src, length).
+    
+        lo = ta.lowest(src, length)
+        hi = ta.highest(src, length)
+        d  = hi - lo
+        result = d == 0 ? 50 : (src - lo) / d * 100
+    
+    Pine ta.lowest / ta.highest are na-aware: if any of the last `length`
+    values is na the whole window result is na. We mirror that — if the
+    src value at i is None, or if the window hasn't seen `length`
+    non-None inputs yet, we emit None.
+    
+    Returned list is parallel to `values` and may contain None entries.
+    """
+    n = len(values) if values else 0
+    if n == 0:
+        return []
+    
+    out: List = [None] * n
+    for i in range(n):
+        v = values[i]
+        if v is None:
+            continue
+        start = max(0, i - length + 1)
+        # Pine wants a full window of length `length`. Before that we keep
+        # emitting na to match the platform exactly.
+        if i - start + 1 < length:
+            continue
+        w = values[start:i + 1]
+        if any(x is None for x in w):
+            continue
+        lo = min(w)
+        hi = max(w)
+        d = hi - lo
+        out[i] = 50.0 if d == 0 else (v - lo) / d * 100.0
+    return out
+
+
+# ============================================================
+# Forecast 1H — 6 Fibonacci horizons
+# Pine reference lines 1550-1585
+# ============================================================
+
+# Per Pine: ATR period mapping per horizon
+_FORECAST_ATR_PERIODS = {5: 5, 8: 7, 13: 10, 21: 14, 34: 21, 55: 28}
+# (horizon, momentum_lookback) tuples
+_FORECAST_HORIZONS = [(5, 1), (8, 2), (13, 3), (21, 5), (34, 8), (55, 13)]
+
+
+def calc_forecast_1h(klines_1h: List[Dict]) -> Dict:
+    """Compute Прогноз 1H — 6 Fibonacci horizons aggregated.
+    
+    Per horizon score (-2 to +2):
+        trend      ±1 / 0  (close vs (EMA(N) + SMA(hlc3, N))/2)
+        momentum   ±0.5 / 0  (close - close[lookback])
+        volatility +0.5 / 0  (ATR(P) > SMA(ATR(P), 20))
+    
+    Sum range: -12 to +12, normalized to ±100%.
+    
+    Returns dict with: sum, pct, side (-1/0/1), confidence (50/60/75/90),
+    scores per horizon, full horizon breakdown.
+    """
+    if not klines_1h:
+        return _empty_forecast('no klines')
+    if len(klines_1h) < 80:
+        return _empty_forecast(f'need 80+ 1H bars, got {len(klines_1h)}')
+    
+    closes = [k['p'] for k in klines_1h]
+    hlc3 = [(k.get('h', k['p']) + k.get('l', k['p']) + k['p']) / 3 for k in klines_1h]
+    last_close = closes[-1]
+    
+    total_sum = 0.0
+    scores = {}
+    horizon_details = {}
+    
+    for n, mom_lookback in _FORECAST_HORIZONS:
+        ema_n = _ema(closes, n)
+        sma_hlc3_n = _sma(hlc3, n)
+        # With pine-accurate EMA, ema_n[-1] is None when len(closes) < n.
+        # _FORECAST_HORIZONS goes up to 55 and we already required 55+ bars,
+        # so this should not happen, but guard anyway.
+        ema_last = ema_n[-1] if ema_n[-1] is not None else last_close
+        trend_ref = (ema_last + sma_hlc3_n[-1]) / 2
+        if last_close > trend_ref:
+            t = 1
+        elif last_close < trend_ref:
+            t = -1
+        else:
+            t = 0
+        
+        if len(closes) > mom_lookback:
+            mom = last_close - closes[-1 - mom_lookback]
+        else:
+            mom = 0
+        if mom > 0:
+            mom_score = 0.5
+        elif mom < 0:
+            mom_score = -0.5
+        else:
+            mom_score = 0.0
+        
+        atr_p = _FORECAST_ATR_PERIODS[n]
+        atr_n = _atr(klines_1h, atr_p)
+        atr_avg_n = _sma(atr_n, 20)
+        vol_score = 0.5 if atr_n[-1] > atr_avg_n[-1] else 0.0
+        
+        sc = t + mom_score + vol_score
+        scores[n] = round(sc, 2)
+        total_sum += sc
+        horizon_details[n] = {
+            'trend': t,
+            'momentum': mom_score,
+            'volatility': vol_score,
+            'score': round(sc, 2),
+        }
+    
+    pct = int((total_sum / 12.0) * 100)
+    abs_sum = abs(total_sum)
+    if abs_sum >= 10:
+        conf = 90
+    elif abs_sum >= 7:
+        conf = 75
+    elif abs_sum >= 4:
+        conf = 60
+    else:
+        conf = 50
+    side = 1 if total_sum > 0 else (-1 if total_sum < 0 else 0)
+    
+    return {
+        'sum': round(total_sum, 2),
+        'pct': pct,
+        'side': side,
+        'confidence': conf,
+        'scores': scores,
+        'horizons': horizon_details,
+    }
+
+
+def _empty_forecast(reason: str = '') -> Dict:
+    return {
+        'sum': 0, 'pct': 0, 'side': 0, 'confidence': 0,
+        'scores': {}, 'horizons': {}, 'reason': reason,
+    }
+
+
+# ============================================================
+# Forecast 4H — same algorithm, applied to 4H klines
+# Horizons (5,8,13,21,34,55) measured in 4H bars now cover 4× more
+# wall-clock time than the 1H counterpart (20h .. 220h ≈ 9 days).
+# ============================================================
+
+def calc_forecast_4h(klines_4h: List[Dict]) -> Dict:
+    """Compute Прогноз 4H — Fibonacci horizons evaluated on 4H bars.
+
+    Identical scoring to calc_forecast_1h (trend ±1, momentum ±0.5,
+    volatility +0.5 → sum -12..+12 → ±100%). The pre-check uses a 4H
+    bar-count message; once it passes we delegate to the 1H core so
+    the math stays defined in one place.
+    """
+    if not klines_4h:
+        return _empty_forecast('no klines')
+    if len(klines_4h) < 80:
+        return _empty_forecast(f'need 80+ 4H bars, got {len(klines_4h)}')
+    return calc_forecast_1h(klines_4h)
+
+
+# ============================================================
+# CTR — Cyclic Trend Reversal (Schaff Trend Cycle)
+# Pine reference lines 1622-1668
+# ============================================================
+
+def calc_ctr(closes: List[float],
+             fast_len: int = 21,
+             slow_len: int = 50,
+             cycle_len: int = 10,
+             d1_len: int = 3,
+             d2_len: int = 3,
+             upper: int = 75,
+             lower: int = 25,
+             strength_raw: Optional[int] = None) -> Dict:
+    """CTR via STC (Schaff Trend Cycle) — Pine-accurate replica.
+    
+    Pipeline (matches Pine SMC_PRO_BOT lines 1634-1642 exactly):
+        ctrFastEMA = ta.ema(close, fast_len)
+        ctrSlowEMA = ta.ema(close, slow_len)
+        ctrMACD    = ctrFastEMA - ctrSlowEMA
+        ctrK   = proCTR_stoch(ctrMACD, cycle_len)
+        ctrD   = ta.ema(ctrK, d1_len)
+        ctrKD  = proCTR_stoch(ctrD, cycle_len)
+        ctrSTC = ta.ema(ctrKD, d2_len)
+        ctrSTC := math.max(math.min(ctrSTC, 100), 0)
+    
+    Raw signals (Pine lines 1645-1646):
+        ctrRawBuy  = ta.crossover(ctrSTC, lower)
+        ctrRawSell = ta.crossunder(ctrSTC, upper)
+    
+    Strength filter (Pine lines 1651-1652):
+        ctrLongFiltered  = ctrRawBuy  and momStrengthRaw > 0
+        ctrShortFiltered = ctrRawSell and momStrengthRaw < 0
+    
+    The strength_raw argument is the multi-TF momentum strength score
+    computed by detection.momentum_strength. When None, we fall back to
+    raw STC crossovers (informational only — caller should warn the user
+    that strength filtering is unavailable).
+    
+    Returns the latest signal observed in the available history.
+    """
+    needed = slow_len + cycle_len + d1_len + d2_len + 5
+    if not closes or len(closes) < needed:
+        return {
+            'stc': None, 'last_dir': None, 'last_signal_idx': None,
+            'last_signal_age_bars': None,
+            'reason': f'need {needed}+ bars, got {len(closes) if closes else 0}',
+        }
+    
+    fast_ema = _ema(closes, fast_len)
+    slow_ema = _ema(closes, slow_len)
+    # MACD is na while either component is na — mirror Pine na propagation
+    macd = []
+    for f, s in zip(fast_ema, slow_ema):
+        if f is None or s is None:
+            macd.append(None)
+        else:
+            macd.append(f - s)
+    
+    k = _stoch_pct(macd, cycle_len)
+    d = _ema_skip_none(k, d1_len)
+    kd = _stoch_pct(d, cycle_len)
+    stc_raw = _ema_skip_none(kd, d2_len)
+    # Clamp to [0, 100], preserving None
+    stc = []
+    for v in stc_raw:
+        if v is None:
+            stc.append(None)
+        else:
+            stc.append(max(0.0, min(100.0, v)))
+    
+    # Find the last raw STC crossover in history. Pine ta.crossover requires
+    # both [i] and [i-1] to be non-na — we mirror that.
+    last_raw_dir = None
+    last_raw_idx = None
+    for i in range(1, len(stc)):
+        prev, cur = stc[i - 1], stc[i]
+        if prev is None or cur is None:
+            continue
+        if prev <= lower and cur > lower:
+            last_raw_dir = 'LONG'
+            last_raw_idx = i
+        elif prev >= upper and cur < upper:
+            last_raw_dir = 'SHORT'
+            last_raw_idx = i
+    
+    # Apply Pine's Strength filter on the last raw signal. If strength
+    # disagrees with the raw direction we treat it as no-signal, matching
+    # Pine where ctrLongFiltered/ctrShortFiltered would have been false on
+    # that bar — Pine simply wouldn't have plotted the marker.
+    last_dir = None
+    last_idx = None
+    strength_filter_applied = False
+    if last_raw_dir is not None and strength_raw is not None:
+        strength_filter_applied = True
+        if last_raw_dir == 'LONG' and strength_raw > 0:
+            last_dir, last_idx = last_raw_dir, last_raw_idx
+        elif last_raw_dir == 'SHORT' and strength_raw < 0:
+            last_dir, last_idx = last_raw_dir, last_raw_idx
+        # else: signal filtered out (strength disagrees) → last_dir stays None
+    elif last_raw_dir is not None:
+        # No strength info → return raw signal as a best-effort, but flag it
+        last_dir, last_idx = last_raw_dir, last_raw_idx
+    
+    stc_last = stc[-1] if stc and stc[-1] is not None else None
+    
+    return {
+        'stc': round(stc_last, 2) if stc_last is not None else None,
+        'last_dir': last_dir,
+        'last_signal_idx': last_idx,
+        'last_signal_age_bars': (len(stc) - 1 - last_idx) if last_idx is not None else None,
+        'strength_raw': strength_raw,
+        'strength_filter_applied': strength_filter_applied,
+        # Diagnostic: also expose the raw (pre-filter) signal so the UI can
+        # show "would have fired but strength disagreed" if we want.
+        'raw_dir': last_raw_dir,
+        'raw_idx': last_raw_idx,
+    }
+
+
+def _ema_skip_none(values: List, period: int) -> List:
+    """EMA over a series that may contain Nones at the start. We treat the
+    leading na region as absent — the SMA seed and the recurrence both
+    operate on the trailing non-None segment.
+    
+    This matches Pine: when ta.ema is fed a series whose initial values are
+    na, ta.ema only starts producing output once the first `length`
+    non-na inputs have arrived.
+    """
+    n = len(values) if values else 0
+    if n == 0 or period < 1:
+        return []
+    out: List = [None] * n
+    
+    # Find the index of the first non-None value
+    start_idx = None
+    for i, v in enumerate(values):
+        if v is not None:
+            start_idx = i
+            break
+    if start_idx is None:
+        return out
+    
+    # We need `period` consecutive non-None values starting at start_idx
+    # (in practice the upstream is contiguous after its own seed phase, so
+    # this is just a length check).
+    seed_end = start_idx + period
+    if seed_end > n:
+        return out
+    seed_window = values[start_idx:seed_end]
+    if any(x is None for x in seed_window):
+        # Discontinuity — punt; this should not happen in practice but we
+        # don't want to silently corrupt EMA if the upstream has gaps.
+        return out
+    
+    seed = sum(seed_window) / period
+    out[seed_end - 1] = seed
+    alpha = 2.0 / (period + 1)
+    for i in range(seed_end, n):
+        v = values[i]
+        prev = out[i - 1]
+        if v is None or prev is None:
+            # gap — propagate na
+            continue
+        out[i] = alpha * v + (1 - alpha) * prev
+    return out
+
+
+# ============================================================
+# ForecastEngine — caches per-symbol forecasts
+# ============================================================
+
+FETCH_LIMIT_1H = 300  # ~12.5 days at 1H — plenty for horizon 55 + ATR(28) avg(20)
+FETCH_LIMIT_4H = 300  # ~50 days at 4H — same horizon coverage as 1H, 4× wall-clock
+
+
+class ForecastEngine:
+    """Per-symbol forecast cache. Updated by SMC scanner each scan cycle."""
+    
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._cache: Dict[str, Dict] = {}
+        # Per-(symbol, tf) STC cache for the multi-TF CTR confluence — separate
+        # from _cache (which holds one CTR per symbol on the configured ctr_tf).
+        self._ctr_mtf: Dict = {}
+
+    # Per-TF cache TTL — higher TFs change slowly, so refresh them less often.
+    # This is what STAGGERS the cost: a 5m STC refetches ~every 60s, a 4h every
+    # 15 min, so a repeated multi-TF read mostly hits cache. (Only called for the
+    # few coins in Queue-2 / open positions, not the whole scan universe.)
+    _CTR_MTF_TTL = {'5m': 60, '15m': 120, '30m': 180, '45m': 240,
+                    '1h': 300, '2h': 600, '4h': 900}
+
+    def get_ctr_tf(self, symbol: str, tf: str, max_age: Optional[float] = None) -> Dict:
+        """Cached STC reading for ONE timeframe: {stc, last_dir, age, tf}.
+        Recomputes (fetch klines → calc_ctr) only when older than the per-TF TTL.
+        Best-effort — returns {stc:None,...} on any failure (never raises)."""
+        from detection.market_data import get_market_data
+        sym = (symbol or '').upper()
+        tf = str(tf or '').lower()
+        now = time.time()
+        ttl = max_age if max_age is not None else self._CTR_MTF_TTL.get(tf, 300)
+        key = (sym, tf)
+        with self._lock:
+            c = self._ctr_mtf.get(key)
+        if c and (now - c[0]) < ttl:
+            return c[1]
+        res = {'stc': None, 'last_dir': None, 'age': None, 'tf': tf}
+        try:
+            md = get_market_data()
+            if (md and hasattr(md, 'fetch_klines')
+                    and 'interval' in md.fetch_klines.__code__.co_varnames):
+                kl = md.fetch_klines(sym, limit=200, interval=tf)
+                if kl and len(kl) > 1:
+                    closes = [k['p'] for k in kl[:-1]]     # drop forming bar
+                    r = calc_ctr(closes)
+                    res = {'stc': r.get('stc'), 'last_dir': r.get('last_dir'),
+                           'age': r.get('last_signal_age_bars'), 'tf': tf}
+        except Exception:
+            pass
+        with self._lock:
+            self._ctr_mtf[key] = (now, res)
+        return res
+
+    def peek_ctr_tf(self, symbol: str, tf: str):
+        """Кеш STC одного TF БЕЗ мережі → `(вік_с, {stc,last_dir,age,tf}, ttl)`
+        або None, якщо значення ще не рахувалось. Для ⚡ VSV-CTR: блок сам
+        вирішує, кого оновлювати в межах свого бюджету запитів за такт."""
+        sym = (symbol or '').upper()
+        tf = str(tf or '').lower()
+        with self._lock:
+            c = self._ctr_mtf.get((sym, tf))
+        if not c:
+            return None
+        return (time.time() - c[0], c[1], self._CTR_MTF_TTL.get(tf, 300))
+
+    def get_ctr_multi_tf(self, symbol: str, tfs: List[str]) -> Dict:
+        """{tf: {stc,last_dir,age}} for each requested timeframe (cached)."""
+        return {tf: self.get_ctr_tf(symbol, tf) for tf in (tfs or [])}
+    
+    def update(self, symbol: str, ltf_klines: Optional[List[Dict]] = None,
+               ctr_tf: Optional[str] = None) -> Dict:
+        """Compute fresh forecast + CTR. Always overwrites cache.
+
+        ctr_tf: timeframe to compute CTR/STC on (its OWN TF — general setting,
+        default 1h). When given, the engine fetches klines at this TF for the
+        STC pipeline instead of using the scanner's ltf_klines. Falls back to
+        ltf_klines if the fetch fails."""
+        from detection.market_data import get_market_data
+        
+        result = {
+            'symbol': symbol,
+            'computed_at': time.time(),
+            'forecast_1h': _empty_forecast('not computed yet'),
+            'forecast_4h': _empty_forecast('not computed yet'),
+            'ctr': {'stc': None, 'last_dir': None, 'reason': 'not computed yet'},
+        }
+        
+        # ---- Forecast 1H ----
+        try:
+            md = get_market_data()
+            klines_1h = None
+            if md and hasattr(md, 'fetch_klines'):
+                if 'interval' in md.fetch_klines.__code__.co_varnames:
+                    klines_1h = md.fetch_klines(symbol, limit=FETCH_LIMIT_1H, interval='1h')
+            if klines_1h and len(klines_1h) >= 80:
+                result['forecast_1h'] = calc_forecast_1h(klines_1h)
+            else:
+                got = len(klines_1h) if klines_1h else 0
+                result['forecast_1h'] = _empty_forecast(f'insufficient 1H data ({got})')
+        except Exception as e:
+            result['forecast_1h'] = _empty_forecast(f'fetch error: {e}')
+        
+        # ---- Forecast 4H ----
+        try:
+            md = get_market_data()
+            klines_4h = None
+            if md and hasattr(md, 'fetch_klines'):
+                if 'interval' in md.fetch_klines.__code__.co_varnames:
+                    klines_4h = md.fetch_klines(symbol, limit=FETCH_LIMIT_4H, interval='4h')
+            if klines_4h and len(klines_4h) >= 80:
+                result['forecast_4h'] = calc_forecast_4h(klines_4h)
+            else:
+                got = len(klines_4h) if klines_4h else 0
+                result['forecast_4h'] = _empty_forecast(f'insufficient 4H data ({got})')
+        except Exception as e:
+            result['forecast_4h'] = _empty_forecast(f'fetch error: {e}')
+        
+        # ---- CTR — own timeframe (ctr_tf, general setting, default 1h) ----
+        # Fetch klines at ctr_tf and drop the forming bar so STC fires only on
+        # confirmed candles (Pine barclose). Fall back to the scanner's
+        # ltf_klines if the CTR-TF fetch fails. We feed momStrengthRaw from the
+        # multi-TF momentum module so only Pine-filtered signals propagate.
+        ctr_closes = None
+        ctr_tf_used = ctr_tf or None
+        if ctr_tf:
+            try:
+                md = get_market_data()
+                if md and hasattr(md, 'fetch_klines') and 'interval' in md.fetch_klines.__code__.co_varnames:
+                    _kl = md.fetch_klines(symbol, limit=FETCH_LIMIT_1H, interval=ctr_tf)
+                    if _kl and len(_kl) > 1:
+                        ctr_closes = [k['p'] for k in _kl[:-1]]   # drop forming bar
+            except Exception as e:
+                print(f"[ForecastEngine] CTR-TF fetch error {symbol}@{ctr_tf}: {e}")
+        if not ctr_closes and ltf_klines:
+            ctr_closes = [k['p'] for k in ltf_klines]
+            ctr_tf_used = 'scanner'
+        if ctr_closes:
+            try:
+                closes = ctr_closes
+
+                # Get momStrengthRaw — best-effort, falls through to raw STC
+                # if the strength module is unavailable or fetch failed.
+                strength_raw = None
+                try:
+                    from detection.momentum_strength import get_momentum_strength
+                    ms = get_momentum_strength()
+                    if ms and closes:
+                        s = ms.get_strength(symbol, closes[-1])
+                        if s is not None:
+                            strength_raw = s.get('raw')
+                except Exception as e:
+                    print(f"[ForecastEngine] strength fetch error for {symbol}: {e}")
+                
+                result['ctr'] = calc_ctr(closes, strength_raw=strength_raw)
+                if isinstance(result['ctr'], dict):
+                    result['ctr']['tf'] = ctr_tf_used
+            except Exception as e:
+                result['ctr'] = {'stc': None, 'last_dir': None,
+                                  'reason': f'compute error: {e}'}
+        
+        with self._lock:
+            self._cache[symbol] = result
+        return result
+    
+    def get(self, symbol: str) -> Optional[Dict]:
+        """Return cached forecast (may be stale)."""
+        with self._lock:
+            return dict(self._cache[symbol]) if symbol in self._cache else None
+
+    def ensure_fresh(self, symbol: str, ctr_tf: Optional[str] = None,
+                     max_age: float = 120.0) -> Optional[Dict]:
+        """Return the cached forecast if it's younger than `max_age`; otherwise
+        compute it NOW (on-demand). Fixes the case where a chart / overlay symbol
+        the BACKGROUND scanner hasn't reached yet (e.g. a fresh watchlist coin)
+        shows blank 1H/4H/CTR badges — the values live only in this cache, filled
+        by the scanner's round-robin. On-demand fetch guarantees the viewed coin
+        always has data. Guarded by max_age so repeated polls don't re-fetch."""
+        try:
+            c = self.get(symbol)
+            if c and (time.time() - float(c.get('computed_at') or 0)) < max_age:
+                return c
+            return self.update(symbol, ctr_tf=ctr_tf)
+        except Exception:
+            return self.get(symbol)
+    
+    # 💾 Знімок кешу для рестарту. Без нього після кожного `botupdate` прогноз
+    # 1H/4H був порожній, доки сканер не дійде до монети: строгий re-gate
+    # Forecast при відкритті блокував угоди, колонки 🔮 і правила виходу
+    # мовчали. Відновлене живе з ОРИГІНАЛЬНИМ `computed_at` — тож
+    # `ensure_fresh` перераховує його за звичним правилом віку, а перший же
+    # скан монети перезаписує (`update` завжди перезаписує кеш).
+    DB_KEY_STATE = 'forecast_cache_v1'
+    RESTORE_MAX_AGE = 1800.0   # старший знімок не відновлюємо (ринок пішов)
+
+    def persist(self, db) -> int:
+        if db is None:
+            return 0
+        import json
+
+        def _dflt(v):
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return str(v)
+
+        with self._lock:
+            items = list(self._cache.items())
+        out = {}
+        for sym, entry in items:
+            try:
+                e = json.loads(json.dumps(entry, default=_dflt))
+            except (TypeError, ValueError):
+                continue
+            e.pop('restored', None)
+            out[sym] = e
+        try:
+            db.set_setting(self.DB_KEY_STATE, {'ts': time.time(), 'cache': out})
+        except Exception as e:
+            print(f"[FORECAST] persist error: {e}")
+            return 0
+        return len(out)
+
+    def restore(self, db, now: Optional[float] = None) -> int:
+        if db is None:
+            return 0
+        now = time.time() if now is None else now
+        try:
+            st = db.get_setting(self.DB_KEY_STATE, None)
+        except Exception as e:
+            print(f"[FORECAST] restore error: {e}")
+            return 0
+        if not isinstance(st, dict) or not isinstance(st.get('cache'), dict):
+            return 0
+        n = 0
+        with self._lock:
+            for sym, e in st['cache'].items():
+                if not isinstance(e, dict) or sym in self._cache:
+                    continue
+                try:
+                    age = now - float(e.get('computed_at') or 0)
+                except (TypeError, ValueError):
+                    continue
+                if age < 0 or age > self.RESTORE_MAX_AGE:
+                    continue
+                e = dict(e)
+                e['restored'] = True
+                self._cache[sym] = e
+                n += 1
+        if n:
+            print(f"[FORECAST] Restored {n} forecasts from last run")
+        return n
+
+    def clear(self, symbol: Optional[str] = None):
+        with self._lock:
+            if symbol:
+                self._cache.pop(symbol, None)
+            else:
+                self._cache.clear()
+
+
+# Singleton
+_instance: Optional[ForecastEngine] = None
+
+
+def get_forecast_engine() -> Optional[ForecastEngine]:
+    return _instance
+
+
+def init_forecast_engine() -> ForecastEngine:
+    global _instance
+    if _instance is None:
+        _instance = ForecastEngine()
+    return _instance
