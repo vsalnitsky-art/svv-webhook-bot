@@ -332,7 +332,7 @@ def test_rec_table_layout():
                     'Амплітуда', 'Фаза · коментар'], cols
     for gone in ('SL', 'ЦІЛЬ', 'LONG', 'SHORT', 'OB 1H'):
         assert gone not in head, gone
-    assert 'function recPath' not in APP and 'rec-ic' in APP
+    assert 'function recPath' not in APP and 'rec-coin' in APP
     assert 'rec-wrap' in IDX and '.rec-wrap{max-height' in open(os.path.join(ROOT, 'infosite', 'css', 'style.css'), encoding='utf-8').read().replace(' ', '')
 
 

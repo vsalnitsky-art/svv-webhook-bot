@@ -252,6 +252,25 @@ def test_bot_tm_does_not_touch_ff_or_ai_from_user_tm():
     assert UTM.UserTradeManager._ai_owned({'opened_by': 'ai'}) is False
 
 
+def test_paper_is_admin_only_for_user_tm():
+    """🧪 24.11: «У користувача немає на інфосайті нічого, що стосується paper»."""
+    assert UTM.META_DEFAULTS['mirror_book'] == 'real'
+    assert "cfg.update({'enabled': False, 'test_mode': False})" in _fn('detection/user_tm.py', '_fresh_settings')
+    t, _ = _utm(16)
+    t._perms = lambda: {'books': ('real',), 'mirror': True}
+    t._settings['test_mode'] = True
+    assert t.paper_guard() is True and t._settings['test_mode'] is False
+    assert t.paper_guard() is False                      # уже вимкнено
+    UT = _load('web.user_trading_t3', 'web/user_trading.py')
+    v = UT.user_tm_view(t)
+    for k in ('test_mode', 'shadow_positions', 'shadow_closed', 'shadow_stats', 'paper_account'):
+        assert k not in v, k
+    assert not any(str(k).startswith('paper_') or k == 'test_mode' for k in v['settings'])
+    assert v['meta']['mirror_book'] == 'real'
+    assert UT.paper_strip({'leverage': 5, 'paper_deposit': 1}, ('paper', 'real')) == {'leverage': 5, 'paper_deposit': 1}
+    assert UT.trade_apply({}, {'coin': {'symbol': 'BTC', 'on': True}}, default='real')['coins'] == {'BTCUSDT': 'real'}
+
+
 def test_price_feed_watch_is_per_owner():
     PF = _load('detection.price_feed_t', 'detection/price_feed.py')
     f = PF.PriceFeed(lambda: {})
